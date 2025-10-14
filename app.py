@@ -689,7 +689,7 @@ def upload_file():
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 @app.route('/composite', methods=['POST'])
-def composite_images():
+def handle_composite():
     """Handle image compositing with background"""
     try:
         # Get parameters from form
