@@ -23,8 +23,8 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p uploads outputs
 
-# Create non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Create non-root user for security with specific UID/GID to match host
+RUN groupadd -r -g 1000 appuser && useradd -r -u 1000 -g appuser appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
