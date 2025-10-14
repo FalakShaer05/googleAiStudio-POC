@@ -290,9 +290,8 @@ def composite_images(foreground_image, background_image, position='center', scal
         PIL Image object (composited result)
     """
     try:
-        # Resize background to match foreground if needed
-        if background_image.size != foreground_image.size:
-            background_image = background_image.resize(foreground_image.size, Image.Resampling.LANCZOS)
+        # Keep background at original size (don't resize to match foreground)
+        # This matches the frontend preview behavior where background stays full size
         
         # Scale foreground image if needed
         if scale != 1.0:

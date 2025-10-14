@@ -392,9 +392,8 @@ def composite_images(foreground_image, background_image, position='center', scal
         PIL Image object (composited result)
     """
     try:
-        # Resize background to match foreground if needed
-        if background_image.size != foreground_image.size:
-            background_image = background_image.resize(foreground_image.size, Image.Resampling.LANCZOS)
+        # Keep background at original size (don't resize to match foreground)
+        # This matches the frontend preview behavior where background stays full size
         
         # Scale foreground image if needed
         if scale != 1.0:
@@ -453,7 +452,7 @@ def composite_images(foreground_image, background_image, position='center', scal
         
     except Exception as e:
         print(f"Error compositing images: {e}")
-        return foreground_image  # Return original if compositing fails
+        return background_image  # Return background if compositing fails
 
 def convert_image_to_image(input_image_path, prompt, output_path, upscale_before=True, scale_factor=2, canvas_size=None, dpi=300, reference_background_path=None, enable_background_compositing=False, position='center', scale=1.0, opacity=1.0):
     """
@@ -726,6 +725,7 @@ def handle_composite():
         
         # Composite images
         print(f"Compositing images at position: {position}, scale: {scale}, opacity: {opacity}")
+        print(f"Background size: {background_image.size}, Converted size: {converted_image.size}")
         final_image = composite_images(
             converted_image, 
             background_image, 
@@ -733,6 +733,7 @@ def handle_composite():
             scale=scale, 
             opacity=opacity
         )
+        print(f"Final composited image size: {final_image.size}")
         
         # Generate final output filename
         final_filename = f"composited_{converted_filename}"
