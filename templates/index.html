@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image-to-Image Converter - Gemini API</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            margin: 2rem auto;
+            max-width: 800px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px 20px 0 0;
+            padding: 2rem;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .form-container {
+            padding: 2rem;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 3rem 2rem;
+            text-align: center;
+            background: #f8f9ff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: translateY(-2px);
+        }
+        
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #e8f0ff;
+        }
+        
+        .upload-icon {
+            font-size: 3rem;
+            color: #667eea;
+            margin-bottom: 1rem;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .prompt-textarea {
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+            padding: 1rem;
+            font-size: 1rem;
+            resize: vertical;
+            min-height: 120px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .prompt-textarea:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .example-prompts {
+            background: #f8f9ff;
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .upscaling-options {
+            background: #f0f8ff;
+            border: 2px solid #e0f0ff;
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .form-check-input:checked {
+            background-color: #667eea;
+            border-color: #667eea;
+        }
+        
+        .form-select:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+        
+        .example-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            margin: 0.25rem;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        
+        .example-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .convert-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            padding: 1rem 2rem;
+            border-radius: 25px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            width: 100%;
+        }
+        
+        .convert-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+        
+        .convert-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .progress-container {
+            display: none;
+            margin: 1rem 0;
+        }
+        
+        .progress {
+            height: 8px;
+            border-radius: 10px;
+            background: #e9ecef;
+        }
+        
+        .progress-bar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
+        }
+        
+        .status-message {
+            margin: 1rem 0;
+            padding: 1rem;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .file-info {
+            background: #e8f0ff;
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 1rem 0;
+            display: none;
+        }
+        
+        .download-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            border: none;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 20px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-container">
+            <div class="header">
+                <h1><i class="fas fa-magic"></i> Image Converter</h1>
+                <p>Transform your images with AI-powered prompts using Google Gemini</p>
+            </div>
+            
+            <div class="form-container">
+                <form id="conversionForm" enctype="multipart/form-data">
+                    <!-- File Upload Section -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Upload Main Image</label>
+                        <div class="upload-area" id="uploadArea">
+                            <div class="upload-icon">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                            </div>
+                            <h5>Drag & Drop your main image here</h5>
+                            <p class="text-muted">or click to browse</p>
+                            <input type="file" id="fileInput" name="file" class="file-input" accept="image/*" required>
+                        </div>
+                        <div class="file-info" id="fileInfo">
+                            <div class="d-flex align-items-center">
+                                <i class="fas fa-image me-2"></i>
+                                <span id="fileName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearFile()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Reference Background Upload Section -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Reference Background (Optional)</label>
+                        <div class="upload-area" id="refUploadArea">
+                            <div class="upload-icon">
+                                <i class="fas fa-image"></i>
+                            </div>
+                            <h6>Drag & Drop reference background</h6>
+                            <p class="text-muted small">For style context and compositing</p>
+                            <input type="file" id="refFileInput" name="reference_background" class="file-input" accept="image/*">
+                        </div>
+                        <div class="file-info" id="refFileInfo" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="fas fa-image me-2"></i>
+                                <span id="refFileName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearRefFile()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Upscaling Options -->
+                    <div class="mb-4 upscaling-options">
+                        <label class="form-label fw-bold"><i class="fas fa-expand-arrows-alt me-2"></i>Image Upscaling Options</label>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="upscale_before" name="upscale_before" checked>
+                                    <label class="form-check-label" for="upscale_before">
+                                        <strong>Upscale before conversion</strong>
+                                    </label>
+                                    <small class="form-text text-muted d-block">Improves quality by upscaling the image before AI processing</small>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="scale_factor" class="form-label">Scale Factor</label>
+                                <select class="form-select" id="scale_factor" name="scale_factor">
+                                    <option value="1.5">1.5x (50% larger)</option>
+                                    <option value="2" selected>2x (Double size)</option>
+                                    <option value="2.5">2.5x (150% larger)</option>
+                                    <option value="3">3x (Triple size)</option>
+                                    <option value="4">4x (Quadruple size)</option>
+                                </select>
+                                <small class="form-text text-muted">Higher values = better quality but longer processing time</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Smart Canvas Size Options -->
+                    <div class="mb-4 upscaling-options">
+                        <label class="form-label fw-bold"><i class="fas fa-print me-2"></i>Smart Print Canvas Options</label>
+                        
+                        <!-- Aspect Ratio Detection Display -->
+                        <div id="aspectRatioInfo" class="alert alert-success" style="display: none;">
+                            <i class="fas fa-magic me-2"></i>
+                            <strong>Smart Detection:</strong> <span id="aspectRatioDescription"></span>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="canvas_size" class="form-label">Canvas Size</label>
+                                <select class="form-select" id="canvas_size" name="canvas_size">
+                                    <option value="">No canvas upscaling</option>
+                                    <!-- Smart options will be populated by JavaScript -->
+                                </select>
+                                <small class="form-text text-muted">Smart recommendations based on your image</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="dpi" class="form-label">Print Quality (DPI)</label>
+                                <select class="form-select" id="dpi" name="dpi">
+                                    <option value="150">150 DPI (Good Enough)</option>
+                                    <option value="300" selected>300 DPI (Best Quality)</option>
+                                    <option value="600">600 DPI (Ultra High)</option>
+                                </select>
+                                <small class="form-text text-muted">Higher DPI = better print quality but larger file size</small>
+                            </div>
+                        </div>
+                        
+                        <!-- Smart Canvas Guide -->
+                        <div class="alert alert-info mt-2">
+                            <i class="fas fa-lightbulb me-2"></i>
+                            <strong>Smart Canvas Guide:</strong>
+                            <ul class="mb-0 mt-2">
+                                <li><strong>Square Images</strong>: Perfect for 6×6" or 8×8" prints</li>
+                                <li><strong>Portrait Images</strong>: Great for 4×6" photos or 8×12" artwork</li>
+                                <li><strong>Landscape Images</strong>: Ideal for 6×4" photos or 12×8" prints</li>
+                                <li><strong>Recommended sizes</strong> are automatically selected based on your image</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <!-- Background Info -->
+                    <div class="mb-4 upscaling-options" id="compositingOptions" style="display: none;">
+                        <label class="form-label fw-bold"><i class="fas fa-layer-group me-2"></i>Background Compositing</label>
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Two-Step Process:</strong> After conversion, you'll be taken to an interactive screen where you can position and adjust your converted image on the background with full control over placement, scale, and opacity.
+                        </div>
+                    </div>
+                    
+                    <!-- Prompt Section -->
+                    <div class="mb-4">
+                        <label for="prompt" class="form-label fw-bold">Transformation Prompt</label>
+                        <textarea 
+                            id="prompt" 
+                            name="prompt" 
+                            class="form-control prompt-textarea" 
+                            placeholder="Describe how you want to transform your image..."
+                            required></textarea>
+                        
+                        <!-- Example Prompts -->
+                        <div class="example-prompts">
+                            <h6 class="mb-2">Example Prompts (click to use):</h6>
+                            <button type="button" class="example-btn" onclick="setPrompt('Transform this into a watercolor painting')">
+                                Watercolor Painting
+                            </button>
+                            <button type="button" class="example-btn" onclick="setPrompt('Make this look like a vintage photograph with sepia tones')">
+                                Vintage Photo
+                            </button>
+                            <button type="button" class="example-btn" onclick="setPrompt('Apply a cyberpunk aesthetic with neon colors')">
+                                Cyberpunk Style
+                            </button>
+                            <button type="button" class="example-btn" onclick="setPrompt('Convert to black and white with dramatic lighting')">
+                                B&W Dramatic
+                            </button>
+                            <button type="button" class="example-btn" onclick="setPrompt('Transform into a fantasy forest scene')">
+                                Fantasy Forest
+                            </button>
+                            <button type="button" class="example-btn" onclick="setPrompt('Make this look like a movie poster')">
+                                Movie Poster
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Convert Button -->
+                    <button type="submit" class="convert-btn" id="convertBtn">
+                        <i class="fas fa-magic me-2"></i>Convert Image
+                    </button>
+                    
+                    <!-- Progress Bar -->
+                    <div class="progress-container" id="progressContainer">
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                        </div>
+                        <p class="text-center mt-2 mb-0">Converting your image...</p>
+                    </div>
+                    
+                    <!-- Status Messages -->
+                    <div class="status-message" id="statusMessage"></div>
+                    
+                    <!-- Download Section -->
+                    <div class="file-info" id="downloadSection" style="display: none;">
+                        <div class="text-center">
+                            <i class="fas fa-check-circle text-success me-2"></i>
+                            <span>Image converted successfully!</span>
+                            <br>
+                            <button type="button" class="download-btn mt-2" id="downloadBtn">
+                                <i class="fas fa-download me-2"></i>Download Result
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        
+        const refUploadArea = document.getElementById('refUploadArea');
+        const refFileInput = document.getElementById('refFileInput');
+        const refFileInfo = document.getElementById('refFileInfo');
+        const refFileName = document.getElementById('refFileName');
+        
+        const compositingOptions = document.getElementById('compositingOptions');
+        
+        const form = document.getElementById('conversionForm');
+        const convertBtn = document.getElementById('convertBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const statusMessage = document.getElementById('statusMessage');
+        const downloadSection = document.getElementById('downloadSection');
+        const downloadBtn = document.getElementById('downloadBtn');
+        
+        let currentOutputFilename = null;
+        
+        // File upload handling
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', handleDragOver);
+        uploadArea.addEventListener('dragleave', handleDragLeave);
+        uploadArea.addEventListener('drop', handleDrop);
+        
+        // Reference file upload handling
+        refUploadArea.addEventListener('click', () => refFileInput.click());
+        refUploadArea.addEventListener('dragover', handleRefDragOver);
+        refUploadArea.addEventListener('dragleave', handleRefDragLeave);
+        refUploadArea.addEventListener('drop', handleRefDrop);
+        
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        }
+        
+        function handleDragLeave(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        }
+        
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                handleFileSelect();
+            }
+        }
+        
+        function handleRefDragOver(e) {
+            e.preventDefault();
+            refUploadArea.classList.add('dragover');
+        }
+        
+        function handleRefDragLeave(e) {
+            e.preventDefault();
+            refUploadArea.classList.remove('dragover');
+        }
+        
+        function handleRefDrop(e) {
+            e.preventDefault();
+            refUploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                refFileInput.files = files;
+                handleRefFileSelect();
+            }
+        }
+        
+        fileInput.addEventListener('change', handleFileSelect);
+        refFileInput.addEventListener('change', handleRefFileSelect);
+        
+        function handleFileSelect() {
+            const file = fileInput.files[0];
+            if (file) {
+                fileName.textContent = file.name;
+                fileInfo.style.display = 'block';
+                uploadArea.style.display = 'none';
+                
+                // Analyze the image for smart canvas options
+                analyzeImageForSmartCanvas(file);
+            }
+        }
+        
+        function handleRefFileSelect() {
+            const file = refFileInput.files[0];
+            if (file) {
+                refFileName.textContent = file.name;
+                refFileInfo.style.display = 'block';
+                refUploadArea.style.display = 'none';
+                
+                // Show compositing options
+                compositingOptions.style.display = 'block';
+            }
+        }
+        
+        function clearRefFile() {
+            refFileInput.value = '';
+            refFileInfo.style.display = 'none';
+            refUploadArea.style.display = 'block';
+            compositingOptions.style.display = 'none';
+        }
+        
+        async function analyzeImageForSmartCanvas(file) {
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('/analyze-image', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    updateSmartCanvasOptions(result.aspect_ratio, result.canvas_options);
+                } else {
+                    console.error('Image analysis failed:', result.error);
+                }
+            } catch (error) {
+                console.error('Error analyzing image:', error);
+            }
+        }
+        
+        function updateSmartCanvasOptions(aspectRatio, canvasOptions) {
+            // Update aspect ratio display
+            const aspectRatioInfo = document.getElementById('aspectRatioInfo');
+            const aspectRatioDescription = document.getElementById('aspectRatioDescription');
+            
+            aspectRatioDescription.textContent = aspectRatio.description;
+            aspectRatioInfo.style.display = 'block';
+            
+            // Update canvas options
+            const canvasSelect = document.getElementById('canvas_size');
+            canvasSelect.innerHTML = '<option value="">No canvas upscaling</option>';
+            
+            canvasOptions.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option.value;
+                optionElement.textContent = option.label;
+                
+                if (option.recommended) {
+                    optionElement.selected = true;
+                    optionElement.textContent += ' (Recommended)';
+                }
+                
+                canvasSelect.appendChild(optionElement);
+            });
+        }
+        
+        function clearFile() {
+            fileInput.value = '';
+            fileInfo.style.display = 'none';
+            uploadArea.style.display = 'block';
+            hideStatus();
+            
+            // Reset smart canvas options
+            const aspectRatioInfo = document.getElementById('aspectRatioInfo');
+            aspectRatioInfo.style.display = 'none';
+            
+            const canvasSelect = document.getElementById('canvas_size');
+            canvasSelect.innerHTML = '<option value="">No canvas upscaling</option>';
+        }
+        
+        // No compositing controls needed in step 1
+        
+        // Example prompt buttons
+        function setPrompt(prompt) {
+            document.getElementById('prompt').value = prompt;
+        }
+        
+        // Form submission
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(form);
+            
+            showProgress();
+            hideStatus();
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                hideProgress();
+                
+                if (result.success) {
+                    if (result.needs_compositing) {
+                        // Redirect to compositing page
+                        const compositeUrl = `/composite-page?converted=${result.output_filename}&background=${result.reference_background_filename}`;
+                        window.location.href = compositeUrl;
+                    } else {
+                        // Direct download
+                        currentOutputFilename = result.output_filename;
+                        showSuccess('Image converted successfully!');
+                        showDownload();
+                    }
+                } else {
+                    showError(result.error || 'Conversion failed');
+                }
+            } catch (error) {
+                hideProgress();
+                showError('Network error: ' + error.message);
+            }
+        });
+        
+        // Download handling
+        downloadBtn.addEventListener('click', () => {
+            if (currentOutputFilename) {
+                window.open(`/download/${currentOutputFilename}`, '_blank');
+            }
+        });
+        
+        // UI helper functions
+        function showProgress() {
+            convertBtn.disabled = true;
+            convertBtn.innerHTML = '<span class="spinner me-2"></span>Converting...';
+            progressContainer.style.display = 'block';
+        }
+        
+        function hideProgress() {
+            convertBtn.disabled = false;
+            convertBtn.innerHTML = '<i class="fas fa-magic me-2"></i>Convert Image';
+            progressContainer.style.display = 'none';
+        }
+        
+        function showSuccess(message) {
+            statusMessage.className = 'status-message status-success';
+            statusMessage.textContent = message;
+            statusMessage.style.display = 'block';
+        }
+        
+        function showError(message) {
+            statusMessage.className = 'status-message status-error';
+            statusMessage.textContent = message;
+            statusMessage.style.display = 'block';
+        }
+        
+        function hideStatus() {
+            statusMessage.style.display = 'none';
+        }
+        
+        function showDownload() {
+            downloadSection.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
