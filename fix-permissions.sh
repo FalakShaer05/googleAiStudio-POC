@@ -13,8 +13,8 @@ docker-compose build --no-cache
 
 # Fix host directory permissions
 echo "🔐 Setting correct permissions on host directories..."
-chmod 755 uploads outputs
-chmod 644 uploads/* outputs/* 2>/dev/null || true
+sudo chmod -R 755 uploads outputs
+sudo chown -R 1000:1000 uploads outputs
 
 # Start the containers
 echo "🚀 Starting containers with fixed permissions..."
