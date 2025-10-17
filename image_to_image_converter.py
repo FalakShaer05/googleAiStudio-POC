@@ -328,12 +328,18 @@ def composite_images(foreground_image, background_image, position='center', scal
         x = max(0, min(x, result_image.width - foreground_image.width))
         y = max(0, min(y, result_image.height - foreground_image.height))
         
+        # Ensure background is in RGB mode for proper compositing
+        if result_image.mode != 'RGB':
+            result_image = result_image.convert('RGB')
+        
+        # Ensure foreground has alpha channel for transparency
+        if foreground_image.mode != 'RGBA':
+            foreground_image = foreground_image.convert('RGBA')
+        
         # Apply opacity if needed
         if opacity < 1.0:
             # Create a copy of foreground with opacity
             foreground_with_alpha = foreground_image.copy()
-            if foreground_with_alpha.mode != 'RGBA':
-                foreground_with_alpha = foreground_with_alpha.convert('RGBA')
             
             # Create alpha mask
             alpha = foreground_with_alpha.split()[-1]
@@ -343,8 +349,8 @@ def composite_images(foreground_image, background_image, position='center', scal
             # Composite with alpha
             result_image.paste(foreground_with_alpha, (x, y), foreground_with_alpha)
         else:
-            # Direct paste without alpha
-            result_image.paste(foreground_image, (x, y))
+            # Always use alpha channel for proper transparency handling
+            result_image.paste(foreground_image, (x, y), foreground_image)
         
         return result_image
         
