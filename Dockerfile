@@ -32,6 +32,15 @@ RUN mkdir -p uploads outputs
 # Create non-root user for security with specific UID/GID to match host
 RUN groupadd -r -g 1000 appuser && useradd -r -u 1000 -g appuser appuser
 RUN chown -R appuser:appuser /app
+
+# Create startup script to fix permissions
+RUN echo '#!/bin/bash\n\
+# Fix permissions for mounted volumes\n\
+chmod -R 755 /app/uploads /app/outputs 2>/dev/null || true\n\
+chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
+# Start the application\n\
+exec "$@"' > /app/start.sh && chmod +x /app/start.sh
+
 USER appuser
 
 # Expose port
@@ -41,5 +50,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with permission fix
+CMD ["/app/start.sh", "python", "app.py"]
