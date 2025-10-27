@@ -1,150 +1,269 @@
-# Image-to-Image Conversion with Google Gemini API
+# Image Processing API
 
-This project demonstrates how to use Google's Gemini API for image-to-image conversion, allowing you to transform existing images using text prompts.
+A RESTful API for image-to-image conversion using Google Gemini AI, with optional background merging capabilities. This service provides both a web interface and a programmatic API for caricature generation and background compositing.
 
 ## Features
 
-- **Image-to-Image Conversion**: Transform existing images using natural language prompts
-- **Multiple Input Formats**: Supports various image formats (PNG, JPEG, etc.)
-- **Flexible Prompts**: Use descriptive text to guide the transformation
-- **Error Handling**: Robust error handling and validation
-- **Command Line Interface**: Easy to use from command line
+- **Caricature Generation**: Transform images using AI-powered text prompts
+- **Background Merging**: Professional background removal and compositing
+- **Web Interface**: User-friendly web application
+- **REST API**: Programmatic access for integrations
+- **Secure Authentication**: API key-based access control
+- **Rate Limiting**: Configurable request limits per API key
+- **Auto Cleanup**: Automatic file cleanup after processing
+- **Multiple Formats**: Support for PNG, JPG, JPEG, GIF, BMP, TIFF
 
-## Setup
+## Quick Start
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. **Set up Google AI API Key**:
-   - Get your API key from [Google AI Studio](https://ai.google.dev/)
-   - Copy the example environment file:
-     ```bash
-     cp env.example .env
-     ```
-   - Edit the `.env` file and add your API key:
-     ```
-     GOOGLE_API_KEY=your-actual-api-key-here
-     ```
-
-## Usage
-
-### Basic Usage
-
-```python
-from image_to_image_converter import convert_image_to_image
-
-# Convert an image with a text prompt
-success = convert_image_to_image(
-    input_image_path="input.jpg",
-    prompt="Transform this into a watercolor painting",
-    output_path="output.png"
-)
-```
-
-### Command Line Usage
+### 1. Setup
 
 ```bash
-# Basic usage
-python image_to_image_converter.py /path/to/your/image.jpg
+# Install dependencies
+pip install -r requirements.txt
 
-# With custom prompt
-python image_to_image_converter.py /path/to/your/image.jpg "Make this image look like a vintage photograph"
+# Copy environment file
+cp env.example .env
 
-# Using the example from Google's documentation
-python image_to_image_converter.py cat_image.png "Create a picture of my cat eating a nano-banana in a fancy restaurant under the Gemini constellation"
+# Edit .env and add your Google API key
+# GOOGLE_API_KEY=your-google-api-key-here
+
+# Setup API keys (optional, for API access)
+python setup_api.py
+
+# Start server
+python start_server.py
 ```
 
-## Example Prompts
+### 2. Access the Application
 
-Here are some example prompts you can use for different transformations:
+- **Web Interface**: http://localhost:5000
+- **API Health Check**: http://localhost:5000/api/v1/health
 
-- **Artistic Styles**: "Transform this into a Van Gogh painting"
-- **Color Changes**: "Make this image black and white with dramatic lighting"
-- **Style Transfer**: "Apply a cyberpunk aesthetic to this image"
-- **Object Addition**: "Add a beautiful sunset in the background"
-- **Scene Changes**: "Transform this into a fantasy forest scene"
+### 3. Test API (Optional)
 
-## How It Works
+```bash
+# Run test suite
+python test_api.py
+```
 
-The script uses Google's Gemini 2.5 Flash Image Preview model, which can:
+## Web Interface
 
-1. **Accept both text and image inputs** simultaneously
-2. **Understand the context** of your existing image
-3. **Apply transformations** based on your text prompt
-4. **Generate a new image** that combines your input with the requested changes
+The web application provides a user-friendly interface for:
 
-## API Reference
+- Uploading images for conversion
+- Entering transformation prompts
+- Adding background images for merging
+- Adjusting position, scale, and opacity
+- Downloading processed results
 
-Based on the [Google AI Studio documentation](https://ai.google.dev/gemini-api/docs/image-generation#python), this implementation uses:
+## API Usage
 
-- **Model**: `gemini-2.5-flash-image-preview`
-- **Input**: Text prompt + existing image
-- **Output**: Generated image with SynthID watermark
+### Authentication
 
-## Limitations
+All API endpoints require authentication via API key. Provide the API key in the header:
 
-- All generated images include a SynthID watermark
-- Best performance with English, Spanish, Japanese, Chinese, and Hindi prompts
-- Works best with up to 3 images as input
-- Image generation does not support audio or video inputs
+```bash
+curl -H "X-API-Key: your-api-key" http://localhost:5000/api/v1/health
+```
+
+### Main Endpoint: Process Image
+
+```http
+POST /api/v1/process
+```
+
+**Parameters:**
+- `image` (file, required): Input image
+- `prompt` (string, required): Transformation prompt
+- `background` (file, optional): Background image
+- `position` (string, optional): Position for merging (default: 'center')
+- `scale` (float, optional): Scale factor 0.1-3.0 (default: 1.0)
+- `opacity` (float, optional): Opacity 0.0-1.0 (default: 1.0)
+- `canvas_size` (string, optional): Print size (e.g., '8x10')
+
+**Example Request:**
+
+```bash
+curl -X POST "http://localhost:5000/api/v1/process" \
+  -H "X-API-Key: your-api-key" \
+  -F "image=@input.jpg" \
+  -F "prompt=Transform this into a cartoon caricature" \
+  -F "background=@background.jpg" \
+  -F "position=center" \
+  -F "scale=1.2"
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "message": "Image processed successfully",
+  "output_url": "http://localhost:5000/api/v1/download/processed_image.jpg",
+  "processing_time": "12.5s",
+  "file_size": "2.1MB",
+  "metadata": {
+    "image_info": {
+      "width": 1920,
+      "height": 1080,
+      "mode": "RGB",
+      "format": "JPEG"
+    },
+    "prompt_used": "Transform this into a cartoon caricature",
+    "background_merged": true,
+    "position": "center",
+    "scale": 1.0,
+    "opacity": 1.0
+  }
+}
+```
+
+### Other API Endpoints
+
+- `GET /api/v1/health` - Health check
+- `POST /api/v1/validate` - Validate API key
+- `GET /api/v1/download/{filename}` - Download processed image
+- `GET /api/v1/status` - Usage statistics
+
+## Programming Examples
+
+### Python
+
+```python
+import requests
+
+def process_image(image_path, prompt, background_path=None, api_key="your-api-key"):
+    url = "http://localhost:5000/api/v1/process"
+    headers = {"X-API-Key": api_key}
+    
+    files = {"image": open(image_path, "rb")}
+    data = {"prompt": prompt}
+    
+    if background_path:
+        files["background"] = open(background_path, "rb")
+        data.update({
+            "position": "center",
+            "scale": "1.0",
+            "opacity": "1.0"
+        })
+    
+    response = requests.post(url, headers=headers, files=files, data=data)
+    return response.json()
+
+# Usage
+result = process_image("input.jpg", "Transform into cartoon caricature")
+if result["success"]:
+    print(f"Success! Download: {result['output_url']}")
+```
+
+### JavaScript
+
+```javascript
+async function processImage(imageFile, prompt, backgroundFile = null, apiKey = "your-api-key") {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    formData.append('prompt', prompt);
+    
+    if (backgroundFile) {
+        formData.append('background', backgroundFile);
+        formData.append('position', 'center');
+        formData.append('scale', '1.0');
+        formData.append('opacity', '1.0');
+    }
+    
+    const response = await fetch('http://localhost:5000/api/v1/process', {
+        method: 'POST',
+        headers: {'X-API-Key': apiKey},
+        body: formData
+    });
+    
+    return await response.json();
+}
+
+// Usage
+const fileInput = document.getElementById('imageInput');
+const result = await processImage(fileInput.files[0], 'Transform into cartoon caricature');
+console.log(result);
+```
+
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file with the following variables:
+
+```bash
+# Required
+GOOGLE_API_KEY=your-google-api-key
+
+# API Configuration (optional)
+API_KEYS=dev-key-123,prod-key-456
+API_RATE_LIMIT_REQUESTS=100
+API_RATE_LIMIT_WINDOW_MINUTES=60
+
+# Optional
+API_FILE_CLEANUP_HOURS=24
+API_MAX_FILE_SIZE_MB=16
+```
+
+### Rate Limiting
+
+- Default: 100 requests per hour per API key
+- Configurable via `API_RATE_LIMIT_REQUESTS`
+- Window configurable via `API_RATE_LIMIT_WINDOW_MINUTES`
 
 ## Error Handling
 
-The script includes comprehensive error handling for:
-- Missing input images
-- Invalid file paths
-- API connection issues
-- Invalid image formats
+The API returns standardized error responses:
 
-## Requirements
+```json
+{
+  "success": false,
+  "error": "Invalid API key",
+  "error_code": "AUTH_002",
+  "details": "API key not found or invalid",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
 
-- Python 3.7+ (for local development)
-- Google AI API key (stored in `.env` file)
-- Internet connection for API calls
-- Docker & Docker Compose (for containerized deployment)
+### Common Error Codes
 
-## Environment Setup
+- `AUTH_001`: API key required
+- `AUTH_002`: Invalid API key
+- `RATE_001`: Rate limit exceeded
+- `VALIDATION_001`: Missing required parameter
+- `VALIDATION_002`: Invalid file type
+- `VALIDATION_003`: File too large
+- `PROCESSING_001`: Image conversion failed
+- `PROCESSING_002`: Background removal failed
+- `PROCESSING_003`: Image compositing failed
 
-The project uses a `.env` file to securely store your API key:
+## File Management
 
-1. **Copy the example file**:
-   ```bash
-   cp env.example .env
-   ```
+- **Upload Limit**: 16MB maximum file size
+- **Supported Formats**: PNG, JPG, JPEG, GIF, BMP, TIFF
+- **Auto Cleanup**: Files deleted after 24 hours
+- **Temporary Storage**: Processed files stored in `outputs/` directory
 
-2. **Edit `.env` file** with your actual API key:
-   ```
-   GOOGLE_API_KEY=your-actual-api-key-here
-   ```
+## Security
 
-3. **Never commit the `.env` file** to version control (it's already in `.gitignore`)
+- **API Key Authentication**: Secure token-based access
+- **Input Validation**: File type and size validation
+- **Rate Limiting**: Prevents abuse
+- **File Sanitization**: Safe filename handling
+- **Error Logging**: Comprehensive error tracking
 
 ## Docker Deployment
 
 ### Quick Start with Docker
 
-1. **Clone and setup**:
-   ```bash
-   git clone <repository-url>
-   cd googleAiStudio-POC
-   cp env.example .env
-   # Edit .env with your API key
-   ```
+```bash
+# Build and run with Docker Compose
+docker-compose up --build
 
-2. **Run with Docker Compose**:
-   ```bash
-   # Development mode (Flask app only)
-   docker-compose up --build
-   
-   # Production mode (with Nginx reverse proxy)
-   docker-compose --profile production up --build
-   ```
-
-3. **Access the application**:
-   - Development: http://localhost:5000
-   - Production: http://localhost:80
+# Access the application
+# Web Interface: http://localhost:80
+# API: http://localhost:80/api/v1/health
+```
 
 ### Docker Commands
 
@@ -163,21 +282,82 @@ docker-compose logs -f
 
 # Stop the application
 docker-compose down
-
-# Rebuild and restart
-docker-compose up --build --force-recreate
 ```
 
-### Docker Features
+## Production Deployment
 
-- **Multi-stage build** for optimized image size
-- **Non-root user** for security
-- **Health checks** for container monitoring
-- **Volume mounts** for persistent file storage
-- **Nginx reverse proxy** for production deployment
-- **Rate limiting** and security headers
-- **Gzip compression** for better performance
+### Environment Setup
+
+1. Set production API keys
+2. Configure rate limits
+3. Set up monitoring
+4. Enable HTTPS
+5. Configure backup storage
+
+### Monitoring
+
+- Health check endpoint: `/api/v1/health`
+- Usage statistics: `/api/v1/status`
+- Error logging: Check application logs
+- File cleanup: Automatic after 24 hours
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"API key required"** - Add `X-API-Key` header
+2. **"Invalid API key"** - Check your API key in `.env` file
+3. **"Rate limit exceeded"** - Wait and retry with exponential backoff
+4. **"File too large"** - Reduce image size (max 16MB)
+5. **"Invalid file type"** - Use supported formats (PNG, JPG, etc.)
+
+### Debug Mode
+
+Enable debug logging by setting environment variable:
+```bash
+export FLASK_DEBUG=1
+python start_server.py
+```
+
+## Development
+
+### Project Structure
+
+```
+/
+├── app.py                    # Main Flask application
+├── api/                      # API module
+│   ├── __init__.py          # Module initialization
+│   ├── auth.py              # Authentication & rate limiting
+│   ├── models.py            # Data models & error codes
+│   ├── utils.py             # Utility functions
+│   └── endpoints.py         # API endpoints
+├── templates/               # Web interface templates
+├── static/                  # Static assets
+├── uploads/                 # Temporary upload storage
+├── outputs/                 # Processed image storage
+├── requirements.txt         # Python dependencies
+├── Dockerfile              # Docker configuration
+├── docker-compose.yml      # Docker Compose setup
+└── README.md               # This file
+```
+
+### Adding New Features
+
+1. **API Endpoints**: Add to `api/endpoints.py`
+2. **Authentication**: Modify `api/auth.py`
+3. **Data Models**: Update `api/models.py`
+4. **Utilities**: Add to `api/utils.py`
 
 ## License
 
 This project follows the same license as the Google AI Studio examples (Apache 2.0 License).
+
+## Support
+
+For issues and questions:
+1. Check the logs for error details
+2. Verify API key configuration
+3. Test with the provided test script
+4. Check network connectivity
+5. Review the troubleshooting section above

@@ -15,6 +15,9 @@ from dotenv import load_dotenv
 import uuid
 import time
 
+# Import API blueprint
+from api import api_bp
+
 # Load environment variables
 load_dotenv()
 
@@ -26,6 +29,9 @@ app.config['OUTPUT_FOLDER'] = 'outputs'
 # Create directories if they don't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
+
+# Register API blueprint
+app.register_blueprint(api_bp)
 
 # Initialize Gemini client
 def setup_client():
@@ -431,6 +437,35 @@ def remove_white_background(image, threshold=240):
         print(f"Error removing white background: {e}")
         return image  # Return original if processing fails
 
+def remove_white_background_simple(image, threshold=240):
+    """
+    Simple white background removal using threshold
+    """
+    try:
+        # Convert to RGBA if not already
+        if image.mode != 'RGBA':
+            image = image.convert('RGBA')
+        
+        # Get image data
+        data = image.getdata()
+        
+        # Create new data with transparency
+        new_data = []
+        for item in data:
+            # If pixel is close to white, make it transparent
+            if item[0] > threshold and item[1] > threshold and item[2] > threshold:
+                new_data.append((0, 0, 0, 0))  # Transparent
+            else:
+                new_data.append(item)  # Keep original
+        
+        # Update image data
+        image.putdata(new_data)
+        return image
+        
+    except Exception as e:
+        print(f"Error in simple white background removal: {e}")
+        return image
+
 def remove_black_background(image, threshold=15):
     """
     Remove black background from an image using flood fill algorithm
@@ -552,91 +587,25 @@ CRITICAL BACKGROUND REQUIREMENTS:
     
     return prompt + white_background_enhancement
 
-def remove_background_with_removebg(image_path, api_key=None):
-    """
-    Remove background using Remove.bg API (professional quality)
-    Following exact Remove.bg API specification
-    """
-    try:
-        import requests
-        
-        # Remove.bg API endpoint
-        api_url = "https://api.remove.bg/v1.0/removebg"
-        
-        print(f"🔧 DEBUG: Starting Remove.bg API call for: {image_path}")
-        print(f"🔧 DEBUG: API URL: {api_url}")
-        
-        # Check if file exists
-        if not os.path.exists(image_path):
-            print(f"❌ ERROR: File does not exist: {image_path}")
-            return None
-        
-        # Get API key from environment
-        if not api_key:
-            api_key = os.getenv('REMOVEBG_API_KEY')
-            if not api_key:
-                print(f"❌ ERROR: Remove.bg API key not found. Please set REMOVEBG_API_KEY environment variable")
-                return None
-        
-        print(f"🔧 DEBUG: Using API key: {api_key[:10]}...")
-        
-        # Follow exact Remove.bg API specification
-        with open(image_path, 'rb') as file:
-            response = requests.post(
-                api_url,
-                files={'image_file': file},
-                data={'size': 'auto'},
-                headers={'X-Api-Key': api_key},
-                timeout=30
-            )
-            
-            print(f"🔧 DEBUG: API Response Status: {response.status_code}")
-            
-            if response.status_code == requests.codes.ok:
-                # Save the result to a temporary file (following exact Remove.bg specification)
-                temp_path = image_path.replace('.', '_bg_removed.')
-                with open(temp_path, 'wb') as out:
-                    out.write(response.content)
-                
-                print(f"✅ SUCCESS: Remove.bg background removal successful. Result saved to: {temp_path}")
-                print(f"🔧 DEBUG: Result file size: {os.path.getsize(temp_path)} bytes")
-                return temp_path
-            else:
-                print(f"❌ Remove.bg API ERROR: {response.status_code}")
-                print(f"❌ API Response: {response.text}")
-                return None
-                
-    except Exception as e:
-        print(f"❌ EXCEPTION in Remove.bg API call: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
 
-def remove_background_with_api(image_path):
+def remove_background_with_mosida_api(image_path):
     """
-    Remove background using the external API (fallback to your original API)
+    Remove background using Mosida API
     """
     try:
         import requests
         
         api_url = "https://dev-lightsail-sam.mosida.com/remove-bg"
         
-        print(f"🔧 DEBUG: Starting fallback API call for: {image_path}")
-        print(f"🔧 DEBUG: API URL: {api_url}")
-        
         # Check if file exists
         if not os.path.exists(image_path):
-            print(f"❌ ERROR: File does not exist: {image_path}")
             return None
         
         # Prepare the file for upload
         with open(image_path, 'rb') as file:
             files = {'file': file}
             
-            print(f"🔧 DEBUG: Sending request to fallback API...")
             response = requests.post(api_url, files=files, timeout=30)
-            
-            print(f"🔧 DEBUG: API Response Status: {response.status_code}")
             
             if response.status_code == 200:
                 # Save the result to a temporary file
@@ -644,21 +613,14 @@ def remove_background_with_api(image_path):
                 with open(temp_path, 'wb') as result_file:
                     result_file.write(response.content)
                 
-                print(f"✅ SUCCESS: Fallback background removal successful. Result saved to: {temp_path}")
-                print(f"🔧 DEBUG: Result file size: {os.path.getsize(temp_path)} bytes")
                 return temp_path
             else:
-                print(f"❌ Fallback API ERROR: {response.status_code}")
-                print(f"❌ API Response: {response.text}")
                 return None
                 
     except Exception as e:
-        print(f"❌ EXCEPTION in fallback API call: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
-# Background removal functions removed - now using Remove.bg API for professional quality
+# Background removal using Mosida API
 
 def add_drop_shadow(image, offset=(5, 5), blur_radius=10, shadow_color=(0, 0, 0, 100)):
     """
@@ -1023,14 +985,14 @@ def upload_file():
                 
                 # Apply professional background removal
                 print(f"🔧 DEBUG: Applying Remove.bg API for background removal...")
-                api_result_path = remove_background_with_removebg(converted_path)
+                api_result_path = remove_background_with_mosida_api(converted_path)
                 
                 if api_result_path and os.path.exists(api_result_path):
                     print(f"✅ Remove.bg background removal successful")
                     converted_image = Image.open(api_result_path)
                 else:
                     print(f"❌ Remove.bg failed, trying fallback API...")
-                    api_result_path = remove_background_with_api(converted_path)
+                    api_result_path = remove_background_with_mosida_api(converted_path)
                     if api_result_path and os.path.exists(api_result_path):
                         converted_image = Image.open(api_result_path)
                         print(f"✅ Fallback API background removal successful")
@@ -1161,12 +1123,8 @@ def test_background_removal():
         temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"test_{file.filename}")
         file.save(temp_path)
         
-        # Test Remove.bg API first
-        result_path = remove_background_with_removebg(temp_path)
-        
-        if not result_path or not os.path.exists(result_path):
-            # Fallback to original API
-            result_path = remove_background_with_api(temp_path)
+        # Test background removal API
+        result_path = remove_background_with_mosida_api(temp_path)
         
         if result_path and os.path.exists(result_path):
             # Return the result
@@ -1183,38 +1141,6 @@ def test_background_removal():
         if 'result_path' in locals() and result_path and os.path.exists(result_path):
             os.remove(result_path)
 
-@app.route('/test-removebg', methods=['POST'])
-def test_removebg():
-    """Test Remove.bg API specifically"""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        # Save uploaded file temporarily
-        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"removebg_test_{file.filename}")
-        file.save(temp_path)
-        
-        # Test Remove.bg API
-        result_path = remove_background_with_removebg(temp_path)
-        
-        if result_path and os.path.exists(result_path):
-            # Return the result
-            return send_file(result_path, as_attachment=True, download_name=f"removebg_{file.filename}")
-        else:
-            return jsonify({'error': 'Remove.bg API failed'}), 500
-            
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        # Clean up
-        if 'temp_path' in locals() and os.path.exists(temp_path):
-            os.remove(temp_path)
-        if 'result_path' in locals() and result_path and os.path.exists(result_path):
-            os.remove(result_path)
 
 @app.route('/preview-processed', methods=['POST'])
 def preview_processed():
@@ -1239,25 +1165,13 @@ def preview_processed():
         # Load the converted image
         converted_image = Image.open(converted_path)
         
-        # Always apply professional background removal for preview
-        print(f"🔧 DEBUG: Processing image for preview: {converted_path}")
-        
-        # Try Remove.bg first (professional quality)
-        api_result_path = remove_background_with_removebg(converted_path)
+        # Apply background removal using Mosida API
+        api_result_path = remove_background_with_mosida_api(converted_path)
         
         if api_result_path and os.path.exists(api_result_path):
-            print(f"✅ Preview: Remove.bg background removal successful")
             processed_image = Image.open(api_result_path)
         else:
-            print(f"❌ Preview: Remove.bg failed, trying fallback API...")
-            # Try fallback API
-            api_result_path = remove_background_with_api(converted_path)
-            if api_result_path and os.path.exists(api_result_path):
-                processed_image = Image.open(api_result_path)
-                print(f"✅ Preview: Fallback API background removal successful")
-            else:
-                print(f"❌ Preview: All APIs failed - keeping original image")
-                processed_image = converted_image
+            processed_image = converted_image
         
         # Save processed image temporarily for preview
         temp_filename = f"preview_processed_{converted_filename}"
@@ -1315,37 +1229,14 @@ def handle_composite():
         print_size = request.form.get('print_size', '8x10')
         add_shadow = request.form.get('add_shadow', 'true').lower() == 'true'
         
-        print(f"🔧 DEBUG: converted_path = {converted_path}")
-        print(f"🔧 DEBUG: converted_path exists = {os.path.exists(converted_path)}")
-        
-        # Always apply professional background removal
-        print(f"🔧 DEBUG: Starting background removal process...")
-        print(f"Using Remove.bg API for professional background removal...")
-        
-        # Try Remove.bg first (professional quality)
-        api_result_path = remove_background_with_removebg(converted_path)
-        print(f"🔧 DEBUG: Remove.bg result path = {api_result_path}")
+        # Apply background removal using Mosida API
+        api_result_path = remove_background_with_mosida_api(converted_path)
         
         if api_result_path and os.path.exists(api_result_path):
-            print(f"🔧 DEBUG: Loading Remove.bg result image...")
             converted_image = Image.open(api_result_path)
-            print(f"✅ Remove.bg background removal successful")
         else:
-            print(f"❌ Remove.bg failed, trying fallback API...")
-            # Try fallback API
-            api_result_path = remove_background_with_api(converted_path)
-            if api_result_path and os.path.exists(api_result_path):
-                converted_image = Image.open(api_result_path)
-                print(f"✅ Fallback API background removal successful")
-            else:
-                print(f"❌ All APIs failed - keeping original image")
-                # Keep original image if all APIs fail
-        
-        print(f"Final image mode: {converted_image.mode}, size: {converted_image.size}")
-        
-        # Composite images
-        print(f"Compositing images at position: {position}, scale: {scale}, opacity: {opacity}")
-        print(f"Background size: {background_image.size}, Converted size: {converted_image.size}")
+            # Keep original image if API fails
+            pass
         final_image = composite_images(
             converted_image, 
             background_image, 
@@ -1354,16 +1245,10 @@ def handle_composite():
             opacity=opacity,
             add_shadow=add_shadow
         )
-        print(f"Final composited image size: {final_image.size}")
         
         # Optimize for print size if specified
         if print_size != 'original':
-            print(f"Optimizing for print size: {print_size}")
-            target_width, target_height = get_print_dimensions(print_size)
-            
-            # Resize the final image to the target canvas size while maintaining aspect ratio
             final_image = resize_to_canvas_size(final_image, print_size)
-            print(f"Optimized image size: {final_image.size}")
         
         # Generate final output filename
         final_filename = f"composited_{print_size}_{converted_filename}"
