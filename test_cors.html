@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS Test for Image Processing API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        #results { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 CORS Test for Image Processing API</h1>
+    
+    <div class="test-section">
+        <h3>API Configuration</h3>
+        <label for="apiUrl">API Base URL:</label>
+        <input type="text" id="apiUrl" value="http://localhost:5000/api/v1" style="width: 300px;">
+        <br><br>
+        <label for="apiKey">API Key:</label>
+        <input type="text" id="apiKey" value="dev-api-key-12345" style="width: 300px;">
+    </div>
+
+    <div class="test-section">
+        <h3>Test Endpoints</h3>
+        <button onclick="testHealth()">Test Health Check</button>
+        <button onclick="testValidate()">Test API Key Validation</button>
+        <button onclick="testStatus()">Test Status Endpoint</button>
+        <button onclick="testProcess()">Test Process Endpoint (Mock)</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        function addResult(message, isSuccess = true) {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = `test-section ${isSuccess ? 'success' : 'error'}`;
+            div.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong>: ${message}`;
+            results.appendChild(div);
+        }
+
+        function getApiUrl() {
+            return document.getElementById('apiUrl').value;
+        }
+
+        function getApiKey() {
+            return document.getElementById('apiKey').value;
+        }
+
+        async function testHealth() {
+            try {
+                const response = await fetch(`${getApiUrl()}/health`);
+                const data = await response.json();
+                addResult(`Health Check: ${response.status} - ${JSON.stringify(data)}`);
+            } catch (error) {
+                addResult(`Health Check Error: ${error.message}`, false);
+            }
+        }
+
+        async function testValidate() {
+            try {
+                const response = await fetch(`${getApiUrl()}/validate`, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': getApiKey(),
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const data = await response.json();
+                addResult(`Validate API Key: ${response.status} - ${JSON.stringify(data)}`);
+            } catch (error) {
+                addResult(`Validate API Key Error: ${error.message}`, false);
+            }
+        }
+
+        async function testStatus() {
+            try {
+                const response = await fetch(`${getApiUrl()}/status`, {
+                    method: 'GET',
+                    headers: {
+                        'X-API-Key': getApiKey()
+                    }
+                });
+                const data = await response.json();
+                addResult(`Status: ${response.status} - ${JSON.stringify(data)}`);
+            } catch (error) {
+                addResult(`Status Error: ${error.message}`, false);
+            }
+        }
+
+        async function testProcess() {
+            try {
+                // Create a simple test form data
+                const formData = new FormData();
+                formData.append('prompt', 'Test prompt for CORS');
+                
+                const response = await fetch(`${getApiUrl()}/process`, {
+                    method: 'POST',
+                    headers: {
+                        'X-API-Key': getApiKey()
+                    },
+                    body: formData
+                });
+                const data = await response.json();
+                addResult(`Process (Mock): ${response.status} - ${JSON.stringify(data)}`);
+            } catch (error) {
+                addResult(`Process Error: ${error.message}`, false);
+            }
+        }
+
+        // Test CORS preflight
+        window.addEventListener('load', () => {
+            addResult('CORS Test Page Loaded. Click buttons to test endpoints.');
+        });
+    </script>
+</body>
+</html>

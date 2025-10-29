@@ -8,6 +8,7 @@ import os
 import io
 import base64
 from flask import Flask, render_template, request, jsonify, send_file
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from google import genai
 from PIL import Image, ImageEnhance
@@ -25,6 +26,16 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
+
+# Configure CORS
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization", "X-API-Key"],
+        "supports_credentials": True
+    }
+})
 
 # Create directories if they don't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)

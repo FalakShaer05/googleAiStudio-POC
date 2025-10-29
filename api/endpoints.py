@@ -6,6 +6,7 @@ Main API routes for image processing service
 import os
 import time
 from flask import Blueprint, request, jsonify, send_file, current_app
+from flask_cors import cross_origin
 from werkzeug.utils import secure_filename
 
 from .auth import require_api_key, get_api_key_info
@@ -38,6 +39,7 @@ def get_app_functions():
 api_bp = Blueprint('api', __name__, url_prefix='/api/v1')
 
 @api_bp.route('/health', methods=['GET'])
+@cross_origin()
 def health_check():
     """
     Health check endpoint
@@ -64,6 +66,7 @@ def health_check():
         }), 500
 
 @api_bp.route('/validate', methods=['POST'])
+@cross_origin()
 def validate_request():
     """
     Validate API key and request parameters
@@ -93,6 +96,7 @@ def validate_request():
         return jsonify(create_error_response('SERVICE_003', str(e))), 500
 
 @api_bp.route('/process', methods=['POST'])
+@cross_origin()
 @require_api_key
 def process_image():
     """
@@ -284,6 +288,7 @@ def process_image():
         return jsonify(create_error_response('SERVICE_003', str(e))), 500
 
 @api_bp.route('/download/<filename>', methods=['GET'])
+@cross_origin()
 def download_file(filename):
     """
     Download processed image file
@@ -306,6 +311,7 @@ def download_file(filename):
         return jsonify(create_error_response('FILE_002', str(e))), 500
 
 @api_bp.route('/status', methods=['GET'])
+@cross_origin()
 @require_api_key
 def get_status():
     """

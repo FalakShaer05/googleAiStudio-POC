@@ -44,6 +44,9 @@ python start_server.py
 ```bash
 # Run test suite
 python test_api.py
+
+# Test CORS in browser
+open test_cors.html
 ```
 
 ## Web Interface
@@ -57,6 +60,15 @@ The web application provides a user-friendly interface for:
 - Downloading processed results
 
 ## API Usage
+
+### CORS Support
+
+The API supports Cross-Origin Resource Sharing (CORS) for web applications:
+
+- **Allowed Origins**: All origins (`*`)
+- **Allowed Methods**: GET, POST, PUT, DELETE, OPTIONS
+- **Allowed Headers**: Content-Type, Authorization, X-API-Key
+- **Credentials**: Supported
 
 ### Authentication
 
