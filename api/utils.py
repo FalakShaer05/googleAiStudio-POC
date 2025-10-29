@@ -226,52 +226,67 @@ def download_image_from_url(image_url: str, download_dir: str = 'uploads') -> st
         parsed_url = urlparse(image_url)
         filename = os.path.basename(parsed_url.path)
         
+        # If no filename or extension, generate one
         if not filename or '.' not in filename:
-            # Generate filename with proper extension
-            response = requests.head(image_url, timeout=10)
-            content_type = response.headers.get('content-type', '')
-            if 'image' in content_type:
-                ext = mimetypes.guess_extension(content_type) or '.jpg'
-                filename = f"downloaded_image_{uuid.uuid4().hex[:8]}{ext}"
-            else:
-                filename = f"downloaded_image_{uuid.uuid4().hex[:8]}.jpg"
-        
-        # Ensure filename is safe
-        filename = secure_filename(filename)
-        if not filename:
             filename = f"downloaded_image_{uuid.uuid4().hex[:8]}.jpg"
+        else:
+            # Ensure filename is safe
+            filename = secure_filename(filename)
+            if not filename:
+                filename = f"downloaded_image_{uuid.uuid4().hex[:8]}.jpg"
         
         # Create unique filename
         unique_filename = generate_unique_filename(filename, 'url_download')
         file_path = os.path.join(download_dir, unique_filename)
         
-        # Download the image
-        response = requests.get(image_url, timeout=30, stream=True)
+        # Download the image with proper headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(image_url, timeout=30, stream=True, headers=headers)
         response.raise_for_status()
         
-        # Check content type
-        content_type = response.headers.get('content-type', '')
-        if not content_type.startswith('image/'):
-            return None
-        
-        # Save the image
+        # Save the image first
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         
-        # Verify the file was saved and is a valid image
+        # Check content type
+        content_type = response.headers.get('content-type', '').lower()
+        
+        # Verify the file was saved and is a valid image using PIL
         try:
             from PIL import Image
             with Image.open(file_path) as img:
                 img.verify()
+            
+            # If we get here, it's a valid image
             return file_path
-        except Exception:
-            # If it's not a valid image, clean up and return None
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return None
+            
+        except Exception as verify_error:
+            # If PIL verification fails, check if it might still be an image
+            # Some CDNs return application/octet-stream for images
+            is_likely_image = (
+                (content_type and 'image' in content_type) or 
+                (content_type == 'application/octet-stream' and 
+                 any(ext in filename.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']))
+            )
+            
+            if is_likely_image:
+                # Trust the file extension or content type
+                return file_path
+            else:
+                # Clean up the file and return None
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                return None
                 
+    except requests.exceptions.RequestException as e:
+        # Network-related errors
+        return None
     except Exception as e:
+        # Other errors
         return None
 
 def remove_background_with_mosida_api(image_path: str) -> str:

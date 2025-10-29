@@ -162,6 +162,8 @@ def process_image():
             input_path = download_image_from_url(image_url, upload_dir)
             if not input_path:
                 return jsonify(create_error_response('VALIDATION_002', 'Failed to download image from URL. Please check the URL and try again.')), 400
+            # Derive a filename from the downloaded path for downstream naming
+            input_filename = os.path.basename(input_path)
         
         # Handle background image (file or URL)
         background_path = None
@@ -188,7 +190,9 @@ def process_image():
         # Enhance prompt for better background removal
         enhanced_prompt = app_funcs['enhance_prompt_for_white_background'](prompt)
         
-        # Generate output filename
+        # Generate output filename (ensure input_filename defined for both file and URL flows)
+        if 'input_filename' not in locals() or not input_filename:
+            input_filename = os.path.basename(input_path)
         output_filename = generate_unique_filename(f"processed_{input_filename}", 'output')
         output_path = os.path.join(output_dir, output_filename)
         
