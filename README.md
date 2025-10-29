@@ -85,15 +85,19 @@ POST /api/v1/process
 ```
 
 **Parameters:**
-- `image` (file, required): Input image
+- `image` (file, required*): Input image file
+- `image_url` (string, required*): URL of input image to download
 - `prompt` (string, required): Transformation prompt
-- `background` (file, optional): Background image
+- `background` (file, optional): Background image file
+- `background_url` (string, optional): URL of background image to download
 - `position` (string, optional): Position for merging (default: 'center')
 - `scale` (float, optional): Scale factor 0.1-3.0 (default: 1.0)
 - `opacity` (float, optional): Opacity 0.0-1.0 (default: 1.0)
 - `canvas_size` (string, optional): Print size (e.g., '8x10')
 
-**Example Request:**
+*Either `image` or `image_url` is required, but not both.
+
+**Example Request (File Upload):**
 
 ```bash
 curl -X POST "http://localhost:5000/api/v1/process" \
@@ -101,6 +105,18 @@ curl -X POST "http://localhost:5000/api/v1/process" \
   -F "image=@input.jpg" \
   -F "prompt=Transform this into a cartoon caricature" \
   -F "background=@background.jpg" \
+  -F "position=center" \
+  -F "scale=1.2"
+```
+
+**Example Request (Image URL):**
+
+```bash
+curl -X POST "http://localhost:5000/api/v1/process" \
+  -H "X-API-Key: your-api-key" \
+  -F "image_url=https://example.com/image.jpg" \
+  -F "prompt=Transform this into a cartoon caricature" \
+  -F "background_url=https://example.com/background.jpg" \
   -F "position=center" \
   -F "scale=1.2"
 ```

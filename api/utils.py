@@ -202,6 +202,78 @@ def create_download_url(filename: str, base_url: str = None) -> str:
         # This will be set in the endpoint using request context
         return f"/api/v1/download/{filename}"
 
+def download_image_from_url(image_url: str, download_dir: str = 'uploads') -> str:
+    """
+    Download image from URL and save to local directory
+    
+    Args:
+        image_url: URL of the image to download
+        download_dir: Directory to save the downloaded image
+        
+    Returns:
+        str: Path to the downloaded image, or None if failed
+    """
+    try:
+        import requests
+        from urllib.parse import urlparse
+        import mimetypes
+        
+        # Validate URL
+        if not image_url.startswith(('http://', 'https://')):
+            return None
+        
+        # Get filename from URL or generate one
+        parsed_url = urlparse(image_url)
+        filename = os.path.basename(parsed_url.path)
+        
+        if not filename or '.' not in filename:
+            # Generate filename with proper extension
+            response = requests.head(image_url, timeout=10)
+            content_type = response.headers.get('content-type', '')
+            if 'image' in content_type:
+                ext = mimetypes.guess_extension(content_type) or '.jpg'
+                filename = f"downloaded_image_{uuid.uuid4().hex[:8]}{ext}"
+            else:
+                filename = f"downloaded_image_{uuid.uuid4().hex[:8]}.jpg"
+        
+        # Ensure filename is safe
+        filename = secure_filename(filename)
+        if not filename:
+            filename = f"downloaded_image_{uuid.uuid4().hex[:8]}.jpg"
+        
+        # Create unique filename
+        unique_filename = generate_unique_filename(filename, 'url_download')
+        file_path = os.path.join(download_dir, unique_filename)
+        
+        # Download the image
+        response = requests.get(image_url, timeout=30, stream=True)
+        response.raise_for_status()
+        
+        # Check content type
+        content_type = response.headers.get('content-type', '')
+        if not content_type.startswith('image/'):
+            return None
+        
+        # Save the image
+        with open(file_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        # Verify the file was saved and is a valid image
+        try:
+            from PIL import Image
+            with Image.open(file_path) as img:
+                img.verify()
+            return file_path
+        except Exception:
+            # If it's not a valid image, clean up and return None
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return None
+                
+    except Exception as e:
+        return None
+
 def remove_background_with_mosida_api(image_path: str) -> str:
     """
     Remove background using Mosida API

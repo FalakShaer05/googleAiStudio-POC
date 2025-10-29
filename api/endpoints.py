@@ -14,7 +14,8 @@ from .models import create_error_response, create_success_response, ERROR_CODES
 from .utils import (
     allowed_file, generate_unique_filename, format_file_size, 
     format_processing_time, cleanup_file, validate_image_file, 
-    get_image_info, create_download_url, remove_background_with_mosida_api
+    get_image_info, create_download_url, remove_background_with_mosida_api,
+    download_image_from_url
 )
 
 # Import existing functions from main app (lazy import to avoid circular dependency)
@@ -107,16 +108,23 @@ def process_image():
     
     try:
         # Validate required parameters
-        if 'image' not in request.files:
-            return jsonify(create_error_response('VALIDATION_001', 'Image file is required')), 400
-        
-        if 'prompt' not in request.form or not request.form['prompt'].strip():
+        prompt = request.form.get('prompt', '').strip()
+        if not prompt:
             return jsonify(create_error_response('VALIDATION_001', 'Prompt is required')), 400
         
-        # Get files and parameters
-        image_file = request.files['image']
-        prompt = request.form['prompt'].strip()
+        # Check if image is provided as file or URL
+        image_file = request.files.get('image')
+        image_url = request.form.get('image_url', '').strip()
+        
+        if not image_file and not image_url:
+            return jsonify(create_error_response('VALIDATION_001', 'Either image file or image_url is required')), 400
+        
+        if image_file and image_url:
+            return jsonify(create_error_response('VALIDATION_001', 'Provide either image file or image_url, not both')), 400
+        
+        # Get other parameters
         background_file = request.files.get('background')
+        background_url = request.form.get('background_url', '').strip()
         
         # Get optional parameters
         position = request.form.get('position', 'center')
@@ -131,36 +139,48 @@ def process_image():
         if opacity < 0.0 or opacity > 1.0:
             return jsonify(create_error_response('VALIDATION_004', 'Opacity must be between 0.0 and 1.0')), 400
         
-        # Validate image file
-        is_valid, error_msg = validate_image_file(image_file)
-        if not is_valid:
-            return jsonify(create_error_response('VALIDATION_002', error_msg)), 400
-        
-        # Validate background file if provided
-        if background_file and background_file.filename:
-            is_valid, error_msg = validate_image_file(background_file)
-            if not is_valid:
-                return jsonify(create_error_response('VALIDATION_002', f'Background {error_msg}')), 400
-        
         # Create upload and output directories
         upload_dir = current_app.config['UPLOAD_FOLDER']
         output_dir = current_app.config['OUTPUT_FOLDER']
         os.makedirs(upload_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Generate unique filenames
-        input_filename = generate_unique_filename(image_file.filename, 'input')
-        input_path = os.path.join(upload_dir, input_filename)
+        # Handle input image (file or URL)
+        input_path = None
+        if image_file:
+            # Validate uploaded file
+            is_valid, error_msg = validate_image_file(image_file)
+            if not is_valid:
+                return jsonify(create_error_response('VALIDATION_002', error_msg)), 400
+            
+            # Save uploaded file
+            input_filename = generate_unique_filename(image_file.filename, 'input')
+            input_path = os.path.join(upload_dir, input_filename)
+            image_file.save(input_path)
+        else:
+            # Download image from URL
+            input_path = download_image_from_url(image_url, upload_dir)
+            if not input_path:
+                return jsonify(create_error_response('VALIDATION_002', 'Failed to download image from URL. Please check the URL and try again.')), 400
         
-        # Save input image
-        image_file.save(input_path)
-        
-        # Process background if provided
+        # Handle background image (file or URL)
         background_path = None
         if background_file and background_file.filename:
+            # Validate uploaded background file
+            is_valid, error_msg = validate_image_file(background_file)
+            if not is_valid:
+                return jsonify(create_error_response('VALIDATION_002', f'Background {error_msg}')), 400
+            
+            # Save uploaded background file
             background_filename = generate_unique_filename(background_file.filename, 'bg')
             background_path = os.path.join(upload_dir, background_filename)
             background_file.save(background_path)
+        elif background_url:
+            # Download background from URL
+            background_path = download_image_from_url(background_url, upload_dir)
+            if not background_path:
+                return jsonify(create_error_response('VALIDATION_002', 'Failed to download background image from URL. Please check the URL and try again.')), 400
+        
         
         # Get app functions to avoid circular import
         app_funcs = get_app_functions()
