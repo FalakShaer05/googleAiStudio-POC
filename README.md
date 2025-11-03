@@ -91,7 +91,7 @@ POST /api/v1/process
 - `background` (file, optional): Background image file
 - `background_url` (string, optional): URL of background image to download
 - `position` (string, optional): Position for merging (default: 'center')
-- `scale` (float, optional): Scale factor 0.1-3.0 (default: 1.0)
+- `scale` (float, optional): Scale factor 0.1-1.5 (default: 1.0)
 - `opacity` (float, optional): Opacity 0.0-1.0 (default: 1.0)
 - `canvas_size` (string, optional): Print size (e.g., '8x10')
 

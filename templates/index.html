@@ -213,6 +213,31 @@
             box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4);
         }
         
+        .preview-card {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 1rem;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .preview-card h6 {
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .preview-image {
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+            max-height: 300px;
+            object-fit: contain;
+        }
+        
         .spinner {
             display: inline-block;
             width: 20px;
@@ -416,11 +441,11 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label">Scale</label>
-                                <input type="range" class="form-range" id="scale" name="scale" min="0.5" max="2.0" step="0.1" value="1.0">
+                                <input type="range" class="form-range" id="scale" name="scale" min="0.5" max="1.5" step="0.1" value="1.0">
                                 <div class="d-flex justify-content-between">
                                     <small>50%</small>
                                     <small id="scaleValue">100%</small>
-                                    <small>200%</small>
+                                    <small>150%</small>
                                 </div>
                             </div>
                         </div>
@@ -441,6 +466,40 @@
                     
                     <!-- Status Messages -->
                     <div class="status-message" id="statusMessage"></div>
+                    
+                    <!-- Preview Section -->
+                    <div class="file-info" id="previewSection" style="display: none;">
+                        <h5 class="mb-3"><i class="fas fa-eye me-2"></i>Conversion Preview</h5>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <div class="preview-card">
+                                    <h6 class="text-center mb-2"><i class="fas fa-image me-1"></i>Converted Image</h6>
+                                    <img id="previewConverted" src="" alt="Converted Image" class="preview-image" style="display: none;">
+                                    <div class="text-center text-muted small" id="previewConvertedPlaceholder">
+                                        <i class="fas fa-spinner fa-spin"></i> Loading...
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="preview-card">
+                                    <h6 class="text-center mb-2"><i class="fas fa-image me-1"></i>Background</h6>
+                                    <img id="previewBackground" src="" alt="Background" class="preview-image" style="display: none;">
+                                    <div class="text-center text-muted small" id="previewBackgroundPlaceholder" style="display: none;">
+                                        No background
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="preview-card">
+                                    <h6 class="text-center mb-2"><i class="fas fa-check-circle me-1"></i>Final Result</h6>
+                                    <img id="previewFinal" src="" alt="Final Result" class="preview-image" style="display: none;">
+                                    <div class="text-center text-muted small" id="previewFinalPlaceholder">
+                                        <i class="fas fa-spinner fa-spin"></i> Loading...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     
                     <!-- Download Section -->
                     <div class="file-info" id="downloadSection" style="display: none;">
@@ -478,6 +537,13 @@
         const statusMessage = document.getElementById('statusMessage');
         const downloadSection = document.getElementById('downloadSection');
         const downloadBtn = document.getElementById('downloadBtn');
+        const previewSection = document.getElementById('previewSection');
+        const previewConverted = document.getElementById('previewConverted');
+        const previewBackground = document.getElementById('previewBackground');
+        const previewFinal = document.getElementById('previewFinal');
+        const previewConvertedPlaceholder = document.getElementById('previewConvertedPlaceholder');
+        const previewBackgroundPlaceholder = document.getElementById('previewBackgroundPlaceholder');
+        const previewFinalPlaceholder = document.getElementById('previewFinalPlaceholder');
         
         let currentOutputFilename = null;
         
@@ -655,6 +721,8 @@
             
             showProgress();
             hideStatus();
+            hidePreview();
+            downloadSection.style.display = 'none';
             
             try {
                 const response = await fetch('/upload', {
@@ -674,6 +742,11 @@
                         showSuccess('Image converted and merged with background successfully!');
                     } else {
                         showSuccess('Image converted successfully!');
+                    }
+                    
+                    // Show preview images if available
+                    if (result.preview_images) {
+                        showPreview(result.preview_images);
                     }
                     
                     showDownload();
@@ -724,6 +797,60 @@
         
         function showDownload() {
             downloadSection.style.display = 'block';
+        }
+        
+        function showPreview(previewImages) {
+            previewSection.style.display = 'block';
+            
+            // Load converted image preview
+            if (previewImages.converted) {
+                previewConverted.src = `/outputs/${previewImages.converted}`;
+                previewConverted.onload = function() {
+                    previewConverted.style.display = 'block';
+                    previewConvertedPlaceholder.style.display = 'none';
+                };
+                previewConverted.onerror = function() {
+                    previewConvertedPlaceholder.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load';
+                };
+            }
+            
+            // Load background preview
+            if (previewImages.background) {
+                previewBackground.src = `/outputs/${previewImages.background}`;
+                previewBackground.onload = function() {
+                    previewBackground.style.display = 'block';
+                    previewBackgroundPlaceholder.style.display = 'none';
+                };
+                previewBackground.onerror = function() {
+                    previewBackgroundPlaceholder.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load';
+                    previewBackgroundPlaceholder.style.display = 'block';
+                };
+            } else {
+                previewBackgroundPlaceholder.innerHTML = 'No background used';
+                previewBackgroundPlaceholder.style.display = 'block';
+            }
+            
+            // Load final result preview
+            if (previewImages.final) {
+                previewFinal.src = `/outputs/${previewImages.final}`;
+                previewFinal.onload = function() {
+                    previewFinal.style.display = 'block';
+                    previewFinalPlaceholder.style.display = 'none';
+                };
+                previewFinal.onerror = function() {
+                    previewFinalPlaceholder.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Failed to load';
+                };
+            }
+        }
+        
+        function hidePreview() {
+            previewSection.style.display = 'none';
+            previewConverted.style.display = 'none';
+            previewBackground.style.display = 'none';
+            previewFinal.style.display = 'none';
+            previewConvertedPlaceholder.style.display = 'block';
+            previewBackgroundPlaceholder.style.display = 'none';
+            previewFinalPlaceholder.style.display = 'block';
         }
     </script>
 </body>

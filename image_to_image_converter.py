@@ -562,8 +562,8 @@ Examples:
         sys.exit(1)
     
     # Validate compositing parameters
-    if args.scale < 0.1 or args.scale > 3.0:
-        print("Error: Scale must be between 0.1 and 3.0")
+    if args.scale < 0.1 or args.scale > 1.5:
+        print("Error: Scale must be between 0.1 and 1.5")
         sys.exit(1)
     
     if args.opacity < 0.0 or args.opacity > 1.0:

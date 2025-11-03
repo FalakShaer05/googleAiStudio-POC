@@ -195,6 +195,7 @@ def get_smart_canvas_options(aspect_ratio_info):
 def resize_to_canvas_size(image, canvas_size, dpi=300):
     """
     Resize image to specific canvas dimensions while maintaining composition
+    IMPORTANT: This function will NOT crop the image - it will scale to fit or scale up to fill
     
     Args:
         image: PIL Image object
@@ -202,7 +203,7 @@ def resize_to_canvas_size(image, canvas_size, dpi=300):
         dpi: Dots per inch (default: 300 for print quality)
     
     Returns:
-        PIL Image object resized to canvas size
+        PIL Image object resized to canvas size (no cropping - full image visible)
     """
     try:
         # Get target dimensions
@@ -214,32 +215,45 @@ def resize_to_canvas_size(image, canvas_size, dpi=300):
         current_width, current_height = image.size
         print(f"Current image size: {current_width}x{current_height}")
         
-        # Calculate scaling factor to fit the image into the target canvas
-        # We want to maintain the composition, so we'll scale to fit
+        # Check if image is already larger than target - if so, scale down to fit
+        # If image is smaller, scale up to fill canvas (but don't crop)
         scale_x = target_width / current_width
         scale_y = target_height / current_height
-        scale = min(scale_x, scale_y)  # Use the smaller scale to ensure it fits
+        
+        if current_width > target_width or current_height > target_height:
+            # Image is larger - scale down to fit (use smaller scale to ensure it fits)
+            scale = min(scale_x, scale_y)
+            print(f"Image is larger than canvas - scaling DOWN by {scale:.3f}")
+        else:
+            # Image is smaller - scale up to fill canvas (use larger scale to fill)
+            # But ensure we don't exceed target dimensions
+            scale = min(scale_x, scale_y)  # Use smaller to ensure it fits
+            print(f"Image is smaller than canvas - scaling UP by {scale:.3f}")
         
         # Calculate new dimensions
         new_width = int(current_width * scale)
         new_height = int(current_height * scale)
         
-        print(f"Scaling by factor: {scale:.3f}")
         print(f"New dimensions: {new_width}x{new_height}")
         
         # Resize the image
         resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
+        # If resized image matches target exactly, return it
+        if new_width == target_width and new_height == target_height:
+            print(f"Image resized to exact canvas size")
+            return resized_image
+        
         # Create a new canvas with the target size and paste the resized image
         canvas = Image.new('RGB', (target_width, target_height), (255, 255, 255))
         
-        # Center the resized image on the canvas
+        # Center the resized image on the canvas (this adds white space, doesn't crop)
         x_offset = (target_width - new_width) // 2
         y_offset = (target_height - new_height) // 2
         
         canvas.paste(resized_image, (x_offset, y_offset))
         
-        print(f"Final canvas size: {canvas.size}")
+        print(f"Final canvas size: {canvas.size} (image centered, no cropping)")
         return canvas
         
     except Exception as e:
@@ -582,21 +596,39 @@ def remove_black_background_simple(image, threshold=15):
 
 def enhance_prompt_for_white_background(prompt):
     """
-    Enhance the prompt to ensure solid white background for better API removal
+    Enhance the prompt to ensure ONLY character is generated with solid white/transparent background
+    This is critical - the converted image should be ONLY the character, no background elements
     """
-    # Add STRONG white background requirements for better API processing
-    white_background_enhancement = """
+    # Add STRONG requirements for character-only output with no background
+    character_only_enhancement = """
 
-CRITICAL BACKGROUND REQUIREMENTS:
-- Background MUST be pure white (#FFFFFF) - NO BLACK, NO DARK COLORS
-- Background must be completely solid white with no patterns, textures, or scenery
-- Character should be clearly separated from the white background
-- NO black backgrounds, NO dark backgrounds, NO colored backgrounds
-- Background must be clean white for easy removal
-- Standard image format (JPEG/PNG) with solid white background only
-- IMPORTANT: The background behind the character must be bright white, not black or any other color"""
+CRITICAL REQUIREMENTS - READ CAREFULLY:
+1. OUTPUT ONLY THE CHARACTER/PERSON - NO BACKGROUND ELEMENTS:
+   - Generate ONLY the full-length character (head to feet)
+   - DO NOT include any background elements, scenery, objects, or environment
+   - NO backgrounds, NO landscapes, NO rooms, NO outdoor scenes
+   - The character should be the ONLY subject in the image
+
+2. BACKGROUND MUST BE PURE WHITE OR TRANSPARENT:
+   - Background MUST be completely solid white (#FFFFFF)
+   - NO patterns, textures, gradients, shadows, or scenery in background
+   - NO black, gray, or colored backgrounds
+   - The white background should be clean and uniform behind the character
+
+3. CHARACTER SPECIFICATIONS:
+   - Generate a COMPLETE full-length character (from head to feet)
+   - Character should be clearly separated from the white background
+   - Character should be the main and ONLY focus
+   - NO background elements should be visible
+
+4. FINAL OUTPUT:
+   - Image should show ONLY the character on a pure white background
+   - Background must be removable easily (solid white makes this possible)
+   - The character must be complete and full-length
+
+IMPORTANT: The output image must contain ONLY the character with a solid white background. No other elements, scenery, or background details should be included."""
     
-    return prompt + white_background_enhancement
+    return prompt + character_only_enhancement
 
 
 def remove_background_with_mosida_api(image_path):
@@ -702,13 +734,21 @@ def composite_images(foreground_image, background_image, position='center', scal
         # Keep background at original size (don't resize to match foreground)
         # This matches the frontend preview behavior where background stays full size
         
+        # NOTE: The converted image from Google AI Studio is ALWAYS a full-length character
+        # No need for portrait detection or estimated missing height
+        
         # Scale foreground image if needed
         if scale != 1.0:
             new_width = int(foreground_image.width * scale)
             new_height = int(foreground_image.height * scale)
             foreground_image = foreground_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
+        # Store original size before shadow (for positioning calculations)
+        original_fg_height = foreground_image.height
+        
         # Add drop shadow for realistic composition
+        shadow_offset = None
+        shadow_blur = None
         if add_shadow:
             print("Adding drop shadow for realistic composition...")
             shadow_offset = (int(5 * scale), int(5 * scale))  # Scale shadow with image
@@ -717,32 +757,92 @@ def composite_images(foreground_image, background_image, position='center', scal
         
         # Create a copy of background for compositing
         result_image = background_image.copy()
+        bg_width, bg_height = result_image.size
+        fg_width, fg_height = foreground_image.size
         
         # Calculate position
         if isinstance(position, tuple):
             x, y = position
         else:
             # Calculate position based on string
-            bg_width, bg_height = result_image.size
-            fg_width, fg_height = foreground_image.size
-            
-            position_map = {
-                'center': (bg_width // 2 - fg_width // 2, bg_height // 2 - fg_height // 2),
-                'top-left': (0, 0),
-                'top-right': (bg_width - fg_width, 0),
-                'bottom-left': (0, bg_height - fg_height),
-                'bottom-right': (bg_width - fg_width, bg_height - fg_height),
-                'top': (bg_width // 2 - fg_width // 2, 0),
-                'bottom': (bg_width // 2 - fg_width // 2, bg_height - fg_height),
-                'left': (0, bg_height // 2 - fg_height // 2),
-                'right': (bg_width - fg_width, bg_height // 2 - fg_height // 2)
-            }
-            
-            x, y = position_map.get(position, position_map['center'])
+            # For bottom positioning: Place character few pixels up from bottom
+            # The converted image is ALWAYS full-length
+            if position == 'bottom' and add_shadow and shadow_offset:
+                # Calculate where the original image sits within the composite (with shadow)
+                image_y_in_composite = max(0, -shadow_offset[1]) + shadow_blur
+                
+                # Calculate the actual bottom of the character in the composite
+                character_bottom_in_composite = image_y_in_composite + original_fg_height
+                
+                # Position few pixels up from bottom (adjustable offset)
+                pixels_up_from_bottom = max(5, int(original_fg_height * 0.01))  # ~1% of height, min 5px
+                
+                # Calculate desired y position
+                desired_y = bg_height - character_bottom_in_composite - pixels_up_from_bottom
+                
+                # Check if character is too large for background
+                # If so, resize background to fit the character while maintaining aspect ratio
+                if desired_y < 0 or fg_height > bg_height:
+                    print(f"Character ({fg_height}px) is larger than background ({bg_height}px)")
+                    
+                    # Calculate minimum background height needed to fit character at bottom
+                    min_bg_height_needed = fg_height + pixels_up_from_bottom + 50  # Add padding
+                    
+                    # Calculate new background dimensions maintaining aspect ratio
+                    aspect_ratio = bg_width / bg_height
+                    new_bg_height = min_bg_height_needed
+                    new_bg_width = int(new_bg_height * aspect_ratio)
+                    
+                    # Resize background
+                    result_image = background_image.resize((new_bg_width, new_bg_height), Image.Resampling.LANCZOS)
+                    bg_width, bg_height = result_image.size
+                    print(f"Background resized to {bg_width}x{bg_height} to fit character")
+                    
+                    # Recalculate y position with new background size
+                    desired_y = bg_height - character_bottom_in_composite - pixels_up_from_bottom
+                
+                # Position so character's feet are pixels_up_from_bottom above bg bottom
+                y = desired_y
+                x = bg_width // 2 - fg_width // 2
+                
+                print(f"Bottom positioning: bg={bg_width}x{bg_height}, character={fg_width}x{fg_height}, character_bottom_in_composite={character_bottom_in_composite}, pixels_up={pixels_up_from_bottom}, y={y}")
+            else:
+                position_map = {
+                    'center': (bg_width // 2 - fg_width // 2, bg_height // 2 - fg_height // 2),
+                    'top-left': (0, 0),
+                    'top-right': (bg_width - fg_width, 0),
+                    'bottom-left': (0, bg_height - fg_height),
+                    'bottom-right': (bg_width - fg_width, bg_height - fg_height),
+                    'top': (bg_width // 2 - fg_width // 2, 0),
+                    'bottom': (bg_width // 2 - fg_width // 2, bg_height - fg_height),
+                    'left': (0, bg_height // 2 - fg_height // 2),
+                    'right': (bg_width - fg_width, bg_height // 2 - fg_height // 2)
+                }
+                
+                x, y = position_map.get(position, position_map['center'])
         
         # Ensure position is within bounds
         x = max(0, min(x, result_image.width - foreground_image.width))
-        y = max(0, min(y, result_image.height - foreground_image.height))
+        
+        # Final bounds check - ensure character is always visible
+        # For bottom positioning, we've already resized background if needed, so just verify
+        if position == 'bottom' and add_shadow and shadow_offset:
+            # Final safety check - ensure character fits
+            if y < 0:
+                # Still negative after resize - this shouldn't happen, but position at top
+                y = 0
+                print(f"WARNING: y still negative after resize, adjusting to 0")
+            elif (y + foreground_image.height) > result_image.height:
+                # Bottom extends beyond - adjust
+                y = result_image.height - foreground_image.height
+                print(f"Adjusted y to {y} to keep character within bounds")
+            
+            # Verify final position
+            if y < 0 or (y + foreground_image.height) > result_image.height:
+                print(f"ERROR: Character still doesn't fit! y={y}, fg_height={foreground_image.height}, bg_height={result_image.height}")
+        else:
+            # Standard bounds check for other positions
+            y = max(0, min(y, result_image.height - foreground_image.height))
         
         # Ensure background is in RGB mode for proper compositing
         if result_image.mode != 'RGB':
@@ -1042,6 +1142,39 @@ def upload_file():
                 final_path = os.path.join(app.config['OUTPUT_FOLDER'], final_filename)
                 final_image.save(final_path, quality=95, optimize=True)
                 
+                # Save preview images (converted image and background) for validation
+                # Save converted image preview (the ORIGINAL converted image before background removal)
+                # This shows what Google AI Studio actually produced
+                converted_preview_filename = f"preview_converted_{output_filename}"
+                converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
+                # Use the original converted image (before background removal) to see the actual conversion result
+                preview_converted = Image.open(converted_path)
+                # Resize for preview (max 800px width for faster loading)
+                preview_width = min(800, preview_converted.width)
+                preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
+                preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+                preview_converted.save(converted_preview_path, quality=85, optimize=True)
+                
+                # Save background preview
+                background_preview_filename = f"preview_bg_{reference_background_filename}"
+                background_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], background_preview_filename)
+                preview_bg = background_image.copy()
+                # Resize for preview
+                preview_bg_width = min(800, preview_bg.width)
+                preview_bg_height = int(preview_bg.height * (preview_bg_width / preview_bg.width))
+                preview_bg = preview_bg.resize((preview_bg_width, preview_bg_height), Image.Resampling.LANCZOS)
+                preview_bg.save(background_preview_path, quality=85, optimize=True)
+                
+                # Save final result preview
+                final_preview_filename = f"preview_final_{final_filename}"
+                final_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], final_preview_filename)
+                preview_final = final_image.copy()
+                # Resize for preview
+                preview_final_width = min(800, preview_final.width)
+                preview_final_height = int(preview_final.height * (preview_final_width / preview_final.width))
+                preview_final = preview_final.resize((preview_final_width, preview_final_height), Image.Resampling.LANCZOS)
+                preview_final.save(final_preview_path, quality=85, optimize=True)
+                
                 # Clean up temporary files
                 if api_result_path and os.path.exists(api_result_path):
                     os.remove(api_result_path)
@@ -1055,16 +1188,36 @@ def upload_file():
                     'message': 'Image converted and merged with background successfully!',
                     'output_filename': final_filename,
                     'needs_compositing': False,
-                    'auto_merged': True
+                    'auto_merged': True,
+                    'preview_images': {
+                        'converted': converted_preview_filename,
+                        'background': background_preview_filename,
+                        'final': final_preview_filename
+                    }
                 })
             else:
                 # No background, return direct download
+                # Save converted image preview for validation
+                converted_preview_filename = f"preview_converted_{output_filename}"
+                converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
+                preview_converted = Image.open(output_path)
+                # Resize for preview (max 800px width)
+                preview_width = min(800, preview_converted.width)
+                preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
+                preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+                preview_converted.save(converted_preview_path, quality=85, optimize=True)
+                
                 return jsonify({
                     'success': True,
                     'message': message,
                     'output_filename': output_filename,
                     'needs_compositing': False,
-                    'auto_merged': False
+                    'auto_merged': False,
+                    'preview_images': {
+                        'converted': converted_preview_filename,
+                        'background': None,
+                        'final': converted_preview_filename
+                    }
                 })
         else:
             # Clean up input files on failure
@@ -1219,8 +1372,8 @@ def handle_composite():
             return jsonify({'error': 'Missing required parameters'}), 400
         
         # Validate parameters
-        if scale < 0.1 or scale > 3.0:
-            return jsonify({'error': 'Scale must be between 0.1 and 3.0'}), 400
+        if scale < 0.1 or scale > 1.5:
+            return jsonify({'error': 'Scale must be between 0.1 and 1.5'}), 400
         
         if opacity < 0.0 or opacity > 1.0:
             return jsonify({'error': 'Opacity must be between 0.0 and 1.0'}), 400

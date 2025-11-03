@@ -133,8 +133,8 @@ def process_image():
         canvas_size = request.form.get('canvas_size')
         
         # Validate parameters
-        if scale < 0.1 or scale > 3.0:
-            return jsonify(create_error_response('VALIDATION_004', 'Scale must be between 0.1 and 3.0')), 400
+        if scale < 0.1 or scale > 1.5:
+            return jsonify(create_error_response('VALIDATION_004', 'Scale must be between 0.1 and 1.5')), 400
         
         if opacity < 0.0 or opacity > 1.0:
             return jsonify(create_error_response('VALIDATION_004', 'Opacity must be between 0.0 and 1.0')), 400
