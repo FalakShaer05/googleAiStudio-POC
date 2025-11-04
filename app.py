@@ -278,7 +278,18 @@ def get_print_dimensions(canvas_size, dpi=300):
         '11x14': (11, 14),
         '16x20': (16, 20),
         '18x24': (18, 24),
-        '20x30': (20, 30)
+        '20x30': (20, 30),
+        # Add smart canvas options
+        '6x6': (6, 6),
+        '8x8': (8, 8),
+        '12x12': (12, 12),
+        '8x12': (8, 12),
+        '13x19': (13, 19),
+        '24x36': (24, 36),
+        '6x4': (6, 4),
+        '12x8': (12, 8),
+        '19x13': (19, 13),
+        '36x24': (36, 24),
     }
     
     if canvas_size in canvas_sizes:
@@ -289,6 +300,113 @@ def get_print_dimensions(canvas_size, dpi=300):
     else:
         # Default to 8x10 if size not recognized
         return (2400, 3000)
+
+def resize_background_with_ai(background_image, target_width, target_height):
+    """
+    Use Google AI Studio to intelligently resize/refit background to target dimensions
+    This prevents distortion by using AI to intelligently adjust the background
+    
+    Args:
+        background_image: PIL Image object (background)
+        target_width: Target width in pixels
+        target_height: Target height in pixels
+    
+    Returns:
+        PIL Image object resized to target dimensions (without distortion)
+    """
+    if not client:
+        print("⚠️ Gemini client not available, using standard resize")
+        # Fallback to standard resize maintaining aspect ratio
+        bg_width, bg_height = background_image.size
+        scale_x = target_width / bg_width
+        scale_y = target_height / bg_height
+        scale = max(scale_x, scale_y)  # Use max to fill, then crop center
+        new_width = int(bg_width * scale)
+        new_height = int(bg_height * scale)
+        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Crop to exact dimensions from center
+        left = (new_width - target_width) // 2
+        top = (new_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+        return resized.crop((left, top, right, bottom))
+    
+    try:
+        print(f"🤖 Using Google AI Studio to resize background to {target_width}x{target_height}")
+        print(f"   Original background size: {background_image.size}")
+        
+        # Create a prompt for intelligent background resizing
+        resize_prompt = f"""
+Resize this background image to exactly {target_width} pixels wide by {target_height} pixels tall.
+
+CRITICAL REQUIREMENTS:
+1. Maintain the visual style, colors, and artistic elements of the background
+2. Intelligently adjust the composition to fit the new dimensions without distortion
+3. If the aspect ratio is different, intelligently extend or reframe the background elements
+4. Preserve all important visual elements (text, patterns, colors)
+5. Fill the entire {target_width}x{target_height} canvas - no empty spaces
+6. The output must be exactly {target_width} pixels wide and {target_height} pixels tall
+7. Do not distort or stretch the image - intelligently adjust the composition
+
+The background should look natural and maintain its artistic integrity at the new dimensions."""
+        
+        # Use AI to resize
+        contents = [resize_prompt, background_image]
+        
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image-preview",
+            contents=contents,
+        )
+        
+        # Process the response
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                resized_background = Image.open(io.BytesIO(part.inline_data.data))
+                print(f"✅ AI resized background to: {resized_background.size}")
+                
+                # Verify dimensions match target (AI should produce exact dimensions, but verify)
+                if resized_background.size != (target_width, target_height):
+                    print(f"⚠️ AI produced {resized_background.size}, adjusting to {target_width}x{target_height}")
+                    resized_background = resized_background.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                
+                return resized_background
+        
+        # If AI didn't return image, fallback to standard resize
+        print("⚠️ AI didn't return image, using standard resize")
+        bg_width, bg_height = background_image.size
+        scale_x = target_width / bg_width
+        scale_y = target_height / bg_height
+        scale = max(scale_x, scale_y)
+        new_width = int(bg_width * scale)
+        new_height = int(bg_height * scale)
+        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Crop to exact dimensions from center
+        left = (new_width - target_width) // 2
+        top = (new_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+        return resized.crop((left, top, right, bottom))
+        
+    except Exception as e:
+        print(f"❌ Error using AI to resize background: {e}")
+        print("   Falling back to standard resize")
+        # Fallback to standard resize
+        bg_width, bg_height = background_image.size
+        scale_x = target_width / bg_width
+        scale_y = target_height / bg_height
+        scale = max(scale_x, scale_y)
+        new_width = int(bg_width * scale)
+        new_height = int(bg_height * scale)
+        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Crop to exact dimensions from center
+        left = (new_width - target_width) // 2
+        top = (new_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+        return resized.crop((left, top, right, bottom))
 
 def upscale_to_canvas_size(image, canvas_size, dpi=300):
     """
@@ -1094,6 +1212,13 @@ def upload_file():
                 converted_image = Image.open(converted_path)
                 background_image = Image.open(reference_background_path)
                 
+                # Resize background to canvas size if specified (using AI to prevent distortion)
+                if canvas_size:
+                    target_width, target_height = get_print_dimensions(canvas_size, dpi)
+                    print(f"📐 Resizing background to canvas size: {canvas_size} ({target_width}x{target_height}px)")
+                    background_image = resize_background_with_ai(background_image, target_width, target_height)
+                    print(f"✅ Background resized to: {background_image.size}")
+                
                 # Apply professional background removal
                 print(f"🔧 DEBUG: Applying Remove.bg API for background removal...")
                 api_result_path = remove_background_with_mosida_api(converted_path)
@@ -1132,10 +1257,16 @@ def upload_file():
                     add_shadow=True
                 )
                 
-                # Resize to canvas size if specified
+                # Note: If canvas_size was specified, background was already resized to canvas size
+                # So the final image should already match canvas dimensions
+                # Only resize if there's a mismatch (shouldn't happen, but safety check)
                 if canvas_size:
-                    print(f"Resizing final image to canvas size: {canvas_size}")
-                    final_image = resize_to_canvas_size(final_image, canvas_size, dpi)
+                    target_width, target_height = get_print_dimensions(canvas_size, dpi)
+                    if final_image.size != (target_width, target_height):
+                        print(f"⚠️ Final image size ({final_image.size}) doesn't match canvas ({target_width}x{target_height}), adjusting...")
+                        final_image = resize_to_canvas_size(final_image, canvas_size, dpi)
+                    else:
+                        print(f"✅ Final image already matches canvas size: {final_image.size}")
                 
                 # Save final merged image
                 final_filename = f"merged_{canvas_size}_{output_filename}" if canvas_size else f"merged_{output_filename}"

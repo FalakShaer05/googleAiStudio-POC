@@ -24,7 +24,8 @@ def get_app_functions():
     from app import (
         convert_image_to_image, composite_images, remove_white_background,
         remove_background_with_mosida_api,
-        upscale_to_canvas_size, resize_to_canvas_size, enhance_prompt_for_white_background
+        upscale_to_canvas_size, resize_to_canvas_size, enhance_prompt_for_white_background,
+        resize_background_with_ai, get_print_dimensions
     )
     return {
         'convert_image_to_image': convert_image_to_image,
@@ -33,7 +34,9 @@ def get_app_functions():
         'remove_background_with_mosida_api': remove_background_with_mosida_api,
         'upscale_to_canvas_size': upscale_to_canvas_size,
         'resize_to_canvas_size': resize_to_canvas_size,
-        'enhance_prompt_for_white_background': enhance_prompt_for_white_background
+        'enhance_prompt_for_white_background': enhance_prompt_for_white_background,
+        'resize_background_with_ai': resize_background_with_ai,
+        'get_print_dimensions': get_print_dimensions
     }
 
 # Create API blueprint
@@ -223,6 +226,13 @@ def process_image():
             converted_image = Image.open(output_path)
             background_image = Image.open(background_path)
             
+            # Resize background to canvas size if specified (using AI to prevent distortion)
+            if canvas_size:
+                target_width, target_height = app_funcs['get_print_dimensions'](canvas_size, 300)
+                print(f"📐 Resizing background to canvas size: {canvas_size} ({target_width}x{target_height}px)")
+                background_image = app_funcs['resize_background_with_ai'](background_image, target_width, target_height)
+                print(f"✅ Background resized to: {background_image.size}")
+            
             # Apply background removal using Mosida API
             api_result_path = remove_background_with_mosida_api(output_path)
             
@@ -242,9 +252,16 @@ def process_image():
                 add_shadow=True
             )
             
-            # Resize to canvas size if specified
+            # Note: If canvas_size was specified, background was already resized to canvas size
+            # So the final image should already match canvas dimensions
+            # Only resize if there's a mismatch (shouldn't happen, but safety check)
             if canvas_size:
-                final_image = app_funcs['resize_to_canvas_size'](final_image, canvas_size, 300)
+                target_width, target_height = app_funcs['get_print_dimensions'](canvas_size, 300)
+                if final_image.size != (target_width, target_height):
+                    print(f"⚠️ Final image size ({final_image.size}) doesn't match canvas ({target_width}x{target_height}), adjusting...")
+                    final_image = app_funcs['resize_to_canvas_size'](final_image, canvas_size, 300)
+                else:
+                    print(f"✅ Final image already matches canvas size: {final_image.size}")
             
             # Save final merged image
             final_filename = f"merged_{output_filename}"
