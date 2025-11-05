@@ -233,14 +233,36 @@ def process_image():
                 background_image = app_funcs['resize_background_with_ai'](background_image, target_width, target_height)
                 print(f"✅ Background resized to: {background_image.size}")
             
-            # Apply background removal using Mosida API
-            api_result_path = remove_background_with_mosida_api(output_path)
+            # Apply professional background removal using Mosida API (with fallbacks)
+            print(f"🔧 DEBUG: Applying Remove.bg API for background removal...")
+            api_result_path = app_funcs['remove_background_with_mosida_api'](output_path)
             
             if api_result_path and os.path.exists(api_result_path):
+                print(f"✅ Remove.bg background removal successful")
                 converted_image = Image.open(api_result_path)
             else:
-                # Use local background removal as fallback
-                converted_image = app_funcs['remove_white_background'](converted_image)
+                print(f"❌ Remove.bg failed, trying fallback...")
+                # Try fallback API call
+                api_result_path = app_funcs['remove_background_with_mosida_api'](output_path)
+                if api_result_path and os.path.exists(api_result_path):
+                    converted_image = Image.open(api_result_path)
+                    print(f"✅ Fallback API background removal successful")
+                else:
+                    print(f"❌ All APIs failed - trying local background removal...")
+                    # Try local background removal as last resort
+                    converted_image = Image.open(output_path)
+                    
+                    # Try both black and white background removal
+                    try:
+                        from app import remove_black_background
+                        converted_image = remove_black_background(converted_image)
+                        print(f"✅ Local black background removal applied")
+                    except:
+                        pass
+                    
+                    # Also try white background removal
+                    converted_image = app_funcs['remove_white_background'](converted_image)
+                    print(f"✅ Local white background removal applied")
             
             # Composite images
             final_image = app_funcs['composite_images'](
