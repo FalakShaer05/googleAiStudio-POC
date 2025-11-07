@@ -24,6 +24,13 @@ if [ ! -e "./docker-compose.yml" ]; then
   exit 1
 fi
 
+echo "### Cleaning up any existing containers and networks ..."
+# Stop and remove existing containers
+docker compose --profile production down 2>/dev/null || true
+
+# Remove orphaned networks
+docker network prune -f > /dev/null 2>&1 || true
+
 echo "### Starting nginx (HTTP only, for Let's Encrypt challenge) ..."
 # Start nginx with HTTP only - we'll add HTTPS after getting certificates
 docker compose --profile production up -d nginx
