@@ -42,8 +42,9 @@ if [ $? -eq 0 ]; then
   
   echo ""
   echo "### Verifying certificate ..."
-  ISSUER=$(docker compose exec nginx openssl x509 -in /etc/letsencrypt/live/$DOMAIN/cert.pem -noout -issuer 2>/dev/null)
-  if echo "$ISSUER" | grep -q "Fake LE Intermediate"; then
+  sleep 2
+  CERT_INFO=$(docker compose run --rm --entrypoint "certbot certificates" certbot 2>/dev/null | grep -A 10 "$DOMAIN")
+  if echo "$CERT_INFO" | grep -qi "staging\|fake"; then
     echo "⚠️  WARNING: Still showing staging certificate!"
     echo "   You may need to wait a moment and reload nginx again"
   else
