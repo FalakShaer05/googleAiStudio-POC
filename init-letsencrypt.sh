@@ -24,24 +24,30 @@ if [ ! -e "./docker-compose.yml" ]; then
   exit 1
 fi
 
-echo "### Creating dummy certificate for $DOMAIN ..."
-mkdir -p "./certbot/conf/live/$DOMAIN"
-docker compose run --rm --entrypoint "\
-  openssl req -x509 -nodes -newkey rsa:4096 -days 1\
-    -keyout '/etc/letsencrypt/live/$DOMAIN/privkey.pem' \
-    -out '/etc/letsencrypt/live/$DOMAIN/fullchain.pem' \
-    -subj '/CN=localhost'" certbot
+echo "### Starting nginx (HTTP only, for Let's Encrypt challenge) ..."
+# Start nginx with HTTP only - we'll add HTTPS after getting certificates
+docker compose --profile production up -d nginx
 echo
 
-echo "### Starting nginx ..."
-docker compose up --force-recreate -d nginx
-echo
+# Wait for nginx to be ready
+echo "### Waiting for nginx to be ready ..."
+sleep 5
 
-echo "### Deleting dummy certificate for $DOMAIN ..."
-docker compose run --rm --entrypoint "\
-  rm -Rf /etc/letsencrypt/live/$DOMAIN && \
-  rm -Rf /etc/letsencrypt/archive/$DOMAIN && \
-  rm -Rf /etc/letsencrypt/renewal/$DOMAIN.conf" certbot
+# Check if nginx is running
+if ! docker compose ps nginx | grep -q "Up"; then
+  echo "Error: nginx failed to start. Check logs with: docker compose logs nginx"
+  exit 1
+fi
+
+# Verify nginx is listening on port 80
+echo "### Verifying nginx is accessible on port 80 ..."
+if ! curl -f -s http://localhost/.well-known/acme-challenge/test > /dev/null 2>&1; then
+  echo "Warning: nginx may not be accessible on port 80"
+  echo "Please ensure:"
+  echo "  1. Port 80 is open in your firewall"
+  echo "  2. No other service is using port 80"
+  echo "  3. Check nginx logs: docker compose logs nginx"
+fi
 echo
 
 echo "### Requesting Let's Encrypt certificate for $DOMAIN ..."
@@ -64,11 +70,17 @@ docker compose run --rm --entrypoint "\
     --force-renewal" certbot
 echo
 
-echo "### Reloading nginx ..."
-docker compose exec nginx nginx -s reload
-
-echo "### Certificate obtained successfully!"
-echo "### Your site should now be available at https://$DOMAIN"
+echo "### Reloading nginx to enable HTTPS ..."
+# Test nginx config first
+docker compose exec nginx nginx -t
+if [ $? -eq 0 ]; then
+  docker compose exec nginx nginx -s reload
+  echo "### Certificate obtained successfully!"
+  echo "### Your site should now be available at https://$DOMAIN"
+else
+  echo "### Warning: nginx configuration test failed. HTTPS may not work."
+  echo "### Check nginx logs: docker compose logs nginx"
+fi
 echo ""
 echo "### Note: If you used --staging, you'll need to run this script again with STAGING=0"
 echo "### to get a production certificate."
