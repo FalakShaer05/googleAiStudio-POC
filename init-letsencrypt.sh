@@ -10,7 +10,7 @@ fi
 
 DOMAIN="dev-google-ai.mosida.com"
 EMAIL="falak@livao.com"  # Change this to your email address
-STAGING=1  # Set to 1 if you're testing your setup to avoid hitting request limits
+STAGING=0  # Set to 1 if you're testing your setup to avoid hitting request limits, 0 for production
 
 if [ -d "$HOME/letsencrypt/conf/live/$DOMAIN" ]; then
   read -p "Existing data found for $DOMAIN. Continue and replace the certificate? (y/N) " decision
