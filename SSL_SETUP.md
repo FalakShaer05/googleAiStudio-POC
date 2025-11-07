@@ -33,7 +33,7 @@ Run the initialization script to obtain your first SSL certificate:
 Start all services including nginx and certbot:
 
 ```bash
-docker-compose --profile production up -d
+docker compose --profile production up -d
 ```
 
 This will:
@@ -111,31 +111,31 @@ If you need to manually renew certificates:
 
 3. **Check Logs**: View certbot logs
    ```bash
-   docker-compose logs certbot
+   docker compose logs certbot
    ```
 
 ### Nginx Not Starting
 
 1. **Check Configuration**: Test nginx config
    ```bash
-   docker-compose exec nginx nginx -t
+   docker compose exec nginx nginx -t
    ```
 
 2. **Check Logs**: View nginx logs
    ```bash
-   docker-compose logs nginx
+   docker compose logs nginx
    ```
 
 ### Certificate Renewal Issues
 
 1. **Check Certbot Status**: View certbot container logs
    ```bash
-   docker-compose logs certbot
+   docker compose logs certbot
    ```
 
 2. **Manual Renewal Test**: Test renewal manually
    ```bash
-   docker-compose run --rm certbot renew --dry-run
+   docker compose run --rm certbot renew --dry-run
    ```
 
 ## Important Notes
@@ -144,7 +144,7 @@ If you need to manually renew certificates:
 
 2. **Email Address**: Update the email in `init-letsencrypt.sh` - Let's Encrypt will send renewal reminders
 
-3. **Port 5000**: You can now remove the direct port 5000 exposure from docker-compose.yml if you want, as nginx handles all external traffic
+3. **Port 5000**: You can now remove the direct port 5000 exposure from docker compose.yml if you want, as nginx handles all external traffic
 
 4. **Production Profile**: Always use `--profile production` when starting services to include nginx and certbot
 
@@ -152,22 +152,22 @@ If you need to manually renew certificates:
 
 ```bash
 # Start all services (with SSL)
-docker-compose --profile production up -d
+docker compose --profile production up -d
 
 # Stop all services
-docker-compose --profile production down
+docker compose --profile production down
 
 # View logs
-docker-compose --profile production logs -f
+docker compose --profile production logs -f
 
 # Restart nginx
-docker-compose --profile production restart nginx
+docker compose --profile production restart nginx
 
 # Check certificate expiration
-docker-compose run --rm certbot certificates
+docker compose run --rm certbot certificates
 
 # Test certificate renewal (dry run)
-docker-compose run --rm certbot renew --dry-run
+docker compose run --rm certbot renew --dry-run
 ```
 
 ## Security Best Practices

@@ -3,8 +3,8 @@
 # Script to initialize Let's Encrypt certificates for the first time
 # Run this script once to obtain the initial SSL certificate
 
-if ! [ -x "$(command -v docker-compose)" ]; then
-  echo 'Error: docker-compose is not installed.' >&2
+if ! docker compose version > /dev/null 2>&1; then
+  echo 'Error: docker compose is not installed or not available.' >&2
   exit 1
 fi
 
@@ -26,7 +26,7 @@ fi
 
 echo "### Creating dummy certificate for $DOMAIN ..."
 mkdir -p "./certbot/conf/live/$DOMAIN"
-docker-compose run --rm --entrypoint "\
+docker compose run --rm --entrypoint "\
   openssl req -x509 -nodes -newkey rsa:4096 -days 1\
     -keyout '/etc/letsencrypt/live/$DOMAIN/privkey.pem' \
     -out '/etc/letsencrypt/live/$DOMAIN/fullchain.pem' \
@@ -34,11 +34,11 @@ docker-compose run --rm --entrypoint "\
 echo
 
 echo "### Starting nginx ..."
-docker-compose up --force-recreate -d nginx
+docker compose up --force-recreate -d nginx
 echo
 
 echo "### Deleting dummy certificate for $DOMAIN ..."
-docker-compose run --rm --entrypoint "\
+docker compose run --rm --entrypoint "\
   rm -Rf /etc/letsencrypt/live/$DOMAIN && \
   rm -Rf /etc/letsencrypt/archive/$DOMAIN && \
   rm -Rf /etc/letsencrypt/renewal/$DOMAIN.conf" certbot
@@ -54,7 +54,7 @@ esac
 # Enable staging mode if needed
 if [ $STAGING != "0" ]; then staging_arg="--staging"; fi
 
-docker-compose run --rm --entrypoint "\
+docker compose run --rm --entrypoint "\
   certbot certonly --webroot -w /var/www/certbot \
     $staging_arg \
     $email_arg \
@@ -65,7 +65,7 @@ docker-compose run --rm --entrypoint "\
 echo
 
 echo "### Reloading nginx ..."
-docker-compose exec nginx nginx -s reload
+docker compose exec nginx nginx -s reload
 
 echo "### Certificate obtained successfully!"
 echo "### Your site should now be available at https://$DOMAIN"

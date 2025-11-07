@@ -6,11 +6,11 @@
 
 echo "### Renewing Let's Encrypt certificates ..."
 
-docker-compose run --rm --entrypoint "\
+docker compose run --rm --entrypoint "\
   certbot renew" certbot
 
 echo "### Reloading nginx ..."
-docker-compose exec nginx nginx -s reload
+docker compose exec nginx nginx -s reload
 
 echo "### Certificate renewal complete!"
 
