@@ -4,32 +4,60 @@
 
 echo "### Fixing nginx.conf certificate path ..."
 
-# Update nginx.conf to use the correct certificate path
-sed -i.bak 's|/etc/letsencrypt/live/dev-google-ai.mosida.com/|/etc/letsencrypt/live/dev-google-ai.mosida.com-0001/|g' nginx.conf
+# Check current content
+echo "### Checking current certificate paths in nginx.conf ..."
+grep -n "ssl_certificate" nginx.conf | head -2
 
-echo "### Updated nginx.conf"
-echo "### Testing configuration ..."
+# Create backup
+cp nginx.conf nginx.conf.bak
 
-# Test nginx config
-docker compose exec nginx nginx -t
+# More robust replacement - handle both with and without trailing slashes
+sed -i 's|/etc/letsencrypt/live/dev-google-ai\.mosida\.com/|/etc/letsencrypt/live/dev-google-ai.mosida.com-0001/|g' nginx.conf
 
-if [ $? -eq 0 ]; then
-    echo "### Configuration test passed!"
-    echo "### Reloading nginx ..."
-    docker compose exec nginx nginx -s reload
-    echo "✓ HTTPS should now work!"
-    echo "✓ Visit: https://dev-google-ai.mosida.com"
+# Verify the change
+echo ""
+echo "### Updated certificate paths:"
+grep -n "ssl_certificate" nginx.conf | head -2
+
+# Check if the change was made
+if grep -q "dev-google-ai.mosida.com-0001" nginx.conf; then
+    echo ""
+    echo "### Certificate path updated successfully!"
+    echo "### Testing configuration ..."
+    
+    # Test nginx config
+    docker compose exec nginx nginx -t
+    
+    if [ $? -eq 0 ]; then
+        echo "### Configuration test passed!"
+        echo "### Reloading nginx ..."
+        docker compose exec nginx nginx -s reload
+        echo ""
+        echo "✓ HTTPS should now work!"
+        echo "✓ Visit: https://dev-google-ai.mosida.com"
+        rm -f nginx.conf.bak
+    else
+        echo "### Error: Configuration test failed"
+        echo "### Restoring backup ..."
+        mv nginx.conf.bak nginx.conf
+        echo ""
+        echo "### Manual fix required. Please edit nginx.conf and change:"
+        echo "   /etc/letsencrypt/live/dev-google-ai.mosida.com/"
+        echo "   to:"
+        echo "   /etc/letsencrypt/live/dev-google-ai.mosida.com-0001/"
+        exit 1
+    fi
 else
-    echo "### Error: Configuration test failed"
+    echo ""
+    echo "### Error: Replacement didn't work. File may have different format."
     echo "### Restoring backup ..."
     mv nginx.conf.bak nginx.conf
-    echo "### Please check nginx.conf manually"
+    echo ""
+    echo "### Please manually edit nginx.conf:"
+    echo "   Find: ssl_certificate /etc/letsencrypt/live/dev-google-ai.mosida.com/fullchain.pem;"
+    echo "   Replace with: ssl_certificate /etc/letsencrypt/live/dev-google-ai.mosida.com-0001/fullchain.pem;"
+    echo ""
+    echo "   Find: ssl_certificate_key /etc/letsencrypt/live/dev-google-ai.mosida.com/privkey.pem;"
+    echo "   Replace with: ssl_certificate_key /etc/letsencrypt/live/dev-google-ai.mosida.com-0001/privkey.pem;"
     exit 1
 fi
-
-# Remove backup if successful
-rm -f nginx.conf.bak
-
-echo ""
-echo "### Done! Your site should now be secure."
-
