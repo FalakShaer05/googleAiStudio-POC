@@ -286,7 +286,7 @@ The API returns standardized error responses:
 
 ```bash
 # Build and run with Docker Compose
-docker-compose up --build
+docker compose up --build
 
 # Access the application
 # Web Interface: http://localhost:80
@@ -302,14 +302,74 @@ docker build -t image-converter .
 # Run the container
 docker run -p 5000:5000 --env-file .env image-converter
 
-# Run with docker-compose
-docker-compose up -d
+# Run with docker compose
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop the application
-docker-compose down
+docker compose down
+```
+
+### SSL/HTTPS Setup
+
+For production deployment with free SSL certificates from Let's Encrypt:
+
+**Prerequisites:**
+- Domain points to your server IP
+- Ports 80 and 443 are open and accessible
+
+**Initial Setup:**
+
+1. Update email in `scripts/ssl/init-letsencrypt.sh`:
+   ```bash
+   EMAIL="your-email@example.com"
+   ```
+
+2. Run the initialization script:
+   ```bash
+   ./scripts/ssl/init-letsencrypt.sh
+   ```
+
+3. Start services with production profile:
+   ```bash
+   docker compose --profile production up -d
+   ```
+
+**SSL Management:**
+
+```bash
+# Check certificate status
+./scripts/ssl/check-certificate.sh
+
+# Get production certificate (if you have staging)
+./scripts/ssl/get-production-cert.sh
+
+# Manual certificate renewal (auto-renewal runs every 12 hours)
+./scripts/ssl/renew-cert.sh
+```
+
+**How It Works:**
+- Nginx handles HTTP (port 80) and HTTPS (port 443)
+- Certbot automatically renews certificates every 12 hours
+- Certificates are stored in Docker volumes
+- HTTP automatically redirects to HTTPS
+
+**Troubleshooting:**
+
+```bash
+# Check nginx logs
+docker compose logs nginx
+
+# Check certbot logs
+docker compose logs certbot
+
+# Test nginx configuration
+docker compose exec nginx nginx -t
+
+# Fix network issues
+./scripts/fix-network.sh
 ```
 
 ## Production Deployment
@@ -367,6 +427,9 @@ python start_server.py
 ├── requirements.txt         # Python dependencies
 ├── Dockerfile              # Docker configuration
 ├── docker-compose.yml      # Docker Compose setup
+├── scripts/                # Utility scripts
+│   ├── ssl/               # SSL certificate management
+│   └── fix-network.sh     # Network troubleshooting
 └── README.md               # This file
 ```
 
