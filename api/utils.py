@@ -328,3 +328,188 @@ def remove_background_with_mosida_api(image_path: str) -> str:
                 
     except Exception as e:
         return None
+
+def remove_background_with_lightx_api(image_path: str) -> str:
+    """
+    Remove background using LightX API
+    Documentation: https://docs.lightxeditor.com/api/remove-background
+    
+    Args:
+        image_path: Path to the input image
+        
+    Returns:
+        str: Path to the result image, or None if failed
+    """
+    try:
+        import requests
+        import json
+        
+        # Get LightX API key from environment
+        lightx_api_key = os.getenv('LIGHTX_API_KEY')
+        if not lightx_api_key:
+            print("❌ LIGHTX_API_KEY not found in environment variables")
+            return None
+        
+        # Check if file exists
+        if not os.path.exists(image_path):
+            return None
+        
+        # Step 1: Get image info for upload
+        file_size = os.path.getsize(image_path)
+        file_ext = os.path.splitext(image_path)[1].lower()
+        content_type = "image/jpeg" if file_ext in ['.jpg', '.jpeg'] else "image/png"
+        
+        # Step 2: Get upload URL
+        upload_url_endpoint = "https://api.lightxeditor.com/external/api/v2/uploadImageUrl"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": lightx_api_key
+        }
+        upload_data = {
+            "uploadType": "imageUrl",
+            "size": file_size,
+            "contentType": content_type
+        }
+        
+        print(f"📤 Step 1: Requesting upload URL from LightX...")
+        upload_response = requests.post(upload_url_endpoint, headers=headers, json=upload_data, timeout=30)
+        
+        if upload_response.status_code != 200:
+            print(f"❌ Failed to get upload URL: {upload_response.status_code}")
+            return None
+        
+        upload_result = upload_response.json()
+        if upload_result.get('statusCode') != 2000:
+            print(f"❌ LightX upload URL error: {upload_result.get('message')}")
+            return None
+        
+        upload_image_url = upload_result['body']['uploadImage']
+        image_url = upload_result['body']['imageUrl']
+        
+        # Step 3: Upload image using PUT request
+        print(f"📤 Step 2: Uploading image to LightX...")
+        with open(image_path, 'rb') as file:
+            put_headers = {
+                "Content-Type": content_type,
+                "Content-Length": str(file_size)
+            }
+            put_response = requests.put(upload_image_url, data=file, headers=put_headers, timeout=60)
+            
+            if put_response.status_code not in [200, 204]:
+                print(f"❌ Failed to upload image: {put_response.status_code}")
+                return None
+        
+        # Step 4: Call remove background API
+        print(f"🔧 Step 3: Requesting background removal from LightX...")
+        remove_bg_endpoint = "https://api.lightxeditor.com/external/api/v2/remove-background"
+        remove_bg_data = {
+            "imageUrl": image_url,
+            "background": "transparent"  # Remove background (transparent)
+        }
+        
+        remove_bg_response = requests.post(
+            remove_bg_endpoint, 
+            headers=headers, 
+            json=remove_bg_data, 
+            timeout=30
+        )
+        
+        if remove_bg_response.status_code != 200:
+            print(f"❌ Failed to request background removal: {remove_bg_response.status_code}")
+            return None
+        
+        remove_bg_result = remove_bg_response.json()
+        if remove_bg_result.get('statusCode') != 2000:
+            print(f"❌ LightX remove background error: {remove_bg_result.get('message')}")
+            return None
+        
+        order_id = remove_bg_result['body']['orderId']
+        max_retries = remove_bg_result['body'].get('maxRetriesAllowed', 5)
+        avg_response_time = remove_bg_result['body'].get('avgResponseTimeInSec', 15)
+        
+        print(f"⏳ Step 4: Polling for result (orderId: {order_id}, max retries: {max_retries})...")
+        
+        # Step 5: Poll for status (optimized - check immediately first, then wait adaptively)
+        status_endpoint = "https://api.lightxeditor.com/external/api/v2/order-status"
+        status_data = {"orderId": order_id}
+        
+        # Optimized polling: Check immediately first, then wait adaptively
+        for attempt in range(max_retries):
+            # Don't wait before first check - check immediately
+            if attempt > 0:
+                # Adaptive wait: shorter waits for early attempts, longer for later
+                wait_time = min(2 + attempt, 3)  # 2s, 3s, 3s, 3s, 3s
+                time.sleep(wait_time)
+            
+            status_response = requests.post(
+                status_endpoint,
+                headers=headers,
+                json=status_data,
+                timeout=30
+            )
+            
+            if status_response.status_code != 200:
+                print(f"❌ Failed to check status: {status_response.status_code}")
+                continue
+            
+            status_result = status_response.json()
+            if status_result.get('statusCode') != 2000:
+                print(f"❌ Status check error: {status_result.get('message')}")
+                continue
+            
+            status = status_result['body'].get('status')
+            
+            if status == 'active':
+                # Success! Download the result
+                output_url = status_result['body'].get('output')
+                if not output_url:
+                    print(f"❌ No output URL in response")
+                    return None
+                
+                print(f"✅ Step 5: Downloading result from LightX...")
+                output_response = requests.get(output_url, timeout=60)
+                
+                if output_response.status_code == 200:
+                    # Save the result to a temporary file
+                    temp_path = image_path.replace('.', '_bg_removed.')
+                    with open(temp_path, 'wb') as result_file:
+                        result_file.write(output_response.content)
+                    
+                    print(f"✅ LightX background removal successful")
+                    return temp_path
+                else:
+                    print(f"❌ Failed to download result: {output_response.status_code}")
+                    return None
+                    
+            elif status == 'failed':
+                print(f"❌ LightX background removal failed")
+                return None
+            # else status is 'init', continue polling
+        
+        print(f"❌ LightX background removal timed out after {max_retries} attempts")
+        return None
+                
+    except Exception as e:
+        print(f"❌ Error in LightX background removal: {e}")
+        return None
+
+def remove_background(image_path: str) -> str:
+    """
+    Remove background using the service specified in BACKGROUND_REMOVAL_SERVICE env variable.
+    Options: 'mosida' or 'lightx'
+    Falls back to 'mosida' if not specified or invalid.
+    
+    Args:
+        image_path: Path to the input image
+        
+    Returns:
+        str: Path to the result image, or None if failed
+    """
+    service = os.getenv('BACKGROUND_REMOVAL_SERVICE', 'mosida').lower()
+    
+    if service == 'lightx':
+        print(f"🔧 Using LightX API for background removal")
+        return remove_background_with_lightx_api(image_path)
+    else:
+        print(f"🔧 Using Mosida API for background removal")
+        return remove_background_with_mosida_api(image_path)

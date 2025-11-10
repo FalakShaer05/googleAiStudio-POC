@@ -306,6 +306,8 @@ def resize_background_with_ai(background_image, target_width, target_height):
     Use Google AI Studio to intelligently resize/refit background to target dimensions
     This prevents distortion by using AI to intelligently adjust the background
     
+    Optimized: Uses fast resize when aspect ratio is close, AI only when needed
+    
     Args:
         background_image: PIL Image object (background)
         target_width: Target width in pixels
@@ -314,10 +316,33 @@ def resize_background_with_ai(background_image, target_width, target_height):
     Returns:
         PIL Image object resized to target dimensions (without distortion)
     """
+    bg_width, bg_height = background_image.size
+    bg_aspect = bg_width / bg_height
+    target_aspect = target_width / target_height
+    
+    # If aspect ratios are very close (within 5%), use fast resize
+    aspect_diff = abs(bg_aspect - target_aspect) / target_aspect
+    use_fast_resize = aspect_diff < 0.05 or os.getenv('USE_FAST_BG_RESIZE', 'false').lower() == 'true'
+    
+    if use_fast_resize:
+        print(f"⚡ Using fast resize (aspect ratio close: {bg_aspect:.3f} vs {target_aspect:.3f})")
+        scale_x = target_width / bg_width
+        scale_y = target_height / bg_height
+        scale = max(scale_x, scale_y)  # Use max to fill, then crop center
+        new_width = int(bg_width * scale)
+        new_height = int(bg_height * scale)
+        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Crop to exact dimensions from center
+        left = (new_width - target_width) // 2
+        top = (new_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+        return resized.crop((left, top, right, bottom))
+    
     if not client:
         print("⚠️ Gemini client not available, using standard resize")
         # Fallback to standard resize maintaining aspect ratio
-        bg_width, bg_height = background_image.size
         scale_x = target_width / bg_width
         scale_y = target_height / bg_height
         scale = max(scale_x, scale_y)  # Use max to fill, then crop center
@@ -781,6 +806,179 @@ def remove_background_with_mosida_api(image_path):
     except Exception as e:
         return None
 
+def remove_background_with_lightx_api(image_path):
+    """
+    Remove background using LightX API
+    Documentation: https://docs.lightxeditor.com/api/remove-background
+    """
+    try:
+        import requests
+        import json
+        
+        # Get LightX API key from environment
+        lightx_api_key = os.getenv('LIGHTX_API_KEY')
+        if not lightx_api_key:
+            print("❌ LIGHTX_API_KEY not found in environment variables")
+            return None
+        
+        # Check if file exists
+        if not os.path.exists(image_path):
+            return None
+        
+        # Step 1: Get image info for upload
+        file_size = os.path.getsize(image_path)
+        file_ext = os.path.splitext(image_path)[1].lower()
+        content_type = "image/jpeg" if file_ext in ['.jpg', '.jpeg'] else "image/png"
+        
+        # Step 2: Get upload URL
+        upload_url_endpoint = "https://api.lightxeditor.com/external/api/v2/uploadImageUrl"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": lightx_api_key
+        }
+        upload_data = {
+            "uploadType": "imageUrl",
+            "size": file_size,
+            "contentType": content_type
+        }
+        
+        print(f"📤 Step 1: Requesting upload URL from LightX...")
+        upload_response = requests.post(upload_url_endpoint, headers=headers, json=upload_data, timeout=30)
+        
+        if upload_response.status_code != 200:
+            print(f"❌ Failed to get upload URL: {upload_response.status_code}")
+            return None
+        
+        upload_result = upload_response.json()
+        if upload_result.get('statusCode') != 2000:
+            print(f"❌ LightX upload URL error: {upload_result.get('message')}")
+            return None
+        
+        upload_image_url = upload_result['body']['uploadImage']
+        image_url = upload_result['body']['imageUrl']
+        
+        # Step 3: Upload image using PUT request
+        print(f"📤 Step 2: Uploading image to LightX...")
+        with open(image_path, 'rb') as file:
+            put_headers = {
+                "Content-Type": content_type,
+                "Content-Length": str(file_size)
+            }
+            put_response = requests.put(upload_image_url, data=file, headers=put_headers, timeout=60)
+            
+            if put_response.status_code not in [200, 204]:
+                print(f"❌ Failed to upload image: {put_response.status_code}")
+                return None
+        
+        # Step 4: Call remove background API
+        print(f"🔧 Step 3: Requesting background removal from LightX...")
+        remove_bg_endpoint = "https://api.lightxeditor.com/external/api/v2/remove-background"
+        remove_bg_data = {
+            "imageUrl": image_url,
+            "background": "transparent"  # Remove background (transparent)
+        }
+        
+        remove_bg_response = requests.post(
+            remove_bg_endpoint, 
+            headers=headers, 
+            json=remove_bg_data, 
+            timeout=30
+        )
+        
+        if remove_bg_response.status_code != 200:
+            print(f"❌ Failed to request background removal: {remove_bg_response.status_code}")
+            return None
+        
+        remove_bg_result = remove_bg_response.json()
+        if remove_bg_result.get('statusCode') != 2000:
+            print(f"❌ LightX remove background error: {remove_bg_result.get('message')}")
+            return None
+        
+        order_id = remove_bg_result['body']['orderId']
+        max_retries = remove_bg_result['body'].get('maxRetriesAllowed', 5)
+        avg_response_time = remove_bg_result['body'].get('avgResponseTimeInSec', 15)
+        
+        print(f"⏳ Step 4: Polling for result (orderId: {order_id}, max retries: {max_retries})...")
+        
+        # Step 5: Poll for status (optimized - check immediately first, then wait)
+        status_endpoint = "https://api.lightxeditor.com/external/api/v2/order-status"
+        status_data = {"orderId": order_id}
+        
+        # Optimized polling: Check immediately first, then wait adaptively
+        for attempt in range(max_retries):
+            # Don't wait before first check - check immediately
+            if attempt > 0:
+                # Adaptive wait: shorter waits for early attempts, longer for later
+                wait_time = min(2 + attempt, 3)  # 2s, 3s, 3s, 3s, 3s
+                time.sleep(wait_time)
+            
+            status_response = requests.post(
+                status_endpoint,
+                headers=headers,
+                json=status_data,
+                timeout=30
+            )
+            
+            if status_response.status_code != 200:
+                print(f"❌ Failed to check status: {status_response.status_code}")
+                continue
+            
+            status_result = status_response.json()
+            if status_result.get('statusCode') != 2000:
+                print(f"❌ Status check error: {status_result.get('message')}")
+                continue
+            
+            status = status_result['body'].get('status')
+            
+            if status == 'active':
+                # Success! Download the result
+                output_url = status_result['body'].get('output')
+                if not output_url:
+                    print(f"❌ No output URL in response")
+                    return None
+                
+                print(f"✅ Step 5: Downloading result from LightX...")
+                output_response = requests.get(output_url, timeout=60)
+                
+                if output_response.status_code == 200:
+                    # Save the result to a temporary file
+                    temp_path = image_path.replace('.', '_bg_removed.')
+                    with open(temp_path, 'wb') as result_file:
+                        result_file.write(output_response.content)
+                    
+                    print(f"✅ LightX background removal successful")
+                    return temp_path
+                else:
+                    print(f"❌ Failed to download result: {output_response.status_code}")
+                    return None
+                    
+            elif status == 'failed':
+                print(f"❌ LightX background removal failed")
+                return None
+            # else status is 'init', continue polling
+        
+        print(f"❌ LightX background removal timed out after {max_retries} attempts")
+        return None
+                
+    except Exception as e:
+        print(f"❌ Error in LightX background removal: {e}")
+        return None
+
+def remove_background(image_path):
+    """
+    Remove background using the service specified in BACKGROUND_REMOVAL_SERVICE env variable.
+    Options: 'mosida' or 'lightx'
+    Falls back to 'mosida' if not specified or invalid.
+    """
+    service = os.getenv('BACKGROUND_REMOVAL_SERVICE', 'mosida').lower()
+    
+    if service == 'lightx':
+        print(f"🔧 Using LightX API for background removal")
+        return remove_background_with_lightx_api(image_path)
+    else:
+        print(f"🔧 Using Mosida API for background removal")
+        return remove_background_with_mosida_api(image_path)
+
 # Background removal using Mosida API
 
 def add_drop_shadow(image, offset=(5, 5), blur_radius=10, shadow_color=(0, 0, 0, 100)):
@@ -1029,10 +1227,18 @@ def convert_image_to_image(input_image_path, prompt, output_path, upscale_before
             print(f"Reference background size: {reference_background.size}")
         
         # Upscale the image before conversion if requested
-        if upscale_before and scale_factor > 1:
-            print(f"Upscaling image from {original_size} to {scale_factor}x size...")
-            image = upscale_image(image, scale_factor)
-            print(f"Upscaled to: {image.size}")
+        # Skip if image is already large enough (saves processing time)
+        skip_upscale = os.getenv('SKIP_PRE_UPSCALE', 'false').lower() == 'true'
+        if upscale_before and scale_factor > 1 and not skip_upscale:
+            # Check if image is already large (skip upscaling if > 1000px on either side)
+            if image.width < 1000 and image.height < 1000:
+                print(f"Upscaling image from {original_size} to {scale_factor}x size...")
+                image = upscale_image(image, scale_factor)
+                print(f"Upscaled to: {image.size}")
+            else:
+                print(f"⏭️ Skipping upscale - image already large enough: {image.size}")
+        elif skip_upscale:
+            print(f"⏭️ Skipping pre-upscale (SKIP_PRE_UPSCALE=true) for faster processing")
         
         # Prepare content for AI conversion
         contents = [prompt, image]
@@ -1220,32 +1426,27 @@ def upload_file():
                     print(f"✅ Background resized to: {background_image.size}")
                 
                 # Apply professional background removal
-                print(f"🔧 DEBUG: Applying Remove.bg API for background removal...")
-                api_result_path = remove_background_with_mosida_api(converted_path)
+                print(f"🔧 Applying background removal API...")
+                api_result_path = remove_background(converted_path)
                 
                 if api_result_path and os.path.exists(api_result_path):
-                    print(f"✅ Remove.bg background removal successful")
+                    print(f"✅ Background removal successful")
                     converted_image = Image.open(api_result_path)
                 else:
-                    print(f"❌ Remove.bg failed, trying fallback API...")
-                    api_result_path = remove_background_with_mosida_api(converted_path)
-                    if api_result_path and os.path.exists(api_result_path):
-                        converted_image = Image.open(api_result_path)
-                        print(f"✅ Fallback API background removal successful")
-                    else:
-                        print(f"❌ All APIs failed - trying local black/white background removal...")
-                        # Try local background removal as last resort
-                        converted_image = Image.open(converted_path)
-                        
-                        # Check if image has black background and remove it
-                        print(f"🔧 DEBUG: Attempting local black background removal...")
+                    print(f"❌ API background removal failed - trying local background removal...")
+                    # Try local background removal as fallback
+                    converted_image = Image.open(converted_path)
+                    
+                    # Try both black and white background removal
+                    try:
                         converted_image = remove_black_background(converted_image)
-                        
-                        # If still has issues, try white background removal too
-                        print(f"🔧 DEBUG: Attempting local white background removal...")
-                        converted_image = remove_white_background(converted_image)
-                        
-                        print(f"✅ Local background removal applied")
+                        print(f"✅ Local black background removal applied")
+                    except:
+                        pass
+                    
+                    # Also try white background removal
+                    converted_image = remove_white_background(converted_image)
+                    print(f"✅ Local white background removal applied")
                 
                 # Composite the images using user's position and scale settings
                 final_image = composite_images(
@@ -1419,7 +1620,7 @@ def test_background_removal():
         file.save(temp_path)
         
         # Test background removal API
-        result_path = remove_background_with_mosida_api(temp_path)
+        result_path = remove_background(temp_path)
         
         if result_path and os.path.exists(result_path):
             # Return the result
@@ -1460,8 +1661,8 @@ def preview_processed():
         # Load the converted image
         converted_image = Image.open(converted_path)
         
-        # Apply background removal using Mosida API
-        api_result_path = remove_background_with_mosida_api(converted_path)
+        # Apply background removal API
+        api_result_path = remove_background(converted_path)
         
         if api_result_path and os.path.exists(api_result_path):
             processed_image = Image.open(api_result_path)
@@ -1524,8 +1725,8 @@ def handle_composite():
         print_size = request.form.get('print_size', '8x10')
         add_shadow = request.form.get('add_shadow', 'true').lower() == 'true'
         
-        # Apply background removal using Mosida API
-        api_result_path = remove_background_with_mosida_api(converted_path)
+        # Apply background removal API
+        api_result_path = remove_background(converted_path)
         
         if api_result_path and os.path.exists(api_result_path):
             converted_image = Image.open(api_result_path)

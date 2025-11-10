@@ -14,7 +14,7 @@ from .models import create_error_response, create_success_response, ERROR_CODES
 from .utils import (
     allowed_file, generate_unique_filename, format_file_size, 
     format_processing_time, cleanup_file, validate_image_file, 
-    get_image_info, create_download_url, remove_background_with_mosida_api,
+    get_image_info, create_download_url, remove_background,
     download_image_from_url
 )
 
@@ -23,7 +23,7 @@ def get_app_functions():
     """Get functions from main app module to avoid circular imports"""
     from app import (
         convert_image_to_image, composite_images, remove_white_background,
-        remove_background_with_mosida_api,
+        remove_background,
         upscale_to_canvas_size, resize_to_canvas_size, enhance_prompt_for_white_background,
         resize_background_with_ai, get_print_dimensions
     )
@@ -31,7 +31,7 @@ def get_app_functions():
         'convert_image_to_image': convert_image_to_image,
         'composite_images': composite_images,
         'remove_white_background': remove_white_background,
-        'remove_background_with_mosida_api': remove_background_with_mosida_api,
+        'remove_background': remove_background,
         'upscale_to_canvas_size': upscale_to_canvas_size,
         'resize_to_canvas_size': resize_to_canvas_size,
         'enhance_prompt_for_white_background': enhance_prompt_for_white_background,
@@ -200,11 +200,15 @@ def process_image():
         output_path = os.path.join(output_dir, output_filename)
         
         # Step 1: Convert image to caricature
+        # Check if upscaling should be skipped for faster processing
+        skip_upscale = os.getenv('SKIP_PRE_UPSCALE', 'false').lower() == 'true'
+        upscale_before = not skip_upscale
+        
         success, message = app_funcs['convert_image_to_image'](
             input_image_path=input_path,
             prompt=enhanced_prompt,
             output_path=output_path,
-            upscale_before=True,
+            upscale_before=upscale_before,
             scale_factor=2,
             canvas_size=canvas_size,
             dpi=300,
@@ -233,36 +237,29 @@ def process_image():
                 background_image = app_funcs['resize_background_with_ai'](background_image, target_width, target_height)
                 print(f"✅ Background resized to: {background_image.size}")
             
-            # Apply professional background removal using Mosida API (with fallbacks)
-            print(f"🔧 DEBUG: Applying Remove.bg API for background removal...")
-            api_result_path = app_funcs['remove_background_with_mosida_api'](output_path)
+            # Apply professional background removal API (with fallback to local)
+            print(f"🔧 Applying background removal API...")
+            api_result_path = app_funcs['remove_background'](output_path)
             
             if api_result_path and os.path.exists(api_result_path):
-                print(f"✅ Remove.bg background removal successful")
+                print(f"✅ Background removal successful")
                 converted_image = Image.open(api_result_path)
             else:
-                print(f"❌ Remove.bg failed, trying fallback...")
-                # Try fallback API call
-                api_result_path = app_funcs['remove_background_with_mosida_api'](output_path)
-                if api_result_path and os.path.exists(api_result_path):
-                    converted_image = Image.open(api_result_path)
-                    print(f"✅ Fallback API background removal successful")
-                else:
-                    print(f"❌ All APIs failed - trying local background removal...")
-                    # Try local background removal as last resort
-                    converted_image = Image.open(output_path)
-                    
-                    # Try both black and white background removal
-                    try:
-                        from app import remove_black_background
-                        converted_image = remove_black_background(converted_image)
-                        print(f"✅ Local black background removal applied")
-                    except:
-                        pass
-                    
-                    # Also try white background removal
-                    converted_image = app_funcs['remove_white_background'](converted_image)
-                    print(f"✅ Local white background removal applied")
+                print(f"❌ API background removal failed - trying local background removal...")
+                # Try local background removal as fallback
+                converted_image = Image.open(output_path)
+                
+                # Try both black and white background removal
+                try:
+                    from app import remove_black_background
+                    converted_image = remove_black_background(converted_image)
+                    print(f"✅ Local black background removal applied")
+                except:
+                    pass
+                
+                # Also try white background removal
+                converted_image = app_funcs['remove_white_background'](converted_image)
+                print(f"✅ Local white background removal applied")
             
             # Composite images
             final_image = app_funcs['composite_images'](
