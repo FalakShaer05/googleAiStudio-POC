@@ -150,7 +150,16 @@ def process_image():
         # Generate output filename (ensure input_filename defined for both file and URL flows)
         if 'input_filename' not in locals() or not input_filename:
             input_filename = os.path.basename(input_path)
-        output_filename = generate_unique_filename(f"processed_{input_filename}", 'output')
+        
+        # If background removal is requested, use PNG format from the start
+        # Otherwise, preserve original format
+        if remove_bg:
+            # Generate PNG filename for background removal
+            base_name = os.path.splitext(input_filename)[0]
+            output_filename = generate_unique_filename(f"processed_{base_name}.png", 'output')
+        else:
+            output_filename = generate_unique_filename(f"processed_{input_filename}", 'output')
+        
         output_path = os.path.join(output_dir, output_filename)
         
         # Step 1: Convert image using prompt
@@ -158,6 +167,7 @@ def process_image():
         skip_upscale = os.getenv('SKIP_PRE_UPSCALE', 'false').lower() == 'true'
         upscale_before = not skip_upscale
         
+        print(f"🔄 Step 1: Converting image with prompt...")
         success, message = app_funcs['convert_image_to_image'](
             input_image_path=input_path,
             prompt=prompt,  # Use prompt as-is
@@ -175,36 +185,56 @@ def process_image():
             cleanup_file(input_path)
             return jsonify(create_error_response('PROCESSING_001', message)), 500
         
+        print(f"✅ Step 1 complete: Image converted and saved to {output_path}")
+        
         # Step 2: Remove background if requested
         if remove_bg:
             from PIL import Image
-            print(f"🔧 Applying background removal to converted image: {output_path}")
+            print(f"🔧 Step 2: Applying background removal to converted image: {output_path}")
             
             # Check if output file exists
             if not os.path.exists(output_path):
                 print(f"❌ Converted image not found at {output_path}")
-            else:
-                api_result_path = remove_background(output_path)
-                
-                if api_result_path and os.path.exists(api_result_path):
-                    print(f"✅ Background removal successful: {api_result_path}")
-                    # Replace output with background-removed version
+                return jsonify(create_error_response('PROCESSING_002', 'Converted image not found for background removal')), 500
+            
+            # Verify the file is readable
+            try:
+                test_img = Image.open(output_path)
+                print(f"✅ Converted image verified: {test_img.size}, mode: {test_img.mode}, format: {test_img.format}")
+                test_img.close()
+            except Exception as e:
+                print(f"❌ Cannot read converted image: {e}")
+                return jsonify(create_error_response('PROCESSING_002', f'Cannot read converted image: {e}')), 500
+            
+            # Call background removal API
+            api_result_path = remove_background(output_path)
+            
+            if api_result_path and os.path.exists(api_result_path):
+                print(f"✅ Background removal API returned result: {api_result_path}")
+                try:
+                    # Load the background-removed image
                     converted_image = Image.open(api_result_path)
+                    print(f"✅ Loaded background-removed image: {converted_image.size}, mode: {converted_image.mode}")
+                    
+                    # Ensure it's RGBA for transparency
+                    if converted_image.mode != 'RGBA':
+                        print(f"⚠️ Converting to RGBA mode (was {converted_image.mode})")
+                        converted_image = converted_image.convert('RGBA')
+                    
                     # Save as PNG to preserve transparency
-                    output_path_png = output_path.rsplit('.', 1)[0] + '.png'
-                    converted_image.save(output_path_png, quality=95, optimize=True)
-                    # Update output path and filename (always use PNG for transparency)
-                    if output_path_png != output_path:
-                        # Remove old file if format changed
-                        if os.path.exists(output_path):
-                            cleanup_file(output_path)
-                    output_path = output_path_png
-                    output_filename = os.path.basename(output_path_png)
+                    converted_image.save(output_path, format='PNG', optimize=True)
+                    print(f"✅ Background-removed image saved as PNG: {output_path}")
+                    
                     # Clean up temporary file
                     cleanup_file(api_result_path)
-                    print(f"✅ Background-removed image saved: {output_path}")
-                else:
-                    print(f"⚠️ Background removal API failed, returning original converted image")
+                except Exception as e:
+                    print(f"❌ Error saving background-removed image: {e}")
+                    return jsonify(create_error_response('PROCESSING_002', f'Error saving background-removed image: {e}')), 500
+            else:
+                print(f"❌ Background removal API failed - no result returned")
+                print(f"   api_result_path: {api_result_path}")
+                print(f"   exists: {os.path.exists(api_result_path) if api_result_path else 'N/A'}")
+                return jsonify(create_error_response('PROCESSING_002', 'Background removal API failed. Please check server logs.')), 500
         
         # Clean up input file
         cleanup_file(input_path)

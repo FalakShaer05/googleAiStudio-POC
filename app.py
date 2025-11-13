@@ -1285,7 +1285,11 @@ def convert_image_to_image(input_image_path, prompt, output_path, upscale_before
                     print(f"Post-conversion upscaling to canvas size: {canvas_size}")
                     generated_image = upscale_to_canvas_size(generated_image, canvas_size, dpi)
                 
-                generated_image.save(output_path)
+                # Save image - use PNG format if output path ends with .png
+                if output_path.lower().endswith('.png'):
+                    generated_image.save(output_path, format='PNG', optimize=True)
+                else:
+                    generated_image.save(output_path)
                 return True, "Image converted successfully"
         
         return False, "No image was generated in the response"
