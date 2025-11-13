@@ -313,8 +313,8 @@ def remove_background_with_mosida_api(image_path: str) -> str:
         with open(image_path, 'rb') as file:
             files = {'file': file}
             
-            # Make request to Mosida API
-            response = requests.post(api_url, files=files, timeout=30)
+            # Make request to Mosida API with longer timeout for large images
+            response = requests.post(api_url, files=files, timeout=120)
             
             if response.status_code == 200:
                 # Save the result to a temporary file
@@ -454,7 +454,12 @@ def remove_background_with_lightx_api(image_path: str) -> str:
             
             status_result = status_response.json()
             if status_result.get('statusCode') != 2000:
-                print(f"❌ Status check error: {status_result.get('message')}")
+                error_msg = status_result.get('message', 'Unknown error')
+                print(f"❌ Status check error: {error_msg}")
+                # If we get a generic AI art error, fail immediately instead of retrying
+                if 'GENERIC_AI_ART_ERR' in error_msg or 'AI_ART' in error_msg:
+                    print(f"❌ LightX API returned AI art error, aborting retries")
+                    return None
                 continue
             
             status = status_result['body'].get('status')
@@ -498,6 +503,7 @@ def remove_background(image_path: str) -> str:
     Remove background using the service specified in BACKGROUND_REMOVAL_SERVICE env variable.
     Options: 'mosida' or 'lightx'
     Falls back to 'mosida' if not specified or invalid.
+    If primary service fails, automatically tries the other service as fallback.
     
     Args:
         image_path: Path to the input image
@@ -507,9 +513,20 @@ def remove_background(image_path: str) -> str:
     """
     service = os.getenv('BACKGROUND_REMOVAL_SERVICE', 'mosida').lower()
     
+    # Try primary service first
     if service == 'lightx':
-        print(f"🔧 Using LightX API for background removal")
-        return remove_background_with_lightx_api(image_path)
+        print(f"🔧 Using LightX API for background removal (primary)")
+        result = remove_background_with_lightx_api(image_path)
+        if result and os.path.exists(result):
+            return result
+        else:
+            print(f"⚠️ LightX API failed, falling back to Mosida API...")
+            return remove_background_with_mosida_api(image_path)
     else:
-        print(f"🔧 Using Mosida API for background removal")
-        return remove_background_with_mosida_api(image_path)
+        print(f"🔧 Using Mosida API for background removal (primary)")
+        result = remove_background_with_mosida_api(image_path)
+        if result and os.path.exists(result):
+            return result
+        else:
+            print(f"⚠️ Mosida API failed, falling back to LightX API...")
+            return remove_background_with_lightx_api(image_path)
