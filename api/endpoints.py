@@ -21,22 +21,9 @@ from .utils import (
 # Import existing functions from main app (lazy import to avoid circular dependency)
 def get_app_functions():
     """Get functions from main app module to avoid circular imports"""
-    from app import (
-        convert_image_to_image, composite_images, remove_white_background,
-        remove_background,
-        upscale_to_canvas_size, resize_to_canvas_size, enhance_prompt_for_white_background,
-        resize_background_with_ai, get_print_dimensions
-    )
+    from app import convert_image_to_image
     return {
-        'convert_image_to_image': convert_image_to_image,
-        'composite_images': composite_images,
-        'remove_white_background': remove_white_background,
-        'remove_background': remove_background,
-        'upscale_to_canvas_size': upscale_to_canvas_size,
-        'resize_to_canvas_size': resize_to_canvas_size,
-        'enhance_prompt_for_white_background': enhance_prompt_for_white_background,
-        'resize_background_with_ai': resize_background_with_ai,
-        'get_print_dimensions': get_print_dimensions
+        'convert_image_to_image': convert_image_to_image
     }
 
 # Create API blueprint
@@ -105,7 +92,7 @@ def validate_request():
 def process_image():
     """
     Main image processing endpoint
-    Converts image to caricature and optionally merges with background
+    Converts image using prompt and optionally removes background
     """
     start_time = time.time()
     
@@ -125,22 +112,8 @@ def process_image():
         if image_file and image_url:
             return jsonify(create_error_response('VALIDATION_001', 'Provide either image file or image_url, not both')), 400
         
-        # Get other parameters
-        background_file = request.files.get('background')
-        background_url = request.form.get('background_url', '').strip()
-        
-        # Get optional parameters
-        position = request.form.get('position', 'center')
-        scale = float(request.form.get('scale', '1.0'))
-        opacity = float(request.form.get('opacity', '1.0'))
-        canvas_size = request.form.get('canvas_size')
-        
-        # Validate parameters
-        if scale < 0.1 or scale > 1.5:
-            return jsonify(create_error_response('VALIDATION_004', 'Scale must be between 0.1 and 1.5')), 400
-        
-        if opacity < 0.0 or opacity > 1.0:
-            return jsonify(create_error_response('VALIDATION_004', 'Opacity must be between 0.0 and 1.0')), 400
+        # Get optional remove_bg parameter
+        remove_bg = request.form.get('remove_bg', 'false').lower() == 'true'
         
         # Create upload and output directories
         upload_dir = current_app.config['UPLOAD_FOLDER']
@@ -168,133 +141,53 @@ def process_image():
             # Derive a filename from the downloaded path for downstream naming
             input_filename = os.path.basename(input_path)
         
-        # Handle background image (file or URL)
-        background_path = None
-        if background_file and background_file.filename:
-            # Validate uploaded background file
-            is_valid, error_msg = validate_image_file(background_file)
-            if not is_valid:
-                return jsonify(create_error_response('VALIDATION_002', f'Background {error_msg}')), 400
-            
-            # Save uploaded background file
-            background_filename = generate_unique_filename(background_file.filename, 'bg')
-            background_path = os.path.join(upload_dir, background_filename)
-            background_file.save(background_path)
-        elif background_url:
-            # Download background from URL
-            background_path = download_image_from_url(background_url, upload_dir)
-            if not background_path:
-                return jsonify(create_error_response('VALIDATION_002', 'Failed to download background image from URL. Please check the URL and try again.')), 400
-        
-        
         # Get app functions to avoid circular import
         app_funcs = get_app_functions()
         
-        # Enhance prompt for better background removal
-        enhanced_prompt = app_funcs['enhance_prompt_for_white_background'](prompt)
-        
+        # Use the prompt as-is (no enhancement for white background)
         # Generate output filename (ensure input_filename defined for both file and URL flows)
         if 'input_filename' not in locals() or not input_filename:
             input_filename = os.path.basename(input_path)
         output_filename = generate_unique_filename(f"processed_{input_filename}", 'output')
         output_path = os.path.join(output_dir, output_filename)
         
-        # Step 1: Convert image to caricature
+        # Step 1: Convert image using prompt
         # Check if upscaling should be skipped for faster processing
         skip_upscale = os.getenv('SKIP_PRE_UPSCALE', 'false').lower() == 'true'
         upscale_before = not skip_upscale
         
         success, message = app_funcs['convert_image_to_image'](
             input_image_path=input_path,
-            prompt=enhanced_prompt,
+            prompt=prompt,  # Use prompt as-is
             output_path=output_path,
             upscale_before=upscale_before,
             scale_factor=2,
-            canvas_size=canvas_size,
+            canvas_size=None,  # No canvas size processing
             dpi=300,
-            reference_background_path=background_path,
-            enable_background_compositing=False  # We'll handle compositing separately
+            reference_background_path=None,  # No background reference
+            enable_background_compositing=False  # No compositing
         )
         
         if not success:
             # Clean up input files
             cleanup_file(input_path)
-            if background_path:
-                cleanup_file(background_path)
             return jsonify(create_error_response('PROCESSING_001', message)), 500
         
-        # Step 2: Handle background merging if background provided
-        if background_path and os.path.exists(background_path):
-            # Load the converted image
+        # Step 2: Remove background if requested
+        if remove_bg:
             from PIL import Image
-            converted_image = Image.open(output_path)
-            background_image = Image.open(background_path)
-            
-            # Resize background to canvas size if specified (using AI to prevent distortion)
-            if canvas_size:
-                target_width, target_height = app_funcs['get_print_dimensions'](canvas_size, 300)
-                print(f"📐 Resizing background to canvas size: {canvas_size} ({target_width}x{target_height}px)")
-                background_image = app_funcs['resize_background_with_ai'](background_image, target_width, target_height)
-                print(f"✅ Background resized to: {background_image.size}")
-            
-            # Apply professional background removal API (with fallback to local)
-            print(f"🔧 Applying background removal API...")
-            api_result_path = app_funcs['remove_background'](output_path)
+            print(f"🔧 Applying background removal...")
+            api_result_path = remove_background(output_path)
             
             if api_result_path and os.path.exists(api_result_path):
                 print(f"✅ Background removal successful")
+                # Replace output with background-removed version
                 converted_image = Image.open(api_result_path)
-            else:
-                print(f"❌ API background removal failed - trying local background removal...")
-                # Try local background removal as fallback
-                converted_image = Image.open(output_path)
-                
-                # Try both black and white background removal
-                try:
-                    from app import remove_black_background
-                    converted_image = remove_black_background(converted_image)
-                    print(f"✅ Local black background removal applied")
-                except:
-                    pass
-                
-                # Also try white background removal
-                converted_image = app_funcs['remove_white_background'](converted_image)
-                print(f"✅ Local white background removal applied")
-            
-            # Composite images
-            final_image = app_funcs['composite_images'](
-                converted_image,
-                background_image,
-                position=position,
-                scale=scale,
-                opacity=opacity,
-                add_shadow=True
-            )
-            
-            # Note: If canvas_size was specified, background was already resized to canvas size
-            # So the final image should already match canvas dimensions
-            # Only resize if there's a mismatch (shouldn't happen, but safety check)
-            if canvas_size:
-                target_width, target_height = app_funcs['get_print_dimensions'](canvas_size, 300)
-                if final_image.size != (target_width, target_height):
-                    print(f"⚠️ Final image size ({final_image.size}) doesn't match canvas ({target_width}x{target_height}), adjusting...")
-                    final_image = app_funcs['resize_to_canvas_size'](final_image, canvas_size, 300)
-                else:
-                    print(f"✅ Final image already matches canvas size: {final_image.size}")
-            
-            # Save final merged image
-            final_filename = f"merged_{output_filename}"
-            final_path = os.path.join(output_dir, final_filename)
-            final_image.save(final_path, quality=95, optimize=True)
-            
-            # Update output filename and path
-            output_filename = final_filename
-            output_path = final_path
-            
-            # Clean up temporary files
-            if api_result_path and os.path.exists(api_result_path):
+                converted_image.save(output_path, quality=95, optimize=True)
+                # Clean up temporary file
                 cleanup_file(api_result_path)
-            cleanup_file(background_path)
+            else:
+                print(f"⚠️ Background removal API failed, returning original converted image")
         
         # Clean up input file
         cleanup_file(input_path)
@@ -325,11 +218,7 @@ def process_image():
             metadata={
                 'image_info': image_info,
                 'prompt_used': prompt,
-                'background_merged': background_path is not None,
-                'position': position,
-                'scale': scale,
-                'opacity': opacity,
-                'canvas_size': canvas_size
+                'background_removed': remove_bg
             }
         ))
         
@@ -338,8 +227,6 @@ def process_image():
         try:
             if 'input_path' in locals() and os.path.exists(input_path):
                 cleanup_file(input_path)
-            if 'background_path' in locals() and background_path and os.path.exists(background_path):
-                cleanup_file(background_path)
             if 'output_path' in locals() and os.path.exists(output_path):
                 cleanup_file(output_path)
         except:

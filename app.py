@@ -1351,43 +1351,16 @@ def upload_file():
         if not prompt:
             return jsonify({'error': 'Please provide a transformation prompt'}), 400
         
-        # Use exact user prompt and enhance for solid white background (better for API removal)
-        prompt = enhance_prompt_for_white_background(prompt)
+        # Get optional remove_bg parameter
+        remove_bg = request.form.get('remove_bg', 'false').lower() == 'true'
         
-        # Get upscaling options from form
+        # Get upscaling options from form (optional, for faster processing)
         upscale_before = request.form.get('upscale_before', 'true').lower() == 'true'
         scale_factor = float(request.form.get('scale_factor', '2'))
-        
-        # Get canvas size options from form
-        canvas_size = request.form.get('canvas_size', '')
-        dpi = int(request.form.get('dpi', '300'))
-        
-        # Get position and scale options from form
-        position = request.form.get('position', 'center')
-        scale = float(request.form.get('scale', '1.0'))
-        
-        # Check if reference background is provided
-        has_reference_background = 'reference_background' in request.files and request.files['reference_background'].filename != ''
-        
-        # Handle reference background file
-        reference_background_path = None
-        reference_background_filename = None
-        if has_reference_background:
-            ref_file = request.files['reference_background']
-            if allowed_file(ref_file.filename):
-                ref_filename = secure_filename(ref_file.filename)
-                ref_unique_filename = f"{uuid.uuid4()}_ref_{ref_filename}"
-                reference_background_path = os.path.join(app.config['UPLOAD_FOLDER'], ref_unique_filename)
-                reference_background_filename = ref_unique_filename
-                ref_file.save(reference_background_path)
         
         # Validate scale factor
         if scale_factor < 1 or scale_factor > 4:
             return jsonify({'error': 'Scale factor must be between 1 and 4'}), 400
-        
-        # Validate DPI
-        if dpi < 150 or dpi > 600:
-            return jsonify({'error': 'DPI must be between 150 and 600'}), 400
         
         # Save uploaded file
         filename = secure_filename(file.filename)
@@ -1399,164 +1372,62 @@ def upload_file():
         output_filename = f"converted_{unique_filename}"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         
-        # Convert image (without compositing - that will be done in step 2)
+        # Convert image using prompt
         success, message = convert_image_to_image(
-            input_path, prompt, output_path, upscale_before, scale_factor, 
-            canvas_size, dpi, reference_background_path, False  # No compositing in step 1
+            input_path, 
+            prompt,  # Use prompt as-is
+            output_path, 
+            upscale_before, 
+            scale_factor, 
+            canvas_size=None,  # No canvas size processing
+            dpi=300,
+            reference_background_path=None,  # No background reference
+            enable_background_compositing=False  # No compositing
         )
         
         if success:
             # Clean up input file
             os.remove(input_path)
             
-            # If reference background exists, automatically apply BG removal and merge
-            if has_reference_background and reference_background_path:
-                print(f"🔧 DEBUG: Background uploaded - applying BG removal and merging automatically")
-                
-                # Apply background removal to converted image
-                converted_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
-                converted_image = Image.open(converted_path)
-                background_image = Image.open(reference_background_path)
-                
-                # Resize background to canvas size if specified (using AI to prevent distortion)
-                if canvas_size:
-                    target_width, target_height = get_print_dimensions(canvas_size, dpi)
-                    print(f"📐 Resizing background to canvas size: {canvas_size} ({target_width}x{target_height}px)")
-                    background_image = resize_background_with_ai(background_image, target_width, target_height)
-                    print(f"✅ Background resized to: {background_image.size}")
-                
-                # Apply professional background removal
-                print(f"🔧 Applying background removal API...")
-                api_result_path = remove_background(converted_path)
+            # Remove background if requested
+            if remove_bg:
+                print(f"🔧 Applying background removal...")
+                api_result_path = remove_background(output_path)
                 
                 if api_result_path and os.path.exists(api_result_path):
                     print(f"✅ Background removal successful")
+                    # Replace output with background-removed version
                     converted_image = Image.open(api_result_path)
-                else:
-                    print(f"❌ API background removal failed - trying local background removal...")
-                    # Try local background removal as fallback
-                    converted_image = Image.open(converted_path)
-                    
-                    # Try both black and white background removal
-                    try:
-                        converted_image = remove_black_background(converted_image)
-                        print(f"✅ Local black background removal applied")
-                    except:
-                        pass
-                    
-                    # Also try white background removal
-                    converted_image = remove_white_background(converted_image)
-                    print(f"✅ Local white background removal applied")
-                
-                # Composite the images using user's position and scale settings
-                final_image = composite_images(
-                    converted_image, 
-                    background_image, 
-                    position=position, 
-                    scale=scale, 
-                    opacity=1.0,
-                    add_shadow=True
-                )
-                
-                # Note: If canvas_size was specified, background was already resized to canvas size
-                # So the final image should already match canvas dimensions
-                # Only resize if there's a mismatch (shouldn't happen, but safety check)
-                if canvas_size:
-                    target_width, target_height = get_print_dimensions(canvas_size, dpi)
-                    if final_image.size != (target_width, target_height):
-                        print(f"⚠️ Final image size ({final_image.size}) doesn't match canvas ({target_width}x{target_height}), adjusting...")
-                        final_image = resize_to_canvas_size(final_image, canvas_size, dpi)
-                    else:
-                        print(f"✅ Final image already matches canvas size: {final_image.size}")
-                
-                # Save final merged image
-                final_filename = f"merged_{canvas_size}_{output_filename}" if canvas_size else f"merged_{output_filename}"
-                final_path = os.path.join(app.config['OUTPUT_FOLDER'], final_filename)
-                final_image.save(final_path, quality=95, optimize=True)
-                
-                # Save preview images (converted image and background) for validation
-                # Save converted image preview (the ORIGINAL converted image before background removal)
-                # This shows what Google AI Studio actually produced
-                converted_preview_filename = f"preview_converted_{output_filename}"
-                converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
-                # Use the original converted image (before background removal) to see the actual conversion result
-                preview_converted = Image.open(converted_path)
-                # Resize for preview (max 800px width for faster loading)
-                preview_width = min(800, preview_converted.width)
-                preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
-                preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
-                preview_converted.save(converted_preview_path, quality=85, optimize=True)
-                
-                # Save background preview
-                background_preview_filename = f"preview_bg_{reference_background_filename}"
-                background_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], background_preview_filename)
-                preview_bg = background_image.copy()
-                # Resize for preview
-                preview_bg_width = min(800, preview_bg.width)
-                preview_bg_height = int(preview_bg.height * (preview_bg_width / preview_bg.width))
-                preview_bg = preview_bg.resize((preview_bg_width, preview_bg_height), Image.Resampling.LANCZOS)
-                preview_bg.save(background_preview_path, quality=85, optimize=True)
-                
-                # Save final result preview
-                final_preview_filename = f"preview_final_{final_filename}"
-                final_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], final_preview_filename)
-                preview_final = final_image.copy()
-                # Resize for preview
-                preview_final_width = min(800, preview_final.width)
-                preview_final_height = int(preview_final.height * (preview_final_width / preview_final.width))
-                preview_final = preview_final.resize((preview_final_width, preview_final_height), Image.Resampling.LANCZOS)
-                preview_final.save(final_preview_path, quality=85, optimize=True)
-                
-                # Clean up temporary files
-                if api_result_path and os.path.exists(api_result_path):
+                    converted_image.save(output_path, quality=95, optimize=True)
+                    # Clean up temporary file
                     os.remove(api_result_path)
-                if os.path.exists(reference_background_path):
-                    os.remove(reference_background_path)
-                
-                print(f"✅ Final merged image saved: {final_filename}")
-                
-                return jsonify({
-                    'success': True,
-                    'message': 'Image converted and merged with background successfully!',
-                    'output_filename': final_filename,
-                    'needs_compositing': False,
-                    'auto_merged': True,
-                    'preview_images': {
-                        'converted': converted_preview_filename,
-                        'background': background_preview_filename,
-                        'final': final_preview_filename
-                    }
-                })
-            else:
-                # No background, return direct download
-                # Save converted image preview for validation
-                converted_preview_filename = f"preview_converted_{output_filename}"
-                converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
-                preview_converted = Image.open(output_path)
-                # Resize for preview (max 800px width)
-                preview_width = min(800, preview_converted.width)
-                preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
-                preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
-                preview_converted.save(converted_preview_path, quality=85, optimize=True)
-                
-                return jsonify({
-                    'success': True,
-                    'message': message,
-                    'output_filename': output_filename,
-                    'needs_compositing': False,
-                    'auto_merged': False,
-                    'preview_images': {
-                        'converted': converted_preview_filename,
-                        'background': None,
-                        'final': converted_preview_filename
-                    }
-                })
+                else:
+                    print(f"⚠️ Background removal API failed, returning original converted image")
+            
+            # Save converted image preview for display
+            converted_preview_filename = f"preview_converted_{output_filename}"
+            converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
+            preview_converted = Image.open(output_path)
+            # Resize for preview (max 800px width)
+            preview_width = min(800, preview_converted.width)
+            preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
+            preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+            preview_converted.save(converted_preview_path, quality=85, optimize=True)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Image converted successfully!',
+                'output_filename': output_filename,
+                'background_removed': remove_bg,
+                'preview_images': {
+                    'converted': converted_preview_filename,
+                    'final': converted_preview_filename
+                }
+            })
         else:
             # Clean up input files on failure
             if os.path.exists(input_path):
                 os.remove(input_path)
-            if reference_background_path and os.path.exists(reference_background_path):
-                os.remove(reference_background_path)
             
             return jsonify({'error': message}), 500
             
