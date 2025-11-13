@@ -104,16 +104,18 @@ def process_image():
         
         # Check if image is provided as file or URL
         image_file = request.files.get('image')
-        image_url = request.form.get('image_url', '').strip()
+        # Support both 'image_url' and 'file_url' for compatibility
+        image_url = request.form.get('image_url', '').strip() or request.form.get('file_url', '').strip()
         
         if not image_file and not image_url:
-            return jsonify(create_error_response('VALIDATION_001', 'Either image file or image_url is required')), 400
+            return jsonify(create_error_response('VALIDATION_001', 'Either image file or image_url/file_url is required')), 400
         
         if image_file and image_url:
-            return jsonify(create_error_response('VALIDATION_001', 'Provide either image file or image_url, not both')), 400
+            return jsonify(create_error_response('VALIDATION_001', 'Provide either image file or image_url/file_url, not both')), 400
         
         # Get optional remove_bg parameter
         remove_bg = request.form.get('remove_bg', 'false').lower() == 'true'
+        print(f"📋 Request parameters - prompt: {prompt[:50]}..., remove_bg: {remove_bg}, image_url: {image_url[:50] if image_url else 'N/A'}...")
         
         # Create upload and output directories
         upload_dir = current_app.config['UPLOAD_FOLDER']
@@ -176,18 +178,33 @@ def process_image():
         # Step 2: Remove background if requested
         if remove_bg:
             from PIL import Image
-            print(f"🔧 Applying background removal...")
-            api_result_path = remove_background(output_path)
+            print(f"🔧 Applying background removal to converted image: {output_path}")
             
-            if api_result_path and os.path.exists(api_result_path):
-                print(f"✅ Background removal successful")
-                # Replace output with background-removed version
-                converted_image = Image.open(api_result_path)
-                converted_image.save(output_path, quality=95, optimize=True)
-                # Clean up temporary file
-                cleanup_file(api_result_path)
+            # Check if output file exists
+            if not os.path.exists(output_path):
+                print(f"❌ Converted image not found at {output_path}")
             else:
-                print(f"⚠️ Background removal API failed, returning original converted image")
+                api_result_path = remove_background(output_path)
+                
+                if api_result_path and os.path.exists(api_result_path):
+                    print(f"✅ Background removal successful: {api_result_path}")
+                    # Replace output with background-removed version
+                    converted_image = Image.open(api_result_path)
+                    # Save as PNG to preserve transparency
+                    output_path_png = output_path.rsplit('.', 1)[0] + '.png'
+                    converted_image.save(output_path_png, quality=95, optimize=True)
+                    # Update output path and filename (always use PNG for transparency)
+                    if output_path_png != output_path:
+                        # Remove old file if format changed
+                        if os.path.exists(output_path):
+                            cleanup_file(output_path)
+                    output_path = output_path_png
+                    output_filename = os.path.basename(output_path_png)
+                    # Clean up temporary file
+                    cleanup_file(api_result_path)
+                    print(f"✅ Background-removed image saved: {output_path}")
+                else:
+                    print(f"⚠️ Background removal API failed, returning original converted image")
         
         # Clean up input file
         cleanup_file(input_path)
