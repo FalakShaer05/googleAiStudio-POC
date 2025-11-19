@@ -10,6 +10,141 @@ import threading
 from typing import Optional, Tuple
 from PIL import Image
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# Ensure .env variables are loaded even when this module is imported
+load_dotenv()
+
+
+def upload_image_to_s3(image_path: str) -> Optional[str]:
+    """
+    Upload an image to S3 and return the CloudFront URL.
+    
+    Args:
+        image_path: Path to the local image file
+        
+    Returns:
+        str: CloudFront URL of the uploaded image, or None if upload failed
+    """
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        # Check if S3 is configured
+        aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        s3_bucket = os.getenv('LIGHTX_S3_BUCKET')
+        cloudfront_url = os.getenv('LIGHTX_IMAGE_BASE_URL')  # CloudFront distribution URL
+        s3_prefix = os.getenv('LIGHTX_S3_PREFIX', 'converted/')  # Optional prefix/folder
+        
+        missing_envs = []
+        if not aws_access_key:
+            missing_envs.append("AWS_ACCESS_KEY_ID")
+        if not aws_secret_key:
+            missing_envs.append("AWS_SECRET_ACCESS_KEY")
+        if not s3_bucket:
+            missing_envs.append("LIGHTX_S3_BUCKET")
+        if not cloudfront_url:
+            missing_envs.append("LIGHTX_IMAGE_BASE_URL")
+        
+        if missing_envs:
+            print(f"⚠️ S3 upload skipped: missing env vars {', '.join(missing_envs)}")
+            return None
+        
+        print(f"⚙️ S3 upload config detected (bucket={s3_bucket}, region={os.getenv('AWS_DEFAULT_REGION', 'us-east-1')}, prefix='{s3_prefix}')")
+        
+        # Check if file exists
+        if not os.path.exists(image_path):
+            print(f"❌ Image file not found: {image_path}")
+            return None
+        
+        # Initialize S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+        )
+        
+        # Generate S3 key (filename with optional prefix)
+        filename = os.path.basename(image_path)
+        # Ensure unique filename to avoid conflicts
+        unique_id = str(uuid.uuid4())
+        name, ext = os.path.splitext(filename)
+        s3_key = f"{s3_prefix.rstrip('/')}/{unique_id}_{name}{ext}".lstrip('/')
+        
+        # Determine content type
+        ext_lower = ext.lower()
+        content_type_map = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        content_type = content_type_map.get(ext_lower, 'image/jpeg')
+        
+        # Upload to S3
+        print(f"📤 Uploading image to S3: s3://{s3_bucket}/{s3_key}")
+        s3_client.upload_file(
+            image_path,
+            s3_bucket,
+            s3_key,
+            ExtraArgs={'ContentType': content_type}
+        )
+        
+        # Construct CloudFront URL
+        cloudfront_url_clean = cloudfront_url.rstrip('/')
+        s3_key_clean = s3_key.lstrip('/')
+        public_url = f"{cloudfront_url_clean}/{s3_key_clean}"
+        
+        print(f"✅ Image uploaded to S3. CloudFront URL: {public_url}")
+        return public_url
+        
+    except ClientError as e:
+        print(f"❌ S3 upload error: {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Error uploading to S3: {e}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return None
+
+def build_public_image_url(image_path: str) -> Optional[str]:
+    """
+    Builds a public URL for an image if LIGHTX_IMAGE_BASE_URL is configured.
+    First tries S3 upload if configured, otherwise falls back to local path matching.
+    """
+    print(f"🔍 build_public_image_url called for {image_path}")
+    # Try S3 upload first if configured
+    s3_url = upload_image_to_s3(image_path)
+    if s3_url:
+        print(f"🌐 build_public_image_url returning S3 URL: {s3_url}")
+        return s3_url
+    else:
+        print("ℹ️ S3 upload not used; falling back to local path resolution")
+    
+    # Fall back to local path matching (original behavior)
+    base_url = os.getenv("LIGHTX_IMAGE_BASE_URL")
+    if not base_url:
+        return None
+
+    raw_base_path = os.getenv("LIGHTX_IMAGE_BASE_PATH", "outputs")
+    if not raw_base_path:
+        return None
+
+    if os.path.isabs(raw_base_path):
+        base_path = raw_base_path
+    else:
+        base_path = os.path.abspath(os.path.join(os.getcwd(), raw_base_path))
+
+    abs_image_path = os.path.abspath(image_path)
+    if not abs_image_path.startswith(os.path.abspath(base_path)):
+        return None
+
+    relative_path = os.path.relpath(abs_image_path, base_path)
+    relative_url = relative_path.replace(os.sep, "/")
+    return f"{base_url.rstrip('/')}/{relative_url.lstrip('/')}"
 
 # Allowed file extensions for API
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
@@ -354,59 +489,105 @@ def remove_background_with_lightx_api(image_path: str) -> str:
         if not os.path.exists(image_path):
             return None
         
-        # Step 1: Get image info for upload
-        file_size = os.path.getsize(image_path)
-        file_ext = os.path.splitext(image_path)[1].lower()
-        content_type = "image/jpeg" if file_ext in ['.jpg', '.jpeg'] else "image/png"
-        
-        # Step 2: Get upload URL
-        upload_url_endpoint = "https://api.lightxeditor.com/external/api/v2/uploadImageUrl"
+        temp_jpeg_path = None
+        image_url = None
+
+        # Define headers early - needed for both S3 URL path and LightX upload path
         headers = {
             "Content-Type": "application/json",
             "x-api-key": lightx_api_key
         }
-        upload_data = {
-            "uploadType": "imageUrl",
-            "size": file_size,
-            "contentType": content_type
-        }
-        
-        print(f"📤 Step 1: Requesting upload URL from LightX...")
-        upload_response = requests.post(upload_url_endpoint, headers=headers, json=upload_data, timeout=30)
-        
-        if upload_response.status_code != 200:
-            print(f"❌ Failed to get upload URL: {upload_response.status_code}")
-            return None
-        
-        upload_result = upload_response.json()
-        if upload_result.get('statusCode') != 2000:
-            print(f"❌ LightX upload URL error: {upload_result.get('message')}")
-            return None
-        
-        upload_image_url = upload_result['body']['uploadImage']
-        image_url = upload_result['body']['imageUrl']
-        
-        # Step 3: Upload image using PUT request
-        print(f"📤 Step 2: Uploading image to LightX...")
-        with open(image_path, 'rb') as file:
-            put_headers = {
-                "Content-Type": content_type,
-                "Content-Length": str(file_size)
-            }
-            put_response = requests.put(upload_image_url, data=file, headers=put_headers, timeout=60)
+
+        public_url = build_public_image_url(image_path)
+        print(f"🌐 build_public_image_url result: {public_url}")
+        if public_url:
+            print(f"🌐 Using public image URL for LightX: {public_url}")
+            image_url = public_url
+        else:
+            from PIL import Image
+
+            try:
+                with Image.open(image_path) as img:
+                    actual_format = img.format
+                    img_size = img.size
+                    img_mode = img.mode
+                    print(f"📸 Image info: {img_size}, mode: {img_mode}, format: {actual_format}")
+                    
+                    if img_mode in ('RGBA', 'LA', 'P'):
+                        print(f"🔄 Converting from {img_mode} to RGB for JPEG compatibility")
+                        rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                        if img_mode == 'P':
+                            img = img.convert('RGBA')
+                        rgb_img.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                        img = rgb_img
+                    elif img_mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    temp_jpeg_path = image_path.rsplit('.', 1)[0] + '_lightx_temp.jpg'
+                    img.save(temp_jpeg_path, format='JPEG', quality=95, optimize=True)
+                    print(f"✅ Converted to JPEG: {temp_jpeg_path}")
+                    content_type = "image/jpeg"
+                    file_size = os.path.getsize(temp_jpeg_path)
+                    print(f"📦 File size: {file_size} bytes, Content-Type: {content_type}")
+                    image_path_to_upload = temp_jpeg_path
+            except Exception as e:
+                print(f"⚠️ Could not convert image: {e}, using original")
+                file_ext = os.path.splitext(image_path)[1].lower()
+                content_type = "image/jpeg" if file_ext in ['.jpg', '.jpeg'] else "image/png"
+                file_size = os.path.getsize(image_path)
+                image_path_to_upload = image_path
+                print(f"📦 File size: {file_size} bytes, Content-Type: {content_type}")
             
-            if put_response.status_code not in [200, 204]:
-                print(f"❌ Failed to upload image: {put_response.status_code}")
+            upload_url_endpoint = "https://api.lightxeditor.com/external/api/v2/uploadImageUrl"
+            upload_data = {
+                "uploadType": "imageUrl",
+                "size": file_size,
+                "contentType": content_type
+            }
+            
+            print(f"📤 Step 1: Requesting upload URL from LightX...")
+            upload_response = requests.post(upload_url_endpoint, headers=headers, json=upload_data, timeout=30)
+            
+            if upload_response.status_code != 200:
+                print(f"❌ Failed to get upload URL: {upload_response.status_code}")
                 return None
+            
+            upload_result = upload_response.json()
+            if upload_result.get('statusCode') != 2000:
+                error_msg = upload_result.get('message', 'Unknown error')
+                error_code = upload_result.get('statusCode', 'Unknown')
+                print(f"❌ LightX upload URL error:")
+                print(f"   Status Code: {error_code}")
+                print(f"   Message: {error_msg}")
+                print(f"   Full response: {upload_result}")
+                return None
+            
+            upload_image_url = upload_result['body']['uploadImage']
+            image_url = upload_result['body']['imageUrl']
+            
+            print(f"📤 Step 2: Uploading image to LightX...")
+            with open(image_path_to_upload, 'rb') as file:
+                put_headers = {
+                    "Content-Type": content_type,
+                    "Content-Length": str(file_size)
+                }
+                put_response = requests.put(upload_image_url, data=file, headers=put_headers, timeout=60)
+                
+                if put_response.status_code not in [200, 204]:
+                    print(f"❌ Failed to upload image: {put_response.status_code}")
+                    return None
         
         # Step 4: Call remove background API
         print(f"🔧 Step 3: Requesting background removal from LightX...")
         remove_bg_endpoint = "https://api.lightxeditor.com/external/api/v2/remove-background"
+        # LightX support: keep the prompt box present but empty, and don't set it to "transparent"
+        # Background set to empty string to request transparency
         remove_bg_data = {
             "imageUrl": image_url,
-            "background": "transparent"  # Remove background (transparent)
+            "background": ""
         }
         
+        print(f"📦 LightX payload: {remove_bg_data}")
         remove_bg_response = requests.post(
             remove_bg_endpoint, 
             headers=headers, 
@@ -420,7 +601,12 @@ def remove_background_with_lightx_api(image_path: str) -> str:
         
         remove_bg_result = remove_bg_response.json()
         if remove_bg_result.get('statusCode') != 2000:
-            print(f"❌ LightX remove background error: {remove_bg_result.get('message')}")
+            error_msg = remove_bg_result.get('message', 'Unknown error')
+            error_code = remove_bg_result.get('statusCode', 'Unknown')
+            print(f"❌ LightX remove background error:")
+            print(f"   Status Code: {error_code}")
+            print(f"   Message: {error_msg}")
+            print(f"   Full response: {remove_bg_result}")
             return None
         
         order_id = remove_bg_result['body']['orderId']
@@ -449,16 +635,23 @@ def remove_background_with_lightx_api(image_path: str) -> str:
             )
             
             if status_response.status_code != 200:
-                print(f"❌ Failed to check status: {status_response.status_code}")
+                print(f"❌ Failed to check status (attempt {attempt + 1}/{max_retries}): {status_response.status_code}")
                 continue
             
             status_result = status_response.json()
+            current_status = status_result.get('body', {}).get('status')
+            print(f"⏱️ LightX status poll {attempt + 1}/{max_retries}: {current_status or 'UNKNOWN'}")
             if status_result.get('statusCode') != 2000:
                 error_msg = status_result.get('message', 'Unknown error')
-                print(f"❌ Status check error: {error_msg}")
+                error_code = status_result.get('statusCode', 'Unknown')
+                print(f"❌ Status check error (attempt {attempt + 1}/{max_retries}):")
+                print(f"   Status Code: {error_code}")
+                print(f"   Message: {error_msg}")
+                print(f"   Full response: {status_result}")
                 # If we get a generic AI art error, fail immediately instead of retrying
-                if 'GENERIC_AI_ART_ERR' in error_msg or 'AI_ART' in error_msg:
-                    print(f"❌ LightX API returned AI art error, aborting retries")
+                if 'GENERIC_AI_ART_ERR' in error_msg or 'AI_ART' in error_msg or error_code == 55044:
+                    print(f"❌ LightX API returned AI art error (Code: {error_code})")
+                    print(f"   LightX does not support AI-generated images - aborting immediately")
                     return None
                 continue
             
@@ -466,10 +659,21 @@ def remove_background_with_lightx_api(image_path: str) -> str:
             
             if status == 'active':
                 # Success! Download the result
+                # Check for output URL first, then fall back to mask URL
                 output_url = status_result['body'].get('output')
+                mask_url = status_result['body'].get('mask')
+                
+                # Use mask URL if output is null/empty
+                if not output_url and mask_url:
+                    print(f"📥 LightX output is null, using mask URL instead")
+                    output_url = mask_url
+                
                 if not output_url:
-                    print(f"❌ No output URL in response")
+                    print(f"❌ No output or mask URL in response")
+                    print(f"   Response body: {status_result.get('body', {})}")
                     return None
+                
+                print(f"📥 LightX result URL: {output_url}")
                 
                 print(f"✅ Step 5: Downloading result from LightX...")
                 output_response = requests.get(output_url, timeout=60)
@@ -479,6 +683,14 @@ def remove_background_with_lightx_api(image_path: str) -> str:
                     temp_path = image_path.replace('.', '_bg_removed.')
                     with open(temp_path, 'wb') as result_file:
                         result_file.write(output_response.content)
+                    
+                    # Clean up temporary JPEG if we created one
+                    if temp_jpeg_path and os.path.exists(temp_jpeg_path):
+                        try:
+                            os.remove(temp_jpeg_path)
+                            print(f"🧹 Cleaned up temporary JPEG file")
+                        except:
+                            pass
                     
                     print(f"✅ LightX background removal successful")
                     return temp_path
@@ -492,10 +704,26 @@ def remove_background_with_lightx_api(image_path: str) -> str:
             # else status is 'init', continue polling
         
         print(f"❌ LightX background removal timed out after {max_retries} attempts")
+        # Clean up temporary JPEG if we created one
+        if 'temp_jpeg_path' in locals() and temp_jpeg_path and os.path.exists(temp_jpeg_path):
+            try:
+                os.remove(temp_jpeg_path)
+                print(f"🧹 Cleaned up temporary JPEG file")
+            except:
+                pass
         return None
                 
     except Exception as e:
         print(f"❌ Error in LightX background removal: {e}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        # Clean up temporary JPEG if we created one
+        if 'temp_jpeg_path' in locals() and temp_jpeg_path and os.path.exists(temp_jpeg_path):
+            try:
+                os.remove(temp_jpeg_path)
+                print(f"🧹 Cleaned up temporary JPEG file")
+            except:
+                pass
         return None
 
 def remove_background(image_path: str) -> str:

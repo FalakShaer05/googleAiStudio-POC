@@ -237,6 +237,52 @@
             max-height: 300px;
             object-fit: contain;
         }
+
+        .composition-editor {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .composition-editor h5 {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .composition-canvas-wrapper {
+            border: 2px dashed #ced4da;
+            border-radius: 12px;
+            background: #f8f9ff;
+            padding: 0.5rem;
+            max-height: 500px;
+            overflow: auto;
+        }
+
+        #compositionCanvas {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: repeating-linear-gradient(45deg, #f8f9fa, #f8f9fa 10px, #e9ecef 10px, #e9ecef 20px);
+        }
+
+        .composition-controls {
+            margin-top: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .composition-controls .form-range {
+            flex: 1;
+        }
+
+        .composition-controls .btn {
+            min-width: 150px;
+        }
         
         .spinner {
             display: inline-block;
@@ -264,6 +310,7 @@
             
             <div class="form-container">
                 <form id="conversionForm" enctype="multipart/form-data">
+                    <input type="hidden" name="remove_bg" id="remove_bg" value="false">
                     <!-- File Upload Section -->
                     <div class="mb-4">
                         <label class="form-label fw-bold">Upload Main Image</label>
@@ -500,12 +547,41 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Composition Editor -->
+                    <div class="composition-editor" id="compositionEditor">
+                        <h5><i class="fas fa-layer-group me-2"></i>Interactive Background Composer</h5>
+                        <p class="text-muted small mb-3">
+                            Drag the character to reposition it over the background. Use the slider to adjust the size. 
+                            The downloaded image will look exactly like this preview.
+                        </p>
+                        <div class="composition-canvas-wrapper mb-3">
+                            <canvas id="compositionCanvas" width="800" height="600"></canvas>
+                        </div>
+                        <div class="composition-controls">
+                            <div class="flex-grow-1">
+                                <label for="compositionScale" class="form-label">Character Size</label>
+                                <input type="range" class="form-range" id="compositionScale" min="0.2" max="2" step="0.01" value="1" disabled>
+                                <div class="d-flex justify-content-between text-muted small">
+                                    <span>20%</span>
+                                    <span id="compositionScaleValue">100%</span>
+                                    <span>200%</span>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline-secondary" id="resetCompositionBtn" disabled>
+                                <i class="fas fa-undo me-1"></i>Reset
+                            </button>
+                            <button type="button" class="btn btn-success" id="downloadCompositionBtn" disabled>
+                                <i class="fas fa-download me-1"></i>Download Final
+                            </button>
+                        </div>
+                    </div>
                     
                     <!-- Download Section -->
                     <div class="file-info" id="downloadSection" style="display: none;">
                         <div class="text-center">
                             <i class="fas fa-check-circle text-success me-2"></i>
-                            <span>Image converted successfully!</span>
+                            <span id="downloadMessage">Image converted successfully!</span>
                             <br>
                             <button type="button" class="download-btn mt-2" id="downloadBtn">
                                 <i class="fas fa-download me-2"></i>Download Result
@@ -529,7 +605,19 @@
         const refFileInfo = document.getElementById('refFileInfo');
         const refFileName = document.getElementById('refFileName');
         
+        const removeBgInput = document.getElementById('remove_bg');
         const compositingOptions = document.getElementById('compositingOptions');
+        const compositionEditor = document.getElementById('compositionEditor');
+        const compositionCanvas = document.getElementById('compositionCanvas');
+        const compositionScaleControl = document.getElementById('compositionScale');
+        const compositionScaleValue = document.getElementById('compositionScaleValue');
+        const resetCompositionBtn = document.getElementById('resetCompositionBtn');
+        const downloadCompositionBtn = document.getElementById('downloadCompositionBtn');
+        const downloadMessage = document.getElementById('downloadMessage');
+        let compositionCtx = null;
+        if (compositionCanvas) {
+            compositionCtx = compositionCanvas.getContext('2d');
+        }
         
         const form = document.getElementById('conversionForm');
         const convertBtn = document.getElementById('convertBtn');
@@ -546,6 +634,8 @@
         const previewFinalPlaceholder = document.getElementById('previewFinalPlaceholder');
         
         let currentOutputFilename = null;
+        let compositionState = null;
+        let compositionActive = false;
         
         // File upload handling
         uploadArea.addEventListener('click', () => fileInput.click());
@@ -558,6 +648,23 @@
         refUploadArea.addEventListener('dragover', handleRefDragOver);
         refUploadArea.addEventListener('dragleave', handleRefDragLeave);
         refUploadArea.addEventListener('drop', handleRefDrop);
+
+        if (compositionScaleControl) {
+            compositionScaleControl.addEventListener('input', handleCompositionScaleChange);
+        }
+        if (resetCompositionBtn) {
+            resetCompositionBtn.addEventListener('click', resetCompositionView);
+        }
+        if (downloadCompositionBtn) {
+            downloadCompositionBtn.addEventListener('click', downloadCompositeImage);
+        }
+        if (compositionCanvas) {
+            compositionCanvas.addEventListener('pointerdown', startCompositionDrag);
+            compositionCanvas.addEventListener('pointermove', moveCompositionDrag);
+            compositionCanvas.addEventListener('pointerup', endCompositionDrag);
+            compositionCanvas.addEventListener('pointerleave', endCompositionDrag);
+            compositionCanvas.addEventListener('pointercancel', endCompositionDrag);
+        }
         
         function handleDragOver(e) {
             e.preventDefault();
@@ -602,15 +709,6 @@
         fileInput.addEventListener('change', handleFileSelect);
         refFileInput.addEventListener('change', handleRefFileSelect);
         
-        // Scale slider update
-        const scaleSlider = document.getElementById('scale');
-        const scaleValue = document.getElementById('scaleValue');
-        if (scaleSlider && scaleValue) {
-            scaleSlider.addEventListener('input', function() {
-                scaleValue.textContent = Math.round(this.value * 100) + '%';
-            });
-        }
-        
         function handleFileSelect() {
             const file = fileInput.files[0];
             if (file) {
@@ -629,9 +727,8 @@
                 refFileName.textContent = file.name;
                 refFileInfo.style.display = 'block';
                 refUploadArea.style.display = 'none';
-                
-                // Show position controls
-                document.getElementById('positionControls').style.display = 'block';
+                compositingOptions.style.display = 'block';
+                removeBgInput.value = 'true';
             }
         }
         
@@ -639,9 +736,8 @@
             refFileInput.value = '';
             refFileInfo.style.display = 'none';
             refUploadArea.style.display = 'block';
-            
-            // Hide position controls
-            document.getElementById('positionControls').style.display = 'none';
+            compositingOptions.style.display = 'none';
+            removeBgInput.value = 'false';
         }
         
         async function analyzeImageForSmartCanvas(file) {
@@ -735,7 +831,6 @@
                 hideProgress();
                 
                 if (result.success) {
-                    // Always direct download now - no more composition page
                     currentOutputFilename = result.output_filename;
                     
                     if (result.auto_merged) {
@@ -747,6 +842,12 @@
                     // Show preview images if available
                     if (result.preview_images) {
                         showPreview(result.preview_images);
+                    }
+
+                    if (result.composition && result.composition.enabled) {
+                        initCompositionEditor(result.composition);
+                    } else {
+                        teardownCompositionEditor();
                     }
                     
                     showDownload();
@@ -761,6 +862,9 @@
         
         // Download handling
         downloadBtn.addEventListener('click', () => {
+            if (downloadBtn.style.display === 'none') {
+                return;
+            }
             if (currentOutputFilename) {
                 window.open(`/download/${currentOutputFilename}`, '_blank');
             }
@@ -796,7 +900,17 @@
         }
         
         function showDownload() {
+            if (!downloadSection) {
+                return;
+            }
             downloadSection.style.display = 'block';
+            if (compositionActive) {
+                downloadMessage.textContent = 'Use the composer below to position and download your final image.';
+                downloadBtn.style.display = 'none';
+            } else {
+                downloadMessage.textContent = 'Image converted successfully!';
+                downloadBtn.style.display = 'inline-block';
+            }
         }
         
         function showPreview(previewImages) {
@@ -826,6 +940,7 @@
                     previewBackgroundPlaceholder.style.display = 'block';
                 };
             } else {
+                previewBackground.style.display = 'none';
                 previewBackgroundPlaceholder.innerHTML = 'No background used';
                 previewBackgroundPlaceholder.style.display = 'block';
             }
@@ -849,8 +964,225 @@
             previewBackground.style.display = 'none';
             previewFinal.style.display = 'none';
             previewConvertedPlaceholder.style.display = 'block';
-            previewBackgroundPlaceholder.style.display = 'none';
+            previewBackgroundPlaceholder.style.display = 'block';
+            previewBackgroundPlaceholder.textContent = 'No background used';
             previewFinalPlaceholder.style.display = 'block';
+            teardownCompositionEditor();
+        }
+
+        function initCompositionEditor(composition) {
+            if (!compositionEditor || !compositionCanvas || !compositionCtx) {
+                return;
+            }
+
+            compositionActive = true;
+            compositionEditor.style.display = 'block';
+            compositionState = {
+                backgroundImg: new Image(),
+                characterImg: new Image(),
+                backgroundReady: false,
+                characterReady: false,
+                scale: 1,
+                x: 0,
+                y: 0,
+                dragOffset: { x: 0, y: 0 },
+                pointerId: null
+            };
+
+            compositionScaleControl.value = 1;
+            updateCompositionScaleDisplay(1);
+            compositionScaleControl.disabled = true;
+            resetCompositionBtn.disabled = true;
+            downloadCompositionBtn.disabled = true;
+
+            const finalizeSetup = () => {
+                if (!compositionState.backgroundReady || !compositionState.characterReady) {
+                    return;
+                }
+
+                const widthRatio = compositionCanvas.width / compositionState.characterImg.width;
+                const heightRatio = compositionCanvas.height / compositionState.characterImg.height;
+                const initialScale = clamp(Math.min(widthRatio, heightRatio) * 0.6, 0.2, 2);
+                compositionState.scale = initialScale;
+                centerCompositionCharacter();
+                compositionState.initial = {
+                    scale: compositionState.scale,
+                    x: compositionState.x,
+                    y: compositionState.y
+                };
+                compositionScaleControl.value = compositionState.scale;
+                updateCompositionScaleDisplay(compositionState.scale);
+                compositionScaleControl.disabled = false;
+                resetCompositionBtn.disabled = false;
+                downloadCompositionBtn.disabled = false;
+                drawComposition();
+            };
+
+            compositionState.backgroundImg.onload = function() {
+                compositionState.backgroundReady = true;
+                compositionCanvas.width = compositionState.backgroundImg.width;
+                compositionCanvas.height = compositionState.backgroundImg.height;
+                finalizeSetup();
+            };
+
+            compositionState.characterImg.onload = function() {
+                compositionState.characterReady = true;
+                finalizeSetup();
+            };
+
+            const cacheBuster = `?t=${Date.now()}`;
+            compositionState.backgroundImg.src = composition.background_url + cacheBuster;
+            compositionState.characterImg.src = composition.converted_url + cacheBuster;
+        }
+
+        function teardownCompositionEditor() {
+            compositionActive = false;
+            if (compositionCtx) {
+                compositionCtx.clearRect(0, 0, compositionCanvas.width, compositionCanvas.height);
+            }
+            if (compositionEditor) {
+                compositionEditor.style.display = 'none';
+            }
+            compositionState = null;
+            if (compositionScaleControl) {
+                compositionScaleControl.value = 1;
+                updateCompositionScaleDisplay(1);
+                compositionScaleControl.disabled = true;
+            }
+            if (resetCompositionBtn) {
+                resetCompositionBtn.disabled = true;
+            }
+            if (downloadCompositionBtn) {
+                downloadCompositionBtn.disabled = true;
+            }
+        }
+
+        function handleCompositionScaleChange(event) {
+            if (!compositionState || !compositionState.characterReady) {
+                return;
+            }
+            const newScale = clamp(parseFloat(event.target.value) || 1, 0.2, 2);
+            const prevCenter = {
+                x: compositionState.x + (compositionState.characterImg.width * compositionState.scale) / 2,
+                y: compositionState.y + (compositionState.characterImg.height * compositionState.scale) / 2
+            };
+            compositionState.scale = newScale;
+            const newWidth = compositionState.characterImg.width * compositionState.scale;
+            const newHeight = compositionState.characterImg.height * compositionState.scale;
+            compositionState.x = prevCenter.x - newWidth / 2;
+            compositionState.y = prevCenter.y - newHeight / 2;
+            updateCompositionScaleDisplay(newScale);
+            drawComposition();
+        }
+
+        function updateCompositionScaleDisplay(value) {
+            if (compositionScaleValue) {
+                compositionScaleValue.textContent = Math.round(value * 100) + '%';
+            }
+        }
+
+        function startCompositionDrag(event) {
+            if (!compositionState || !compositionState.characterReady) {
+                return;
+            }
+            event.preventDefault();
+            const coords = getCanvasCoordinates(event);
+            compositionState.pointerId = event.pointerId;
+            compositionState.dragOffset = {
+                x: coords.x - compositionState.x,
+                y: coords.y - compositionState.y
+            };
+            compositionCanvas.setPointerCapture(event.pointerId);
+        }
+
+        function moveCompositionDrag(event) {
+            if (!compositionState || compositionState.pointerId !== event.pointerId) {
+                return;
+            }
+            event.preventDefault();
+            const coords = getCanvasCoordinates(event);
+            compositionState.x = coords.x - compositionState.dragOffset.x;
+            compositionState.y = coords.y - compositionState.dragOffset.y;
+            drawComposition();
+        }
+
+        function endCompositionDrag(event) {
+            if (!compositionState || compositionState.pointerId !== event.pointerId) {
+                return;
+            }
+            compositionCanvas.releasePointerCapture(event.pointerId);
+            compositionState.pointerId = null;
+        }
+
+        function getCanvasCoordinates(event) {
+            const rect = compositionCanvas.getBoundingClientRect();
+            const scaleX = compositionCanvas.width / rect.width;
+            const scaleY = compositionCanvas.height / rect.height;
+            return {
+                x: (event.clientX - rect.left) * scaleX,
+                y: (event.clientY - rect.top) * scaleY
+            };
+        }
+
+        function centerCompositionCharacter() {
+            const characterWidth = compositionState.characterImg.width * compositionState.scale;
+            const characterHeight = compositionState.characterImg.height * compositionState.scale;
+            compositionState.x = (compositionCanvas.width - characterWidth) / 2;
+            compositionState.y = (compositionCanvas.height - characterHeight) / 2;
+        }
+
+        function drawComposition() {
+            if (!compositionState || !compositionState.backgroundReady || !compositionState.characterReady) {
+                return;
+            }
+            compositionCtx.clearRect(0, 0, compositionCanvas.width, compositionCanvas.height);
+            compositionCtx.drawImage(compositionState.backgroundImg, 0, 0, compositionCanvas.width, compositionCanvas.height);
+            const characterWidth = compositionState.characterImg.width * compositionState.scale;
+            const characterHeight = compositionState.characterImg.height * compositionState.scale;
+            compositionCtx.drawImage(
+                compositionState.characterImg,
+                compositionState.x,
+                compositionState.y,
+                characterWidth,
+                characterHeight
+            );
+        }
+
+        function resetCompositionView() {
+            if (!compositionState || !compositionState.initial) {
+                return;
+            }
+            compositionState.scale = compositionState.initial.scale;
+            compositionState.x = compositionState.initial.x;
+            compositionState.y = compositionState.initial.y;
+            compositionScaleControl.value = compositionState.scale;
+            updateCompositionScaleDisplay(compositionState.scale);
+            drawComposition();
+        }
+
+        function downloadCompositeImage() {
+            if (!compositionState || !compositionState.characterReady) {
+                return;
+            }
+            drawComposition();
+            compositionCanvas.toBlob(function(blob) {
+                if (!blob) {
+                    showError('Unable to generate download.');
+                    return;
+                }
+                const link = document.createElement('a');
+                const composedName = currentOutputFilename ? currentOutputFilename.replace('converted_', 'composed_') : 'composed_image.png';
+                link.href = URL.createObjectURL(blob);
+                link.download = composedName.endsWith('.png') ? composedName : `${composedName}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+            }, 'image/png');
+        }
+
+        function clamp(value, min, max) {
+            return Math.min(Math.max(value, min), max);
         }
     </script>
 </body>

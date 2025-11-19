@@ -16,11 +16,12 @@ from dotenv import load_dotenv
 import uuid
 import time
 
+# Load environment variables before importing modules that rely on them
+load_dotenv()
+
 # Import API blueprint
 from api import api_bp
-
-# Load environment variables
-load_dotenv()
+from api.utils import remove_background
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -300,138 +301,6 @@ def get_print_dimensions(canvas_size, dpi=300):
     else:
         # Default to 8x10 if size not recognized
         return (2400, 3000)
-
-def resize_background_with_ai(background_image, target_width, target_height):
-    """
-    Use Google AI Studio to intelligently resize/refit background to target dimensions
-    This prevents distortion by using AI to intelligently adjust the background
-    
-    Optimized: Uses fast resize when aspect ratio is close, AI only when needed
-    
-    Args:
-        background_image: PIL Image object (background)
-        target_width: Target width in pixels
-        target_height: Target height in pixels
-    
-    Returns:
-        PIL Image object resized to target dimensions (without distortion)
-    """
-    bg_width, bg_height = background_image.size
-    bg_aspect = bg_width / bg_height
-    target_aspect = target_width / target_height
-    
-    # If aspect ratios are very close (within 5%), use fast resize
-    aspect_diff = abs(bg_aspect - target_aspect) / target_aspect
-    use_fast_resize = aspect_diff < 0.05 or os.getenv('USE_FAST_BG_RESIZE', 'false').lower() == 'true'
-    
-    if use_fast_resize:
-        print(f"⚡ Using fast resize (aspect ratio close: {bg_aspect:.3f} vs {target_aspect:.3f})")
-        scale_x = target_width / bg_width
-        scale_y = target_height / bg_height
-        scale = max(scale_x, scale_y)  # Use max to fill, then crop center
-        new_width = int(bg_width * scale)
-        new_height = int(bg_height * scale)
-        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Crop to exact dimensions from center
-        left = (new_width - target_width) // 2
-        top = (new_height - target_height) // 2
-        right = left + target_width
-        bottom = top + target_height
-        return resized.crop((left, top, right, bottom))
-    
-    if not client:
-        print("⚠️ Gemini client not available, using standard resize")
-        # Fallback to standard resize maintaining aspect ratio
-        scale_x = target_width / bg_width
-        scale_y = target_height / bg_height
-        scale = max(scale_x, scale_y)  # Use max to fill, then crop center
-        new_width = int(bg_width * scale)
-        new_height = int(bg_height * scale)
-        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Crop to exact dimensions from center
-        left = (new_width - target_width) // 2
-        top = (new_height - target_height) // 2
-        right = left + target_width
-        bottom = top + target_height
-        return resized.crop((left, top, right, bottom))
-    
-    try:
-        print(f"🤖 Using Google AI Studio to resize background to {target_width}x{target_height}")
-        print(f"   Original background size: {background_image.size}")
-        
-        # Create a prompt for intelligent background resizing
-        resize_prompt = f"""
-Resize this background image to exactly {target_width} pixels wide by {target_height} pixels tall.
-
-CRITICAL REQUIREMENTS:
-1. Maintain the visual style, colors, and artistic elements of the background
-2. Intelligently adjust the composition to fit the new dimensions without distortion
-3. If the aspect ratio is different, intelligently extend or reframe the background elements
-4. Preserve all important visual elements (text, patterns, colors)
-5. Fill the entire {target_width}x{target_height} canvas - no empty spaces
-6. The output must be exactly {target_width} pixels wide and {target_height} pixels tall
-7. Do not distort or stretch the image - intelligently adjust the composition
-
-The background should look natural and maintain its artistic integrity at the new dimensions."""
-        
-        # Use AI to resize
-        contents = [resize_prompt, background_image]
-        
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-image-preview",
-            contents=contents,
-        )
-        
-        # Process the response
-        for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                resized_background = Image.open(io.BytesIO(part.inline_data.data))
-                print(f"✅ AI resized background to: {resized_background.size}")
-                
-                # Verify dimensions match target (AI should produce exact dimensions, but verify)
-                if resized_background.size != (target_width, target_height):
-                    print(f"⚠️ AI produced {resized_background.size}, adjusting to {target_width}x{target_height}")
-                    resized_background = resized_background.resize((target_width, target_height), Image.Resampling.LANCZOS)
-                
-                return resized_background
-        
-        # If AI didn't return image, fallback to standard resize
-        print("⚠️ AI didn't return image, using standard resize")
-        bg_width, bg_height = background_image.size
-        scale_x = target_width / bg_width
-        scale_y = target_height / bg_height
-        scale = max(scale_x, scale_y)
-        new_width = int(bg_width * scale)
-        new_height = int(bg_height * scale)
-        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Crop to exact dimensions from center
-        left = (new_width - target_width) // 2
-        top = (new_height - target_height) // 2
-        right = left + target_width
-        bottom = top + target_height
-        return resized.crop((left, top, right, bottom))
-        
-    except Exception as e:
-        print(f"❌ Error using AI to resize background: {e}")
-        print("   Falling back to standard resize")
-        # Fallback to standard resize
-        bg_width, bg_height = background_image.size
-        scale_x = target_width / bg_width
-        scale_y = target_height / bg_height
-        scale = max(scale_x, scale_y)
-        new_width = int(bg_width * scale)
-        new_height = int(bg_height * scale)
-        resized = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Crop to exact dimensions from center
-        left = (new_width - target_width) // 2
-        top = (new_height - target_height) // 2
-        right = left + target_width
-        bottom = top + target_height
-        return resized.crop((left, top, right, bottom))
 
 def upscale_to_canvas_size(image, canvas_size, dpi=300):
     """
@@ -737,249 +606,6 @@ def remove_black_background_simple(image, threshold=15):
         print(f"Error in simple black background removal: {e}")
         return image
 
-def enhance_prompt_for_white_background(prompt):
-    """
-    Enhance the prompt to ensure ONLY character is generated with solid white/transparent background
-    This is critical - the converted image should be ONLY the character, no background elements
-    """
-    # Add STRONG requirements for character-only output with no background
-    character_only_enhancement = """
-
-CRITICAL REQUIREMENTS - READ CAREFULLY:
-1. OUTPUT ONLY THE CHARACTER/PERSON - NO BACKGROUND ELEMENTS:
-   - Generate ONLY the full-length character (head to feet)
-   - DO NOT include any background elements, scenery, objects, or environment
-   - NO backgrounds, NO landscapes, NO rooms, NO outdoor scenes
-   - The character should be the ONLY subject in the image
-
-2. BACKGROUND MUST BE PURE WHITE OR TRANSPARENT:
-   - Background MUST be completely solid white (#FFFFFF)
-   - NO patterns, textures, gradients, shadows, or scenery in background
-   - NO black, gray, or colored backgrounds
-   - The white background should be clean and uniform behind the character
-
-3. CHARACTER SPECIFICATIONS:
-   - Generate a COMPLETE full-length character (from head to feet)
-   - Character should be clearly separated from the white background
-   - Character should be the main and ONLY focus
-   - NO background elements should be visible
-
-4. FINAL OUTPUT:
-   - Image should show ONLY the character on a pure white background
-   - Background must be removable easily (solid white makes this possible)
-   - The character must be complete and full-length
-
-IMPORTANT: The output image must contain ONLY the character with a solid white background. No other elements, scenery, or background details should be included."""
-    
-    return prompt + character_only_enhancement
-
-
-def remove_background_with_mosida_api(image_path):
-    """
-    Remove background using Mosida API
-    """
-    try:
-        import requests
-        
-        api_url = "https://dev-lightsail-sam.mosida.com/remove-bg"
-        
-        # Check if file exists
-        if not os.path.exists(image_path):
-            return None
-        
-        # Prepare the file for upload
-        with open(image_path, 'rb') as file:
-            files = {'file': file}
-            
-            response = requests.post(api_url, files=files, timeout=30)
-            
-            if response.status_code == 200:
-                # Save the result to a temporary file
-                temp_path = image_path.replace('.', '_bg_removed.')
-                with open(temp_path, 'wb') as result_file:
-                    result_file.write(response.content)
-                
-                return temp_path
-            else:
-                return None
-                
-    except Exception as e:
-        return None
-
-def remove_background_with_lightx_api(image_path):
-    """
-    Remove background using LightX API
-    Documentation: https://docs.lightxeditor.com/api/remove-background
-    """
-    try:
-        import requests
-        import json
-        
-        # Get LightX API key from environment
-        lightx_api_key = os.getenv('LIGHTX_API_KEY')
-        if not lightx_api_key:
-            print("❌ LIGHTX_API_KEY not found in environment variables")
-            return None
-        
-        # Check if file exists
-        if not os.path.exists(image_path):
-            return None
-        
-        # Step 1: Get image info for upload
-        file_size = os.path.getsize(image_path)
-        file_ext = os.path.splitext(image_path)[1].lower()
-        content_type = "image/jpeg" if file_ext in ['.jpg', '.jpeg'] else "image/png"
-        
-        # Step 2: Get upload URL
-        upload_url_endpoint = "https://api.lightxeditor.com/external/api/v2/uploadImageUrl"
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": lightx_api_key
-        }
-        upload_data = {
-            "uploadType": "imageUrl",
-            "size": file_size,
-            "contentType": content_type
-        }
-        
-        print(f"📤 Step 1: Requesting upload URL from LightX...")
-        upload_response = requests.post(upload_url_endpoint, headers=headers, json=upload_data, timeout=30)
-        
-        if upload_response.status_code != 200:
-            print(f"❌ Failed to get upload URL: {upload_response.status_code}")
-            return None
-        
-        upload_result = upload_response.json()
-        if upload_result.get('statusCode') != 2000:
-            print(f"❌ LightX upload URL error: {upload_result.get('message')}")
-            return None
-        
-        upload_image_url = upload_result['body']['uploadImage']
-        image_url = upload_result['body']['imageUrl']
-        
-        # Step 3: Upload image using PUT request
-        print(f"📤 Step 2: Uploading image to LightX...")
-        with open(image_path, 'rb') as file:
-            put_headers = {
-                "Content-Type": content_type,
-                "Content-Length": str(file_size)
-            }
-            put_response = requests.put(upload_image_url, data=file, headers=put_headers, timeout=60)
-            
-            if put_response.status_code not in [200, 204]:
-                print(f"❌ Failed to upload image: {put_response.status_code}")
-                return None
-        
-        # Step 4: Call remove background API
-        print(f"🔧 Step 3: Requesting background removal from LightX...")
-        remove_bg_endpoint = "https://api.lightxeditor.com/external/api/v2/remove-background"
-        remove_bg_data = {
-            "imageUrl": image_url,
-            "background": "transparent"  # Remove background (transparent)
-        }
-        
-        remove_bg_response = requests.post(
-            remove_bg_endpoint, 
-            headers=headers, 
-            json=remove_bg_data, 
-            timeout=30
-        )
-        
-        if remove_bg_response.status_code != 200:
-            print(f"❌ Failed to request background removal: {remove_bg_response.status_code}")
-            return None
-        
-        remove_bg_result = remove_bg_response.json()
-        if remove_bg_result.get('statusCode') != 2000:
-            print(f"❌ LightX remove background error: {remove_bg_result.get('message')}")
-            return None
-        
-        order_id = remove_bg_result['body']['orderId']
-        max_retries = remove_bg_result['body'].get('maxRetriesAllowed', 5)
-        avg_response_time = remove_bg_result['body'].get('avgResponseTimeInSec', 15)
-        
-        print(f"⏳ Step 4: Polling for result (orderId: {order_id}, max retries: {max_retries})...")
-        
-        # Step 5: Poll for status (optimized - check immediately first, then wait)
-        status_endpoint = "https://api.lightxeditor.com/external/api/v2/order-status"
-        status_data = {"orderId": order_id}
-        
-        # Optimized polling: Check immediately first, then wait adaptively
-        for attempt in range(max_retries):
-            # Don't wait before first check - check immediately
-            if attempt > 0:
-                # Adaptive wait: shorter waits for early attempts, longer for later
-                wait_time = min(2 + attempt, 3)  # 2s, 3s, 3s, 3s, 3s
-                time.sleep(wait_time)
-            
-            status_response = requests.post(
-                status_endpoint,
-                headers=headers,
-                json=status_data,
-                timeout=30
-            )
-            
-            if status_response.status_code != 200:
-                print(f"❌ Failed to check status: {status_response.status_code}")
-                continue
-            
-            status_result = status_response.json()
-            if status_result.get('statusCode') != 2000:
-                print(f"❌ Status check error: {status_result.get('message')}")
-                continue
-            
-            status = status_result['body'].get('status')
-            
-            if status == 'active':
-                # Success! Download the result
-                output_url = status_result['body'].get('output')
-                if not output_url:
-                    print(f"❌ No output URL in response")
-                    return None
-                
-                print(f"✅ Step 5: Downloading result from LightX...")
-                output_response = requests.get(output_url, timeout=60)
-                
-                if output_response.status_code == 200:
-                    # Save the result to a temporary file
-                    temp_path = image_path.replace('.', '_bg_removed.')
-                    with open(temp_path, 'wb') as result_file:
-                        result_file.write(output_response.content)
-                    
-                    print(f"✅ LightX background removal successful")
-                    return temp_path
-                else:
-                    print(f"❌ Failed to download result: {output_response.status_code}")
-                    return None
-                    
-            elif status == 'failed':
-                print(f"❌ LightX background removal failed")
-                return None
-            # else status is 'init', continue polling
-        
-        print(f"❌ LightX background removal timed out after {max_retries} attempts")
-        return None
-                
-    except Exception as e:
-        print(f"❌ Error in LightX background removal: {e}")
-        return None
-
-def remove_background(image_path):
-    """
-    Remove background using the service specified in BACKGROUND_REMOVAL_SERVICE env variable.
-    Options: 'mosida' or 'lightx'
-    Falls back to 'mosida' if not specified or invalid.
-    """
-    service = os.getenv('BACKGROUND_REMOVAL_SERVICE', 'mosida').lower()
-    
-    if service == 'lightx':
-        print(f"🔧 Using LightX API for background removal")
-        return remove_background_with_lightx_api(image_path)
-    else:
-        print(f"🔧 Using Mosida API for background removal")
-        return remove_background_with_mosida_api(image_path)
-
-# Background removal using Mosida API
 
 def add_drop_shadow(image, offset=(5, 5), blur_radius=10, shadow_color=(0, 0, 0, 100)):
     """
@@ -1302,10 +928,6 @@ def index():
     """Main page"""
     return render_template('index.html')
 
-@app.route('/composite-page')
-def composite_page():
-    """Serve the compositing page"""
-    return render_template('composite.html')
 
 @app.route('/analyze-image', methods=['POST'])
 def analyze_image():
@@ -1357,6 +979,41 @@ def upload_file():
         
         # Get optional remove_bg parameter
         remove_bg = request.form.get('remove_bg', 'false').lower() == 'true'
+
+        # Handle optional reference background
+        background_file = request.files.get('reference_background')
+        background_filename = None
+        background_path = None
+        background_preview_filename = None
+        background_dimensions = None
+        has_background = False
+
+        if background_file and background_file.filename:
+            if not allowed_file(background_file.filename):
+                return jsonify({'error': 'Invalid background file type. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF'}), 400
+
+            has_background = True
+            bg_secure = secure_filename(background_file.filename)
+            background_filename = f"{uuid.uuid4()}_background_{bg_secure}"
+            background_path = os.path.join(app.config['UPLOAD_FOLDER'], background_filename)
+            background_file.save(background_path)
+
+            try:
+                with Image.open(background_path) as bg_img:
+                    background_dimensions = {'width': bg_img.width, 'height': bg_img.height}
+                    preview_bg = bg_img.copy()
+                    preview_bg.thumbnail((800, 800), Image.Resampling.LANCZOS)
+                    background_preview_filename = f"preview_background_{background_filename}"
+                    preview_bg_path = os.path.join(app.config['OUTPUT_FOLDER'], background_preview_filename)
+                    preview_bg = preview_bg.convert('RGB') if preview_bg.mode not in ('RGB', 'RGBA') else preview_bg
+                    preview_bg.save(preview_bg_path, quality=85, optimize=True)
+            except Exception as bg_error:
+                print(f"⚠️ Failed to generate background preview: {bg_error}")
+                background_preview_filename = None
+
+        # Force background removal when background is provided
+        if has_background:
+            remove_bg = True
         
         # Get upscaling options from form (optional, for faster processing)
         upscale_before = request.form.get('upscale_before', 'true').lower() == 'true'
@@ -1385,7 +1042,7 @@ def upload_file():
             scale_factor, 
             canvas_size=None,  # No canvas size processing
             dpi=300,
-            reference_background_path=None,  # No background reference
+            reference_background_path=background_path if has_background else None,
             enable_background_compositing=False  # No compositing
         )
         
@@ -1402,7 +1059,23 @@ def upload_file():
                     print(f"✅ Background removal successful")
                     # Replace output with background-removed version
                     converted_image = Image.open(api_result_path)
-                    converted_image.save(output_path, quality=95, optimize=True)
+                    
+                    # If image has transparency (RGBA), save as PNG and update filename
+                    if converted_image.mode == 'RGBA':
+                        # Change output path to PNG to preserve transparency
+                        output_path_png = output_path.rsplit('.', 1)[0] + '.png'
+                        # Remove old file if it exists and is different
+                        if output_path != output_path_png and os.path.exists(output_path):
+                            os.remove(output_path)
+                        output_path = output_path_png
+                        output_filename = os.path.basename(output_path)
+                        # Save as PNG to preserve transparency
+                        converted_image.save(output_path, format='PNG', optimize=True)
+                        print(f"✅ Background-removed image saved as PNG: {output_path}")
+                    else:
+                        # No transparency, can save as JPEG
+                        converted_image.save(output_path, quality=95, optimize=True)
+                    
                     # Clean up temporary file
                     os.remove(api_result_path)
                 else:
@@ -1411,23 +1084,58 @@ def upload_file():
             # Save converted image preview for display
             converted_preview_filename = f"preview_converted_{output_filename}"
             converted_preview_path = os.path.join(app.config['OUTPUT_FOLDER'], converted_preview_filename)
-            preview_converted = Image.open(output_path)
-            # Resize for preview (max 800px width)
-            preview_width = min(800, preview_converted.width)
-            preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
-            preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
-            preview_converted.save(converted_preview_path, quality=85, optimize=True)
+            with Image.open(output_path) as converted_full:
+                converted_width, converted_height = converted_full.size
+                preview_converted = converted_full.copy()
+                preview_width = min(800, preview_converted.width)
+                preview_height = int(preview_converted.height * (preview_width / preview_converted.width))
+                preview_converted = preview_converted.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+                
+                # Save preview with correct format based on image mode
+                if preview_converted.mode == 'RGBA':
+                    # Change preview filename to PNG if original is PNG
+                    if output_filename.endswith('.png'):
+                        converted_preview_path = converted_preview_path.rsplit('.', 1)[0] + '.png'
+                        converted_preview_filename = os.path.basename(converted_preview_path)
+                    preview_converted.save(converted_preview_path, format='PNG', optimize=True)
+                else:
+                    preview_converted.save(converted_preview_path, quality=85, optimize=True)
+
+            # Prepare preview dictionary
+            preview_images = {
+                'converted': converted_preview_filename,
+                'final': converted_preview_filename
+            }
+
+            if background_preview_filename:
+                preview_images['background'] = background_preview_filename
+
+            composition_data = None
+            if has_background and background_dimensions:
+                composition_data = {
+                    'enabled': True,
+                    'converted_url': f"/outputs/{output_filename}",
+                    'background_url': f"/uploads/{background_filename}",
+                    'converted_width': converted_width,
+                    'converted_height': converted_height,
+                    'background_width': background_dimensions['width'],
+                    'background_height': background_dimensions['height'],
+                    'converted_preview': converted_preview_filename,
+                    'background_preview': background_preview_filename
+                }
             
-            return jsonify({
+            response_payload = {
                 'success': True,
                 'message': 'Image converted successfully!',
                 'output_filename': output_filename,
                 'background_removed': remove_bg,
-                'preview_images': {
-                    'converted': converted_preview_filename,
-                    'final': converted_preview_filename
-                }
-            })
+                'preview_images': preview_images
+            }
+
+            if composition_data:
+                response_payload['composition'] = composition_data
+
+            return jsonify(response_payload)
         else:
             # Clean up input files on failure
             if os.path.exists(input_path):
@@ -1478,40 +1186,6 @@ def serve_background(category, filename):
             return jsonify({'error': 'Background not found'}), 404
     except Exception as e:
         return jsonify({'error': f'Error serving background: {str(e)}'}), 500
-
-@app.route('/test-bg-removal', methods=['POST'])
-def test_background_removal():
-    """Test the background removal API with a sample image"""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        # Save uploaded file temporarily
-        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"test_{file.filename}")
-        file.save(temp_path)
-        
-        # Test background removal API
-        result_path = remove_background(temp_path)
-        
-        if result_path and os.path.exists(result_path):
-            # Return the result
-            return send_file(result_path, as_attachment=True, download_name=f"bg_removed_{file.filename}")
-        else:
-            return jsonify({'error': 'Background removal failed'}), 500
-            
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        # Clean up
-        if 'temp_path' in locals() and os.path.exists(temp_path):
-            os.remove(temp_path)
-        if 'result_path' in locals() and result_path and os.path.exists(result_path):
-            os.remove(result_path)
-
 
 @app.route('/preview-processed', methods=['POST'])
 def preview_processed():
