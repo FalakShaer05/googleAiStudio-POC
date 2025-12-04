@@ -41,6 +41,19 @@
             opacity: 0.9;
         }
         
+        .header .nav-link {
+            color: white;
+            text-decoration: none;
+            margin: 0 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        
+        .header .nav-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
         .form-container {
             padding: 2rem;
         }
@@ -306,6 +319,11 @@
             <div class="header">
                 <h1><i class="fas fa-magic"></i> Image Converter</h1>
                 <p>Transform your images with AI-powered prompts using Google Gemini</p>
+                <div class="mt-3">
+                    <a href="/group-photo" class="nav-link">
+                        <i class="fas fa-users me-2"></i>Group Photo Transformer
+                    </a>
+                </div>
             </div>
             
             <div class="form-container">
@@ -1004,7 +1022,7 @@
                 const heightRatio = compositionCanvas.height / compositionState.characterImg.height;
                 const initialScale = clamp(Math.min(widthRatio, heightRatio) * 0.6, 0.2, 2);
                 compositionState.scale = initialScale;
-                centerCompositionCharacter();
+                positionCompositionCharacterAtBottom();
                 compositionState.initial = {
                     scale: compositionState.scale,
                     x: compositionState.x,
@@ -1129,6 +1147,16 @@
             const characterHeight = compositionState.characterImg.height * compositionState.scale;
             compositionState.x = (compositionCanvas.width - characterWidth) / 2;
             compositionState.y = (compositionCanvas.height - characterHeight) / 2;
+        }
+
+        function positionCompositionCharacterAtBottom() {
+            const characterWidth = compositionState.characterImg.width * compositionState.scale;
+            const characterHeight = compositionState.characterImg.height * compositionState.scale;
+            // Center horizontally
+            compositionState.x = (compositionCanvas.width - characterWidth) / 2;
+            // Position at bottom with small offset (few pixels up from bottom)
+            const pixelsUpFromBottom = Math.max(5, characterHeight * 0.01); // ~1% of height, min 5px
+            compositionState.y = compositionCanvas.height - characterHeight - pixelsUpFromBottom;
         }
 
         function drawComposition() {

@@ -13,7 +13,7 @@ class ProcessRequest:
     image: Any  # File object
     prompt: str
     background: Optional[Any] = None  # File object
-    position: str = 'center'
+    position: str = 'bottom'
     scale: float = 1.0
     opacity: float = 1.0
     canvas_size: Optional[str] = None
