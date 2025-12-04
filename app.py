@@ -24,7 +24,7 @@ from api import api_bp
 from api.utils import remove_background
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size (for large canvas images)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['OUTPUT_FOLDER'] = 'outputs'
 
@@ -932,6 +932,11 @@ def index():
 def group_photo():
     """Group photo processing page"""
     return render_template('group_photo.html')
+
+@app.route('/individual-photos')
+def individual_photos():
+    """Individual photos transformation page"""
+    return render_template('individual_photos.html')
 
 
 @app.route('/analyze-image', methods=['POST'])
@@ -1951,8 +1956,8 @@ def composite_characters():
             background_file.save(background_path)
             background_image = Image.open(background_path)
         else:
-            # Create a default background if none provided
-            background_image = Image.new('RGB', (1920, 1080), color='lightblue')
+            # Create a default background if none provided (white)
+            background_image = Image.new('RGB', (1920, 1080), color='white')
         
         # Load all character images and remove white backgrounds
         character_images = []
@@ -1962,27 +1967,49 @@ def composite_characters():
             char_path = os.path.join(app.config['OUTPUT_FOLDER'], char_file)
             if os.path.exists(char_path):
                 try:
-                    # Remove white background using configured background removal service
-                    print(f"🔧 Removing white background from {char_file}...")
-                    bg_removed_path = remove_background(char_path)
+                    # Load image first to check if it already has transparent background
+                    char_img = Image.open(char_path)
                     
-                    # Use background-removed image if available, otherwise use original
-                    if bg_removed_path and os.path.exists(bg_removed_path):
-                        char_img = Image.open(bg_removed_path)
-                        print(f"✅ Background removed for {char_file} using API")
-                        # Track temp file for cleanup later
-                        if bg_removed_path != char_path:
-                            temp_files_to_cleanup.append(bg_removed_path)
-                    else:
-                        char_img = Image.open(char_path)
-                        print(f"⚠️ Background removal API failed for {char_file}, trying manual removal...")
-                        # Try to remove white background manually as fallback
+                    # Check if image already has transparency (RGBA mode with actual transparent pixels)
+                    needs_bg_removal = True
+                    if char_img.mode == 'RGBA':
+                        # Check if image has any transparent pixels
                         try:
-                            char_img = remove_white_background(char_img)
-                            print(f"✅ Manual white background removal successful")
-                        except Exception as manual_bg_error:
-                            print(f"⚠️ Manual background removal also failed: {manual_bg_error}")
-                            # Continue with original image
+                            import numpy as np
+                            img_array = np.array(char_img)
+                            has_transparency = np.any(img_array[:, :, 3] < 255)
+                            if has_transparency:
+                                needs_bg_removal = False
+                                print(f"✅ {char_file} already has transparent background, skipping removal")
+                        except:
+                            # If numpy check fails, assume it might need removal
+                            pass
+                    elif char_img.mode != 'RGBA':
+                        # Not RGBA, definitely needs conversion
+                        needs_bg_removal = True
+                    
+                    # Only remove background if needed
+                    if needs_bg_removal:
+                        print(f"🔧 Removing white background from {char_file}...")
+                        bg_removed_path = remove_background(char_path)
+                        
+                        # Use background-removed image if available, otherwise use original
+                        if bg_removed_path and os.path.exists(bg_removed_path):
+                            char_img = Image.open(bg_removed_path)
+                            print(f"✅ Background removed for {char_file} using API")
+                            # Track temp file for cleanup later
+                            if bg_removed_path != char_path:
+                                temp_files_to_cleanup.append(bg_removed_path)
+                        else:
+                            char_img = Image.open(char_path)
+                            print(f"⚠️ Background removal API failed for {char_file}, trying manual removal...")
+                            # Try to remove white background manually as fallback
+                            try:
+                                char_img = remove_white_background(char_img)
+                                print(f"✅ Manual white background removal successful")
+                            except Exception as manual_bg_error:
+                                print(f"⚠️ Manual background removal also failed: {manual_bg_error}")
+                                # Continue with original image
                     
                     # Validate image was loaded properly
                     if not hasattr(char_img, 'size') or not char_img.size:
@@ -1998,39 +2025,46 @@ def composite_characters():
                     if char_img.mode != 'RGBA':
                         char_img = char_img.convert('RGBA')
                     
-                    # Additional white background removal: convert white/near-white pixels to transparent
-                    try:
-                        import numpy as np
-                        img_array = np.array(char_img)
-                        # Create mask for white/near-white pixels (threshold: all channels > 230 for better removal)
-                        # Also check for pixels that are very light (high brightness)
-                        white_mask = (
-                            (img_array[:, :, 0] > 230) & (img_array[:, :, 1] > 230) & (img_array[:, :, 2] > 230)
-                        ) | (
-                            # Also remove very bright pixels (high average brightness)
-                            ((img_array[:, :, 0] + img_array[:, :, 1] + img_array[:, :, 2]) / 3 > 240)
-                        )
-                        # Set white/near-white pixels to transparent
-                        img_array[white_mask, 3] = 0
-                        char_img = Image.fromarray(img_array, 'RGBA')
-                        print(f"✅ Applied additional white-to-transparent conversion (removed {np.sum(white_mask)} white pixels)")
-                    except Exception as np_error:
-                        print(f"⚠️ Could not apply numpy white removal: {np_error}")
-                        # Try simple PIL-based white removal as fallback
+                    # Only do additional white pixel cleanup if we didn't skip background removal
+                    # (images from individual photos workflow should already be clean)
+                    if needs_bg_removal:
+                        # Additional white background removal: convert white/near-white pixels to transparent
                         try:
-                            # Convert white pixels to transparent using PIL
-                            pixels = char_img.load()
-                            width, height = char_img.size
-                            for y in range(height):
-                                for x in range(width):
-                                    r, g, b, a = pixels[x, y]
-                                    # If pixel is white or near-white, make it transparent
-                                    if r > 230 and g > 230 and b > 230:
-                                        pixels[x, y] = (r, g, b, 0)
-                            print(f"✅ Applied PIL-based white removal")
-                        except Exception as pil_error:
-                            print(f"⚠️ PIL white removal also failed: {pil_error}")
-                            # Continue with image as is
+                            import numpy as np
+                            img_array = np.array(char_img)
+                            # Create mask for white/near-white pixels (threshold: all channels > 230 for better removal)
+                            # Also check for pixels that are very light (high brightness)
+                            white_mask = (
+                                (img_array[:, :, 0] > 230) & (img_array[:, :, 1] > 230) & (img_array[:, :, 2] > 230)
+                            ) | (
+                                # Also remove very bright pixels (high average brightness)
+                                ((img_array[:, :, 0] + img_array[:, :, 1] + img_array[:, :, 2]) / 3 > 240)
+                            )
+                            # Only remove white pixels that aren't already transparent
+                            white_mask = white_mask & (img_array[:, :, 3] > 0)
+                            # Set white/near-white pixels to transparent
+                            img_array[white_mask, 3] = 0
+                            char_img = Image.fromarray(img_array, 'RGBA')
+                            white_pixels_removed = np.sum(white_mask)
+                            if white_pixels_removed > 0:
+                                print(f"✅ Applied additional white-to-transparent conversion (removed {white_pixels_removed} white pixels)")
+                        except Exception as np_error:
+                            print(f"⚠️ Could not apply numpy white removal: {np_error}")
+                            # Try simple PIL-based white removal as fallback
+                            try:
+                                # Convert white pixels to transparent using PIL
+                                pixels = char_img.load()
+                                width, height = char_img.size
+                                for y in range(height):
+                                    for x in range(width):
+                                        r, g, b, a = pixels[x, y]
+                                        # If pixel is white or near-white, make it transparent
+                                        if r > 230 and g > 230 and b > 230 and a > 0:
+                                            pixels[x, y] = (r, g, b, 0)
+                                print(f"✅ Applied PIL-based white removal")
+                            except Exception as pil_error:
+                                print(f"⚠️ PIL white removal also failed: {pil_error}")
+                                # Continue with image as is
                     
                     character_images.append(char_img)
                             
@@ -2140,6 +2174,305 @@ def composite_characters():
         print(f"Error compositing characters: {e}")
         print(traceback.format_exc())
         return jsonify({'error': f'Error compositing characters: {str(e)}'}), 500
+
+@app.route('/upload-individual', methods=['POST'])
+def upload_individual():
+    """Upload individual photos for transformation"""
+    try:
+        if 'images[]' not in request.files:
+            return jsonify({'error': 'No images provided'}), 400
+        
+        files = request.files.getlist('images[]')
+        if not files or all(not f.filename for f in files):
+            return jsonify({'error': 'No valid image files provided'}), 400
+        
+        uploaded_files = []
+        for file in files:
+            if file and file.filename:
+                filename = secure_filename(file.filename)
+                unique_filename = f"{uuid.uuid4()}_{filename}"
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+                file.save(file_path)
+                
+                # Verify it's a valid image
+                try:
+                    img = Image.open(file_path)
+                    img.verify()
+                    uploaded_files.append({
+                        'filename': unique_filename,
+                        'original_filename': filename,
+                        'url': f'/uploads/{unique_filename}'
+                    })
+                except Exception as e:
+                    print(f"Invalid image file {filename}: {e}")
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+        
+        if not uploaded_files:
+            return jsonify({'error': 'No valid images uploaded'}), 400
+        
+        return jsonify({
+            'success': True,
+            'files': uploaded_files
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error uploading individual photos: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error uploading photos: {str(e)}'}), 500
+
+@app.route('/transform-individual', methods=['POST'])
+def transform_individual():
+    """Transform an individual photo using Google AI Studio with custom prompt"""
+    try:
+        if not client:
+            return jsonify({'error': 'Gemini client not initialized'}), 500
+        
+        # Get parameters
+        image_file = request.files.get('image')
+        image_filename = request.form.get('image_filename')
+        prompt = request.form.get('prompt', '').strip()
+        
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+        
+        # Load image
+        if image_file and image_file.filename:
+            filename = secure_filename(image_file.filename)
+            unique_filename = f"{uuid.uuid4()}_{filename}"
+            image_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+            image_file.save(image_path)
+        elif image_filename:
+            image_path = os.path.join(app.config['UPLOAD_FOLDER'], image_filename)
+        else:
+            return jsonify({'error': 'No image provided'}), 400
+        
+        if not os.path.exists(image_path):
+            return jsonify({'error': 'Image file not found'}), 404
+        
+        # Load image
+        individual_image = Image.open(image_path)
+        
+        # Create transformation prompt
+        transformation_prompt = f"""Transform this individual photo according to the following description: {prompt}
+
+        CRITICAL REQUIREMENTS:
+        
+        1. The output image MUST contain EXACTLY ONE person - the transformed individual
+        2. Do NOT include any other people, characters, or figures in the output image
+        3. The person must be alone, isolated, and centered - no other people visible
+        
+        FULL-LENGTH PHOTO REQUIREMENT - MANDATORY:
+        4. The image MUST be a FULL-LENGTH photo showing the person from HEAD TO FEET
+        5. The entire body must be visible - from the top of the head to the bottom of the feet
+        6. Do NOT crop the image to show only upper body, torso, or headshot
+        7. Ensure both head and feet are clearly visible in the frame
+        
+        TRANSFORMATION:
+        8. Transform the person according to this description: {prompt}
+        9. Maintain the person's facial features, body structure, and pose from the original
+        10. The person should be clearly visible, well-lit, and take up a significant portion of the image
+        
+        BACKGROUND:
+        11. The background must be SOLID WHITE (#FFFFFF) - not transparent, not any other color, but pure white
+        12. Do NOT include any other objects, background elements, or people - just the transformed person on white background
+        
+        Return a FULL-LENGTH image (head to feet) with EXACTLY ONE person transformed, on a solid white background."""
+        
+        # Generate transformed image
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image-preview",
+            contents=[transformation_prompt, individual_image]
+        )
+        
+        # Process response
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                # Save transformed image
+                transformed_image = Image.open(io.BytesIO(part.inline_data.data))
+                
+                # Save temporarily to use background removal service
+                temp_output_filename = f"individual_temp_{uuid.uuid4().hex[:8]}.png"
+                temp_output_path = os.path.join(app.config['OUTPUT_FOLDER'], temp_output_filename)
+                
+                # Ensure RGB mode for background removal API
+                if transformed_image.mode == 'RGBA':
+                    white_bg = Image.new('RGB', transformed_image.size, (255, 255, 255))
+                    white_bg.paste(transformed_image, mask=transformed_image.split()[3])
+                    transformed_image = white_bg
+                elif transformed_image.mode != 'RGB':
+                    transformed_image = transformed_image.convert('RGB')
+                
+                # Save temporary file for background removal (this is the "before" image)
+                transformed_image.save(temp_output_path, format='PNG', optimize=True)
+                before_bg_removal_filename = os.path.basename(temp_output_path)
+                before_bg_removal_url = f'/outputs/{before_bg_removal_filename}'
+                
+                # Remove white background using configured background removal service
+                print(f"🔧 Removing white background from transformed individual using configured service...")
+                bg_removed_path = None
+                try:
+                    bg_removed_path = remove_background(temp_output_path)
+                except Exception as bg_error:
+                    print(f"⚠️ Background removal service error: {bg_error}")
+                
+                if bg_removed_path and os.path.exists(bg_removed_path):
+                    try:
+                        test_img = Image.open(bg_removed_path)
+                        if test_img.size[0] > 0 and test_img.size[1] > 0:
+                            transformed_image = test_img
+                            print(f"✅ Background removed successfully using API service")
+                            try:
+                                if temp_output_path != bg_removed_path and os.path.exists(temp_output_path):
+                                    os.remove(temp_output_path)
+                            except:
+                                pass
+                        else:
+                            raise ValueError("Invalid image dimensions")
+                    except Exception as img_error:
+                        print(f"⚠️ Background-removed image invalid: {img_error}, trying manual removal...")
+                        transformed_image = Image.open(temp_output_path)
+                        bg_removed_path = None
+                else:
+                    print(f"⚠️ Background removal API failed, trying manual white background removal...")
+                    transformed_image = Image.open(temp_output_path)
+                    bg_removed_path = None
+                
+                # If API removal failed, use manual removal
+                if not bg_removed_path:
+                    try:
+                        transformed_image = remove_white_background(transformed_image)
+                        print(f"✅ Manual white background removal successful")
+                    except Exception as manual_error:
+                        print(f"⚠️ Manual removal also failed: {manual_error}, trying simple white pixel removal...")
+                        try:
+                            if transformed_image.mode != 'RGBA':
+                                transformed_image = transformed_image.convert('RGBA')
+                            import numpy as np
+                            img_array = np.array(transformed_image)
+                            white_mask = (
+                                (img_array[:, :, 0] > 230) & (img_array[:, :, 1] > 230) & (img_array[:, :, 2] > 230)
+                            )
+                            img_array[white_mask, 3] = 0
+                            transformed_image = Image.fromarray(img_array, 'RGBA')
+                            print(f"✅ Applied simple white-to-transparent removal")
+                        except Exception as simple_error:
+                            print(f"⚠️ Simple removal also failed: {simple_error}")
+                            if transformed_image.mode != 'RGBA':
+                                transformed_image = transformed_image.convert('RGBA')
+                    
+                    try:
+                        if os.path.exists(temp_output_path):
+                            os.remove(temp_output_path)
+                    except:
+                        pass
+                
+                # Ensure RGBA mode for transparency
+                if transformed_image.mode != 'RGBA':
+                    transformed_image = transformed_image.convert('RGBA')
+                
+                # Additional white pixel cleanup
+                try:
+                    import numpy as np
+                    img_array = np.array(transformed_image)
+                    white_mask = (
+                        (img_array[:, :, 0] > 230) & (img_array[:, :, 1] > 230) & (img_array[:, :, 2] > 230)
+                    )
+                    white_mask = white_mask & (img_array[:, :, 3] > 0)
+                    img_array[white_mask, 3] = 0
+                    white_pixels_removed = np.sum(white_mask)
+                    if white_pixels_removed > 0:
+                        transformed_image = Image.fromarray(img_array, 'RGBA')
+                        print(f"✅ Applied additional white-to-transparent cleanup (removed {white_pixels_removed} white pixels)")
+                except Exception as np_error:
+                    print(f"⚠️ Could not apply numpy white removal: {np_error}")
+                
+                # Save final output
+                output_filename = f"individual_{uuid.uuid4().hex[:8]}.png"
+                output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+                transformed_image.save(output_path, format='PNG', optimize=True)
+                
+                # Clean up background-removed temp file if different from output
+                if bg_removed_path and bg_removed_path != output_path and os.path.exists(bg_removed_path):
+                    try:
+                        os.remove(bg_removed_path)
+                    except:
+                        pass
+                
+                return jsonify({
+                    'success': True,
+                    'output_filename': output_filename,
+                    'output_url': f'/outputs/{output_filename}'
+                })
+        
+        return jsonify({'error': 'No image generated in response'}), 500
+        
+    except Exception as e:
+        import traceback
+        print(f"Error transforming individual: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error transforming individual: {str(e)}'}), 500
+
+@app.route('/composite-canvas', methods=['POST'])
+def composite_canvas():
+    """Convert canvas to image for individual photos (no background removal needed)"""
+    try:
+        # Get canvas data from JSON (should always be JSON now)
+        if not request.is_json:
+            return jsonify({'error': 'Request must be JSON'}), 400
+        
+        data = request.get_json()
+        canvas_data = data.get('canvas_data')
+        original_width = data.get('original_width')
+        original_height = data.get('original_height')
+        
+        if not canvas_data:
+            return jsonify({'error': 'No canvas data provided'}), 400
+        
+        # Remove data URL prefix if present
+        if canvas_data.startswith('data:image'):
+            canvas_data = canvas_data.split(',')[1]
+        
+        # Decode base64 image
+        import base64
+        try:
+            image_data = base64.b64decode(canvas_data)
+        except Exception as decode_error:
+            return jsonify({'error': f'Invalid base64 data: {str(decode_error)}'}), 400
+        
+        # Open image from bytes
+        try:
+            canvas_image = Image.open(io.BytesIO(image_data))
+        except Exception as img_error:
+            return jsonify({'error': f'Invalid image data: {str(img_error)}'}), 400
+        
+        # If original dimensions are provided and different, resize back to original size
+        if original_width and original_height:
+            current_width, current_height = canvas_image.size
+            if current_width != original_width or current_height != original_height:
+                # Resize back to original size using high-quality resampling
+                canvas_image = canvas_image.resize((original_width, original_height), Image.Resampling.LANCZOS)
+                print(f"📐 Resized from {current_width}x{current_height} to {original_width}x{original_height}")
+        
+        # Save final output as PNG (convert from JPEG if needed)
+        output_filename = f"individual_composite_{uuid.uuid4().hex[:8]}.png"
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        canvas_image.save(output_path, format='PNG', optimize=True)
+        
+        print(f"✅ Canvas composite saved: {output_filename} ({canvas_image.size[0]}x{canvas_image.size[1]})")
+        
+        return jsonify({
+            'success': True,
+            'output_filename': output_filename,
+            'output_url': f'/outputs/{output_filename}'
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error compositing canvas: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error compositing canvas: {str(e)}'}), 500
 
 @app.route('/health')
 def health_check():

@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Individual Photos Transformer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 2rem 0;
+        }
+        
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            margin: 0 auto;
+            max-width: 1200px;
+            padding: 2rem;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 2rem;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+        
+        .step-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            background: white;
+        }
+        
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .step-number {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 1rem;
+        }
+        
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 3rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9fa;
+        }
+        
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: #f0f0f0;
+        }
+        
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: #e8e8e8;
+        }
+        
+        .image-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            background: #f8f9fa;
+        }
+        
+        .preview-image {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 10px;
+            margin: 0.5rem 0;
+        }
+        
+        .positioning-canvas-wrapper {
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #f8f9fa;
+        }
+        
+        .scale-control-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        .loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            color: white;
+        }
+        
+        .final-preview {
+            max-width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-container">
+            <div class="header">
+                <h1><i class="fas fa-user-friends me-2"></i>Individual Photos Transformer</h1>
+                <p class="mb-0">Transform individual photos with custom prompts and composite them on a background</p>
+                <a href="/" class="btn btn-light mt-3">
+                    <i class="fas fa-arrow-left me-2"></i>Back to Main
+                </a>
+            </div>
+
+            <!-- Step 1: Upload Individual Photos -->
+            <div class="step-card" id="step1">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <h3 class="mb-0">Upload Individual Photos</h3>
+                </div>
+                <div class="upload-area" id="uploadArea">
+                    <i class="fas fa-cloud-upload-alt fa-3x mb-3 text-primary"></i>
+                    <h5>Drag & Drop or Click to Upload</h5>
+                    <p class="text-muted">Upload multiple individual photos or selfies</p>
+                    <input type="file" id="photosInput" accept="image/*" multiple class="d-none">
+                </div>
+            </div>
+
+            <!-- Step 2: Transform Photos -->
+            <div class="step-card hidden" id="step2">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <h3 class="mb-0">Transform Photos</h3>
+                </div>
+                <p class="text-muted mb-3">Enter a transformation prompt for each photo</p>
+                <div id="transformPrompts"></div>
+                <button class="btn btn-primary mt-3" onclick="transformAllPhotos()">
+                    <i class="fas fa-magic me-2"></i>Transform All Photos
+                </button>
+            </div>
+
+            <!-- Step 3: Background Selection & Positioning -->
+            <div class="step-card hidden" id="step3">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <h3 class="mb-0">Select Background & Position Characters</h3>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Background Image (Optional)</label>
+                    <input type="file" id="backgroundInput" accept="image/*" class="form-control" onchange="handleBackgroundChange()">
+                    <small class="text-muted">Leave empty to use a default background</small>
+                </div>
+                <div id="backgroundPreview" class="hidden mt-3">
+                    <img id="backgroundImg" class="preview-image" alt="Background Preview">
+                </div>
+                
+                <!-- Before/After Images -->
+                <div id="beforeAfterImages" class="mt-3 mb-4"></div>
+                
+                <!-- Character Positioning Canvas -->
+                <div id="positioningSection" class="hidden mt-4">
+                    <h5 class="mb-3">Adjust Character Positions & Sizes</h5>
+                    <p class="text-muted small mb-3">
+                        <strong>Click a character to select it</strong> (selected character will have a blue border). 
+                        <strong>Use mouse wheel or drag the corner handles</strong> to resize the selected character. 
+                        <strong>Drag the character</strong> to reposition it. 
+                        <strong>Right-click or click elsewhere</strong> to deselect.
+                    </p>
+                    <div class="positioning-canvas-wrapper mb-3">
+                        <canvas id="positioningCanvas" width="800" height="600" style="max-width: 100%; height: auto; display: block; cursor: crosshair;"></canvas>
+                    </div>
+                    
+                    <div class="d-flex gap-2 mb-3">
+                        <button class="btn btn-outline-secondary" onclick="resetCharacterPositions()">
+                            <i class="fas fa-redo me-2"></i>Reset Positions
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="autoArrangeCharacters()">
+                            <i class="fas fa-magic me-2"></i>Auto Arrange
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deselectCharacter()">
+                            <i class="fas fa-times me-2"></i>Deselect Character
+                        </button>
+                    </div>
+                    <div id="selectedCharacterInfo" class="alert alert-info hidden">
+                        <strong>Selected:</strong> <span id="selectedCharName"></span> | 
+                        <strong>Scale:</strong> <span id="selectedCharScale"></span>% | 
+                        <strong>Tip:</strong> Use mouse wheel to resize, or drag corner handles
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary mt-3" onclick="compositeCharacters()">
+                    <i class="fas fa-layer-group me-2"></i>Composite All Characters
+                </button>
+            </div>
+
+            <!-- Step 4: Final Result -->
+            <div class="step-card hidden" id="step4">
+                <div class="step-header">
+                    <div class="step-number">4</div>
+                    <h3 class="mb-0">Final Result</h3>
+                </div>
+                <div id="finalResult"></div>
+                <button class="btn btn-primary mt-3" onclick="downloadResult()">
+                    <i class="fas fa-download me-2"></i>Download Final Image
+                </button>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div class="loading hidden" id="loading">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3" id="loadingText">Processing...</p>
+            </div>
+
+            <!-- Error Alert -->
+            <div class="alert alert-danger hidden" id="errorAlert" role="alert">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <span id="errorMessage"></span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let uploadedPhotos = [];
+        let transformedPhotos = [];
+        let finalCompositeUrl = null;
+        
+        // Character positioning state
+        let positioningCanvas = null;
+        let positioningCtx = null;
+        let positioningState = {
+            backgroundImg: null,
+            characterImgs: [],
+            positions: [],
+            scales: [],
+            draggingIndex: null,
+            dragOffset: { x: 0, y: 0 },
+            selectedIndex: null,
+            resizing: false,
+            resizeHandle: null,
+            resizeStartPos: null,
+            resizeStartScale: null
+        };
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            const uploadArea = document.getElementById('uploadArea');
+            const photosInput = document.getElementById('photosInput');
+            
+            uploadArea.addEventListener('click', () => photosInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('dragleave', handleDragLeave);
+            uploadArea.addEventListener('drop', handleDrop);
+            photosInput.addEventListener('change', handleFileSelect);
+            
+            positioningCanvas = document.getElementById('positioningCanvas');
+            if (positioningCanvas) {
+                positioningCtx = positioningCanvas.getContext('2d');
+            }
+        });
+        
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.currentTarget.classList.add('dragover');
+        }
+        
+        function handleDragLeave(e) {
+            e.currentTarget.classList.remove('dragover');
+        }
+        
+        function handleDrop(e) {
+            e.preventDefault();
+            e.currentTarget.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+            if (files.length > 0) {
+                uploadPhotos(files);
+            }
+        }
+        
+        function handleFileSelect(e) {
+            const files = Array.from(e.target.files);
+            if (files.length > 0) {
+                uploadPhotos(files);
+            }
+        }
+        
+        async function uploadPhotos(files) {
+            showLoading('Uploading photos...');
+            hideError();
+            
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('images[]', file);
+            });
+            
+            try {
+                const response = await fetch('/upload-individual', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    uploadedPhotos = data.files;
+                    document.getElementById('step2').classList.remove('hidden');
+                    hideLoading();
+                } else {
+                    showError(data.error || 'Upload failed');
+                    hideLoading();
+                }
+            } catch (error) {
+                showError('Error uploading photos: ' + error.message);
+                hideLoading();
+            }
+        }
+        
+        function displayTransformPrompts() {
+            const container = document.getElementById('transformPrompts');
+            container.innerHTML = '';
+            
+            uploadedPhotos.forEach((photo, index) => {
+                const card = document.createElement('div');
+                card.className = 'image-card';
+                card.innerHTML = `
+                    <div class="d-flex align-items-start gap-3">
+                        <img src="${photo.url}" class="preview-image" alt="Photo ${index + 1}">
+                        <div class="flex-grow-1">
+                            <h6>Photo ${index + 1}</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Transformation Prompt:</label>
+                                <textarea class="form-control" id="prompt_${index}" rows="3" 
+                                    placeholder="e.g., Transform this person into a professional musician holding a guitar"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+        
+        async function transformAllPhotos() {
+            if (uploadedPhotos.length === 0) {
+                showError('No photos to transform');
+                return;
+            }
+            
+            showLoading('Transforming photos in parallel...');
+            hideError();
+            
+            // Validate all prompts first
+            const transformPromises = [];
+            for (let i = 0; i < uploadedPhotos.length; i++) {
+                const promptInput = document.getElementById(`prompt_${i}`);
+                const prompt = promptInput ? promptInput.value.trim() : '';
+                
+                if (!prompt) {
+                    showError(`Please enter a prompt for Photo ${i + 1}`);
+                    hideLoading();
+                    return;
+                }
+            }
+            
+            // Create all transformation promises in parallel
+            for (let i = 0; i < uploadedPhotos.length; i++) {
+                const photo = uploadedPhotos[i];
+                const promptInput = document.getElementById(`prompt_${i}`);
+                const prompt = promptInput.value.trim();
+                
+                const transformPromise = fetch('/transform-individual', {
+                    method: 'POST',
+                    body: (() => {
+                        const formData = new FormData();
+                        formData.append('image_filename', photo.filename);
+                        formData.append('prompt', prompt);
+                        return formData;
+                    })()
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        return {
+                            index: i,
+                            filename: data.output_filename,
+                            url: data.output_url,
+                            before_bg_removal_url: data.before_bg_removal_url || data.output_url,
+                            prompt: prompt,
+                            success: true
+                        };
+                    } else {
+                        console.error(`Failed to transform photo ${i + 1}:`, data.error);
+                        return {
+                            index: i,
+                            success: false,
+                            error: data.error
+                        };
+                    }
+                })
+                .catch(error => {
+                    console.error(`Error transforming photo ${i + 1}:`, error);
+                    return {
+                        index: i,
+                        success: false,
+                        error: error.message
+                    };
+                });
+                
+                transformPromises.push(transformPromise);
+            }
+            
+            // Wait for all transformations to complete in parallel
+            try {
+                const results = await Promise.all(transformPromises);
+                
+                // Filter successful transformations and sort by index
+                transformedPhotos = results
+                    .filter(result => result.success)
+                    .sort((a, b) => a.index - b.index);
+                
+                hideLoading();
+                
+                if (transformedPhotos.length === 0) {
+                    showError('No photos were successfully transformed. Please check your prompts and try again.');
+                    return;
+                }
+                
+                // Show any failures as warnings
+                const failures = results.filter(result => !result.success);
+                if (failures.length > 0) {
+                    const failedIndices = failures.map(f => f.index + 1).join(', ');
+                    console.warn(`Some photos failed to transform: ${failedIndices}`);
+                }
+                
+                // Collapse step 2 and show step 3
+                document.getElementById('step2').classList.add('hidden');
+                document.getElementById('step3').classList.remove('hidden');
+                displayBeforeAfterImages();
+                initPositioningCanvas();
+            } catch (error) {
+                hideLoading();
+                showError('Error during parallel transformation: ' + error.message);
+            }
+        }
+        
+        function displayBeforeAfterImages() {
+            const container = document.getElementById('beforeAfterImages');
+            if (!container) return;
+            
+            container.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Transformed Images (Before & After Background Removal):</h6>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#beforeAfterCollapse" aria-expanded="false" aria-controls="beforeAfterCollapse">
+                        <i class="fas fa-chevron-down" id="collapseIcon"></i>
+                    </button>
+                </div>
+                <div class="collapse" id="beforeAfterCollapse">
+                    <div class="row g-2">
+            `;
+            
+            transformedPhotos.forEach((photo, index) => {
+                const col = document.createElement('div');
+                col.className = 'col-6 col-md-4 col-lg-3';
+                col.innerHTML = `
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body p-2">
+                            <small class="text-muted d-block mb-1">Photo ${index + 1}</small>
+                            <div class="d-flex gap-1">
+                                <div class="flex-fill text-center">
+                                    <small class="text-muted d-block" style="font-size: 0.7rem;">Before</small>
+                                    <img src="${photo.before_bg_removal_url}" class="img-fluid rounded" alt="Before ${index + 1}" style="max-height: 80px; width: auto;">
+                                </div>
+                                <div class="flex-fill text-center">
+                                    <small class="text-muted d-block" style="font-size: 0.7rem;">After</small>
+                                    <img src="${photo.url}" class="img-fluid rounded" alt="After ${index + 1}" style="max-height: 80px; width: auto;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(col);
+            });
+            
+            container.innerHTML += `
+                    </div>
+                </div>
+            `;
+            
+            // Update collapse icon on toggle
+            const collapseElement = document.getElementById('beforeAfterCollapse');
+            const collapseIcon = document.getElementById('collapseIcon');
+            if (collapseElement && collapseIcon) {
+                collapseElement.addEventListener('show.bs.collapse', () => {
+                    collapseIcon.classList.remove('fa-chevron-down');
+                    collapseIcon.classList.add('fa-chevron-up');
+                });
+                collapseElement.addEventListener('hide.bs.collapse', () => {
+                    collapseIcon.classList.remove('fa-chevron-up');
+                    collapseIcon.classList.add('fa-chevron-down');
+                });
+            }
+        }
+        
+        function handleBackgroundChange() {
+            const backgroundInput = document.getElementById('backgroundInput');
+            const backgroundPreview = document.getElementById('backgroundPreview');
+            const backgroundImg = document.getElementById('backgroundImg');
+            
+            if (backgroundInput.files.length > 0) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    backgroundImg.src = e.target.result;
+                    backgroundPreview.classList.remove('hidden');
+                    
+                    if (transformedPhotos.length > 0) {
+                        initPositioningCanvas();
+                    }
+                };
+                reader.readAsDataURL(backgroundInput.files[0]);
+            } else {
+                backgroundPreview.classList.add('hidden');
+                if (transformedPhotos.length > 0) {
+                    initPositioningCanvas();
+                }
+            }
+        }
+        
+        function initPositioningCanvas() {
+            if (!positioningCanvas || !positioningCtx || transformedPhotos.length === 0) return;
+            
+            const backgroundInput = document.getElementById('backgroundInput');
+            const positioningSection = document.getElementById('positioningSection');
+            
+            // Load background
+            positioningState.backgroundImg = new Image();
+            positioningState.backgroundImg.crossOrigin = 'anonymous';
+            positioningState.backgroundImg.onload = () => {
+                setupPositioningCanvas();
+                positioningSection.classList.remove('hidden');
+            };
+            
+            if (backgroundInput.files.length > 0) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    positioningState.backgroundImg.src = e.target.result;
+                };
+                reader.readAsDataURL(backgroundInput.files[0]);
+            } else {
+                // Create default background (white)
+                const canvas = document.createElement('canvas');
+                canvas.width = 1920;
+                canvas.height = 1080;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                positioningState.backgroundImg.src = canvas.toDataURL();
+            }
+        }
+        
+        function setupPositioningCanvas() {
+            if (!positioningCanvas || !positioningCtx) return;
+            
+            const bgImg = positioningState.backgroundImg;
+            
+            // Calculate display size (fit to container while maintaining aspect ratio)
+            const container = positioningCanvas.parentElement;
+            const maxDisplayWidth = container ? Math.min(container.clientWidth - 20, 1200) : 1200;
+            const maxDisplayHeight = 800;
+            const displayScale = Math.min(maxDisplayWidth / bgImg.width, maxDisplayHeight / bgImg.height, 1);
+            
+            // Set canvas display size (CSS) - scaled for display
+            positioningCanvas.style.width = (bgImg.width * displayScale) + 'px';
+            positioningCanvas.style.height = (bgImg.height * displayScale) + 'px';
+            
+            // Set canvas actual size to match background (for proper rendering at full resolution)
+            positioningCanvas.width = bgImg.width;
+            positioningCanvas.height = bgImg.height;
+            
+            positioningState.characterImgs = [];
+            positioningState.positions = [];
+            positioningState.scales = [];
+            
+            transformedPhotos.forEach((photo, index) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    positioningState.characterImgs.push({
+                        img: img,
+                        originalWidth: img.width,
+                        originalHeight: img.height,
+                        baseScale: 1.0  // Use 1.0 since canvas is now full size
+                    });
+                    
+                    const initialScale = 1.0;
+                    const scaledWidth = img.width * initialScale;
+                    const scaledHeight = img.height * initialScale;
+                    const spacing = positioningCanvas.width / (transformedPhotos.length + 1);
+                    const x = spacing * (index + 1) - scaledWidth / 2;
+                    const y = positioningCanvas.height - scaledHeight - 50;
+                    
+                    positioningState.positions.push({ x, y });
+                    positioningState.scales.push(initialScale);
+                    
+                    if (positioningState.characterImgs.length === transformedPhotos.length) {
+                        drawPositioningCanvas();
+                    }
+                };
+                img.src = photo.url;
+            });
+            
+            // Add event listeners
+            positioningCanvas.addEventListener('mousedown', handleMouseDown);
+            positioningCanvas.addEventListener('mousemove', handleMouseMove);
+            positioningCanvas.addEventListener('mouseup', handleMouseUp);
+            positioningCanvas.addEventListener('mouseleave', handleMouseUp);
+            positioningCanvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                deselectCharacter();
+            });
+            positioningCanvas.addEventListener('wheel', handleWheel, { passive: false });
+            positioningCanvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+            positioningCanvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+            positioningCanvas.addEventListener('touchend', handleTouchEnd);
+        }
+        
+        function drawPositioningCanvas() {
+            if (!positioningCtx || !positioningState.backgroundImg) return;
+            
+            positioningCtx.clearRect(0, 0, positioningCanvas.width, positioningCanvas.height);
+            
+            // Draw background at full size
+            positioningCtx.drawImage(
+                positioningState.backgroundImg,
+                0, 0,
+                positioningCanvas.width,
+                positioningCanvas.height
+            );
+            
+            positioningState.characterImgs.forEach((charData, index) => {
+                const pos = positioningState.positions[index];
+                const scale = positioningState.scales[index] || 1.0;
+                if (pos && charData.img) {
+                    const scaledWidth = charData.originalWidth * scale;
+                    const scaledHeight = charData.originalHeight * scale;
+                    
+                    positioningCtx.drawImage(
+                        charData.img,
+                        pos.x,
+                        pos.y,
+                        scaledWidth,
+                        scaledHeight
+                    );
+                    
+                    // Draw selection border
+                    if (positioningState.selectedIndex === index) {
+                        positioningCtx.strokeStyle = '#667eea';
+                        positioningCtx.lineWidth = 3;
+                        positioningCtx.strokeRect(
+                            pos.x - 2,
+                            pos.y - 2,
+                            scaledWidth + 4,
+                            scaledHeight + 4
+                        );
+                        
+                        // Draw resize handles at corners
+                        const handleSize = 8;
+                        positioningCtx.fillStyle = '#667eea';
+                        // Top-left
+                        positioningCtx.fillRect(pos.x - handleSize/2, pos.y - handleSize/2, handleSize, handleSize);
+                        // Top-right
+                        positioningCtx.fillRect(pos.x + scaledWidth - handleSize/2, pos.y - handleSize/2, handleSize, handleSize);
+                        // Bottom-left
+                        positioningCtx.fillRect(pos.x - handleSize/2, pos.y + scaledHeight - handleSize/2, handleSize, handleSize);
+                        // Bottom-right
+                        positioningCtx.fillRect(pos.x + scaledWidth - handleSize/2, pos.y + scaledHeight - handleSize/2, handleSize, handleSize);
+                    }
+                    
+                    // Draw drag border
+                    if (positioningState.draggingIndex === index) {
+                        positioningCtx.strokeStyle = '#ff6b6b';
+                        positioningCtx.lineWidth = 2;
+                        positioningCtx.setLineDash([5, 5]);
+                        positioningCtx.strokeRect(
+                            pos.x - 2,
+                            pos.y - 2,
+                            scaledWidth + 4,
+                            scaledHeight + 4
+                        );
+                        positioningCtx.setLineDash([]);
+                    }
+                }
+            });
+        }
+        
+        function getMousePos(e) {
+            const rect = positioningCanvas.getBoundingClientRect();
+            // Convert display coordinates to canvas coordinates
+            return {
+                x: (e.clientX - rect.left) * (positioningCanvas.width / rect.width),
+                y: (e.clientY - rect.top) * (positioningCanvas.height / rect.height)
+            };
+        }
+        
+        function getTouchPos(e) {
+            const touch = e.touches[0] || e.changedTouches[0];
+            const rect = positioningCanvas.getBoundingClientRect();
+            return {
+                x: (touch.clientX - rect.left) * (positioningCanvas.width / rect.width),
+                y: (touch.clientY - rect.top) * (positioningCanvas.height / rect.height)
+            };
+        }
+        
+        function getResizeHandle(pos, charPos, scaledWidth, scaledHeight) {
+            const handleSize = 12;
+            const handles = [
+                { name: 'tl', x: charPos.x - handleSize/2, y: charPos.y - handleSize/2 },
+                { name: 'tr', x: charPos.x + scaledWidth - handleSize/2, y: charPos.y - handleSize/2 },
+                { name: 'bl', x: charPos.x - handleSize/2, y: charPos.y + scaledHeight - handleSize/2 },
+                { name: 'br', x: charPos.x + scaledWidth - handleSize/2, y: charPos.y + scaledHeight - handleSize/2 }
+            ];
+            
+            for (const handle of handles) {
+                if (pos.x >= handle.x && pos.x <= handle.x + handleSize &&
+                    pos.y >= handle.y && pos.y <= handle.y + handleSize) {
+                    return handle.name;
+                }
+            }
+            return null;
+        }
+        
+        function handleMouseDown(e) {
+            const pos = getMousePos(e);
+            
+            // Check if clicking on a resize handle
+            if (positioningState.selectedIndex !== null) {
+                const charData = positioningState.characterImgs[positioningState.selectedIndex];
+                const charPos = positioningState.positions[positioningState.selectedIndex];
+                const scale = positioningState.scales[positioningState.selectedIndex] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                const handle = getResizeHandle(pos, charPos, scaledWidth, scaledHeight);
+                if (handle) {
+                    positioningState.resizing = true;
+                    positioningState.resizeHandle = handle;
+                    positioningState.resizeStartPos = pos;
+                    positioningState.resizeStartScale = scale;
+                    positioningCanvas.style.cursor = 'nwse-resize';
+                    return;
+                }
+            }
+            
+            // Check if clicking on a character to select or drag
+            for (let i = positioningState.characterImgs.length - 1; i >= 0; i--) {
+                const charData = positioningState.characterImgs[i];
+                const charPos = positioningState.positions[i];
+                const scale = positioningState.scales[i] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                if (pos.x >= charPos.x && pos.x <= charPos.x + scaledWidth &&
+                    pos.y >= charPos.y && pos.y <= charPos.y + scaledHeight) {
+                    // Select this character
+                    positioningState.selectedIndex = i;
+                    positioningState.draggingIndex = i;
+                    positioningState.dragOffset = {
+                        x: pos.x - charPos.x,
+                        y: pos.y - charPos.y
+                    };
+                    positioningCanvas.style.cursor = 'grabbing';
+                    updateSelectedCharacterInfo();
+                    drawPositioningCanvas();
+                    return;
+                }
+            }
+            
+            // Clicked on empty space - deselect
+            deselectCharacter();
+        }
+        
+        function handleMouseMove(e) {
+            const pos = getMousePos(e);
+            
+            if (positioningState.resizing && positioningState.selectedIndex !== null) {
+                // Resize the selected character
+                const index = positioningState.selectedIndex;
+                const charData = positioningState.characterImgs[index];
+                const charPos = positioningState.positions[index];
+                const deltaX = pos.x - positioningState.resizeStartPos.x;
+                const deltaY = pos.y - positioningState.resizeStartPos.y;
+                
+                // Calculate scale change based on handle
+                const handle = positioningState.resizeHandle;
+                const baseWidth = charData.originalWidth;
+                const baseHeight = charData.originalHeight;
+                
+                let scaleDelta = 0;
+                if (handle === 'br' || handle === 'tl') {
+                    // Bottom-right or top-left: use average of x and y deltas
+                    scaleDelta = (deltaX + deltaY) / (baseWidth + baseHeight);
+                } else if (handle === 'tr' || handle === 'bl') {
+                    // Top-right or bottom-left: use average of x and y deltas (inverted)
+                    scaleDelta = (deltaX - deltaY) / (baseWidth + baseHeight);
+                }
+                
+                const newScale = Math.max(0.3, Math.min(2.0, positioningState.resizeStartScale + scaleDelta));
+                positioningState.scales[index] = newScale;
+                updateSelectedCharacterInfo();
+                drawPositioningCanvas();
+                return;
+            }
+            
+            if (positioningState.draggingIndex !== null) {
+                drag(e);
+                return;
+            }
+            
+            // Update cursor based on hover
+            if (positioningState.selectedIndex !== null) {
+                const charData = positioningState.characterImgs[positioningState.selectedIndex];
+                const charPos = positioningState.positions[positioningState.selectedIndex];
+                const scale = positioningState.scales[positioningState.selectedIndex] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                const handle = getResizeHandle(pos, charPos, scaledWidth, scaledHeight);
+                if (handle) {
+                    positioningCanvas.style.cursor = 'nwse-resize';
+                    return;
+                }
+            }
+            
+            // Check if hovering over a character
+            for (let i = positioningState.characterImgs.length - 1; i >= 0; i--) {
+                const charData = positioningState.characterImgs[i];
+                const charPos = positioningState.positions[i];
+                const scale = positioningState.scales[i] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                if (pos.x >= charPos.x && pos.x <= charPos.x + scaledWidth &&
+                    pos.y >= charPos.y && pos.y <= charPos.y + scaledHeight) {
+                    positioningCanvas.style.cursor = 'grab';
+                    return;
+                }
+            }
+            
+            positioningCanvas.style.cursor = 'crosshair';
+        }
+        
+        function handleMouseUp(e) {
+            if (positioningState.resizing) {
+                positioningState.resizing = false;
+                positioningState.resizeHandle = null;
+                positioningState.resizeStartPos = null;
+                positioningState.resizeStartScale = null;
+            }
+            endDrag();
+        }
+        
+        function handleWheel(e) {
+            if (positioningState.selectedIndex === null) return;
+            
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.05 : 0.05;
+            const index = positioningState.selectedIndex;
+            const currentScale = positioningState.scales[index] || 1.0;
+            const newScale = Math.max(0.3, Math.min(2.0, currentScale + delta));
+            positioningState.scales[index] = newScale;
+            updateSelectedCharacterInfo();
+            drawPositioningCanvas();
+        }
+        
+        function deselectCharacter() {
+            positioningState.selectedIndex = null;
+            positioningState.resizing = false;
+            positioningState.resizeHandle = null;
+            document.getElementById('selectedCharacterInfo').classList.add('hidden');
+            drawPositioningCanvas();
+        }
+        
+        function updateSelectedCharacterInfo() {
+            if (positioningState.selectedIndex === null) {
+                document.getElementById('selectedCharacterInfo').classList.add('hidden');
+                return;
+            }
+            
+            const index = positioningState.selectedIndex;
+            const scale = positioningState.scales[index] || 1.0;
+            document.getElementById('selectedCharName').textContent = `Photo ${index + 1}`;
+            document.getElementById('selectedCharScale').textContent = (scale * 100).toFixed(0);
+            document.getElementById('selectedCharacterInfo').classList.remove('hidden');
+        }
+        
+        function handleTouchStart(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (!touch) return;
+            
+            const rect = positioningCanvas.getBoundingClientRect();
+            const pos = {
+                x: (touch.clientX - rect.left) * (positioningCanvas.width / rect.width),
+                y: (touch.clientY - rect.top) * (positioningCanvas.height / rect.height)
+            };
+            
+            // Check if clicking on a resize handle
+            if (positioningState.selectedIndex !== null) {
+                const charData = positioningState.characterImgs[positioningState.selectedIndex];
+                const charPos = positioningState.positions[positioningState.selectedIndex];
+                const scale = positioningState.scales[positioningState.selectedIndex] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                const handle = getResizeHandle(pos, charPos, scaledWidth, scaledHeight);
+                if (handle) {
+                    positioningState.resizing = true;
+                    positioningState.resizeHandle = handle;
+                    positioningState.resizeStartPos = pos;
+                    positioningState.resizeStartScale = scale;
+                    return;
+                }
+            }
+            
+            // Check if clicking on a character to select or drag
+            for (let i = positioningState.characterImgs.length - 1; i >= 0; i--) {
+                const charData = positioningState.characterImgs[i];
+                const charPos = positioningState.positions[i];
+                const scale = positioningState.scales[i] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                if (pos.x >= charPos.x && pos.x <= charPos.x + scaledWidth &&
+                    pos.y >= charPos.y && pos.y <= charPos.y + scaledHeight) {
+                    positioningState.selectedIndex = i;
+                    positioningState.draggingIndex = i;
+                    positioningState.dragOffset = {
+                        x: pos.x - charPos.x,
+                        y: pos.y - charPos.y
+                    };
+                    updateSelectedCharacterInfo();
+                    drawPositioningCanvas();
+                    return;
+                }
+            }
+            
+            // Clicked on empty space - deselect
+            deselectCharacter();
+        }
+        
+        function drag(e) {
+            if (positioningState.draggingIndex === null) return;
+            
+            const pos = getMousePos(e);
+            const index = positioningState.draggingIndex;
+            const charData = positioningState.characterImgs[index];
+            const scale = positioningState.scales[index] || 1.0;
+            const scaledWidth = charData.originalWidth * charData.baseScale * scale;
+            const scaledHeight = charData.originalHeight * charData.baseScale * scale;
+            const newX = pos.x - positioningState.dragOffset.x;
+            const newY = pos.y - positioningState.dragOffset.y;
+            
+            positioningState.positions[index] = {
+                x: Math.max(-scaledWidth * 0.8, Math.min(newX, positioningCanvas.width - scaledWidth * 0.2)),
+                y: Math.max(-scaledHeight * 0.8, Math.min(newY, positioningCanvas.height - scaledHeight * 0.2))
+            };
+            
+            drawPositioningCanvas();
+        }
+        
+        function handleTouchMove(e) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            if (!touch) return;
+            
+            const pos = {
+                x: (touch.clientX - positioningCanvas.getBoundingClientRect().left) * (positioningCanvas.width / positioningCanvas.getBoundingClientRect().width),
+                y: (touch.clientY - positioningCanvas.getBoundingClientRect().top) * (positioningCanvas.height / positioningCanvas.getBoundingClientRect().height)
+            };
+            
+            if (positioningState.resizing && positioningState.selectedIndex !== null) {
+                const index = positioningState.selectedIndex;
+                const charData = positioningState.characterImgs[index];
+                const charPos = positioningState.positions[index];
+                const deltaX = pos.x - positioningState.resizeStartPos.x;
+                const deltaY = pos.y - positioningState.resizeStartPos.y;
+                
+                const handle = positioningState.resizeHandle;
+                const baseWidth = charData.originalWidth;
+                const baseHeight = charData.originalHeight;
+                
+                let scaleDelta = 0;
+                if (handle === 'br' || handle === 'tl') {
+                    scaleDelta = (deltaX + deltaY) / (baseWidth + baseHeight);
+                } else if (handle === 'tr' || handle === 'bl') {
+                    scaleDelta = (deltaX - deltaY) / (baseWidth + baseHeight);
+                }
+                
+                const newScale = Math.max(0.3, Math.min(2.0, positioningState.resizeStartScale + scaleDelta));
+                positioningState.scales[index] = newScale;
+                updateSelectedCharacterInfo();
+                drawPositioningCanvas();
+                return;
+            }
+            
+            if (positioningState.draggingIndex !== null) {
+                const index = positioningState.draggingIndex;
+                const charData = positioningState.characterImgs[index];
+                const scale = positioningState.scales[index] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                const newX = pos.x - positioningState.dragOffset.x;
+                const newY = pos.y - positioningState.dragOffset.y;
+                
+                positioningState.positions[index] = {
+                    x: Math.max(-scaledWidth * 0.8, Math.min(newX, positioningCanvas.width - scaledWidth * 0.2)),
+                    y: Math.max(-scaledHeight * 0.8, Math.min(newY, positioningCanvas.height - scaledHeight * 0.2))
+                };
+                
+                drawPositioningCanvas();
+            }
+        }
+        
+        function endDrag() {
+            positioningState.draggingIndex = null;
+            if (positioningCanvas) {
+                positioningCanvas.style.cursor = 'move';
+            }
+            drawPositioningCanvas();
+        }
+        
+        function handleTouchEnd() {
+            if (positioningState.resizing) {
+                positioningState.resizing = false;
+                positioningState.resizeHandle = null;
+                positioningState.resizeStartPos = null;
+                positioningState.resizeStartScale = null;
+            }
+            endDrag();
+        }
+        
+        function resetCharacterPositions() {
+            if (!positioningState.characterImgs.length) return;
+            
+            const spacing = positioningCanvas.width / (positioningState.characterImgs.length + 1);
+            positioningState.characterImgs.forEach((charData, index) => {
+                const scale = positioningState.scales[index] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                positioningState.positions[index] = {
+                    x: spacing * (index + 1) - scaledWidth / 2,
+                    y: positioningCanvas.height - scaledHeight - 50
+                };
+            });
+            drawPositioningCanvas();
+        }
+        
+        function autoArrangeCharacters() {
+            if (!positioningState.characterImgs.length) return;
+            
+            const cols = Math.ceil(Math.sqrt(positioningState.characterImgs.length));
+            const rows = Math.ceil(positioningState.characterImgs.length / cols);
+            const cellWidth = positioningCanvas.width / cols;
+            const cellHeight = positioningCanvas.height / rows;
+            
+            positioningState.characterImgs.forEach((charData, index) => {
+                const col = index % cols;
+                const row = Math.floor(index / cols);
+                const scale = positioningState.scales[index] || 1.0;
+                const scaledWidth = charData.originalWidth * scale;
+                const scaledHeight = charData.originalHeight * scale;
+                
+                positioningState.positions[index] = {
+                    x: col * cellWidth + (cellWidth - scaledWidth) / 2,
+                    y: row * cellHeight + (cellHeight - scaledHeight) / 2
+                };
+            });
+            drawPositioningCanvas();
+        }
+        
+        
+        async function compositeCharacters() {
+            if (transformedPhotos.length === 0) {
+                showError('No transformed photos to composite');
+                return;
+            }
+            
+            if (!positioningCanvas || !positioningCtx) {
+                showError('Canvas not initialized');
+                return;
+            }
+            
+            showLoading('Converting canvas to image...');
+            hideError();
+            
+            try {
+                // Create a temporary canvas to compress the image before sending
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                
+                // Calculate max dimensions to keep under size limit (e.g., 4000px max)
+                const maxDimension = 4000;
+                const scale = Math.min(1, maxDimension / positioningCanvas.width, maxDimension / positioningCanvas.height);
+                
+                tempCanvas.width = positioningCanvas.width * scale;
+                tempCanvas.height = positioningCanvas.height * scale;
+                
+                // Draw the original canvas scaled down to temp canvas
+                tempCtx.drawImage(positioningCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
+                
+                // Get compressed image as JPEG (smaller than PNG, but we'll convert to PNG on server if needed)
+                // Use quality 0.92 for good balance between size and quality
+                const canvasData = tempCanvas.toDataURL('image/jpeg', 0.92);
+                
+                console.log(`Canvas size: ${positioningCanvas.width}x${positioningCanvas.height}, Compressed: ${tempCanvas.width}x${tempCanvas.height}, Data size: ${(canvasData.length / 1024).toFixed(2)}KB`);
+                
+                // Send to server as JSON
+                const response = await fetch('/composite-canvas', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        canvas_data: canvasData,
+                        original_width: positioningCanvas.width,
+                        original_height: positioningCanvas.height
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    finalCompositeUrl = data.output_url;
+                    displayFinalResult(data.output_url);
+                    document.getElementById('step4').classList.remove('hidden');
+                    hideLoading();
+                } else {
+                    showError(data.error || 'Failed to save canvas image');
+                    hideLoading();
+                }
+            } catch (error) {
+                showError('Error converting canvas: ' + error.message);
+                hideLoading();
+            }
+        }
+        
+        function displayFinalResult(url) {
+            const finalResult = document.getElementById('finalResult');
+            finalResult.innerHTML = `
+                <img src="${url}" class="final-preview" alt="Final Composite">
+                <p class="text-success mt-3">
+                    <i class="fas fa-check-circle me-2"></i>All characters have been successfully composited!
+                </p>
+            `;
+        }
+        
+        function downloadResult() {
+            if (finalCompositeUrl) {
+                const link = document.createElement('a');
+                link.href = finalCompositeUrl;
+                link.download = 'individual_composite.png';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+        
+        function showLoading(text = 'Processing...') {
+            document.getElementById('loadingText').textContent = text;
+            document.getElementById('loading').classList.remove('hidden');
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').classList.add('hidden');
+        }
+        
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorAlert').classList.remove('hidden');
+        }
+        
+        function hideError() {
+            document.getElementById('errorAlert').classList.add('hidden');
+        }
+        
+        // Display transform prompts when step 2 is shown
+        const step2Observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    const step2 = document.getElementById('step2');
+                    if (step2 && !step2.classList.contains('hidden')) {
+                        displayTransformPrompts();
+                    }
+                }
+            });
+        });
+        
+        step2Observer.observe(document.getElementById('step2'), {
+            attributes: true,
+            attributeFilter: ['class']
+        });
+    </script>
+</body>
+</html>
+
