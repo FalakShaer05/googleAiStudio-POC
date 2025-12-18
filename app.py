@@ -460,8 +460,33 @@ def remove_white_background(image, threshold=240):
                 queue.append((x, y + 1))
                 queue.append((x, y - 1))
         
-        # Apply mask to make background transparent
-        img_array[mask, 3] = 0  # Set alpha to 0 for background pixels
+        # Create smooth alpha channel with edge feathering
+        alpha = img_array[:, :, 3].copy().astype(np.float32)
+        alpha[mask] = 0  # Set background to transparent
+        
+        # Apply edge smoothing for better anti-aliasing
+        # Create a feather effect at edges to remove white artifacts
+        from PIL import ImageFilter
+        
+        # Convert alpha to PIL for filtering
+        alpha_pil = Image.fromarray(alpha.astype(np.uint8), mode='L')
+        # Apply slight blur to smooth edges
+        alpha_pil = alpha_pil.filter(ImageFilter.GaussianBlur(radius=0.8))
+        alpha_smooth = np.array(alpha_pil, dtype=np.float32)
+        
+        # Apply smooth alpha channel
+        img_array[:, :, 3] = alpha_smooth.astype(np.uint8)
+        
+        # Additional cleanup: remove white edge artifacts
+        # For pixels near edges with low alpha, check if they're white and reduce alpha further
+        edge_threshold = 50  # Alpha threshold for edge detection
+        for y in range(height):
+            for x in range(width):
+                if 0 < alpha_smooth[y, x] < edge_threshold:  # Edge pixel
+                    r, g, b = img_array[y, x, :3]
+                    # If pixel is near white, make it more transparent
+                    if r > 220 and g > 220 and b > 220:
+                        img_array[y, x, 3] = max(0, int(alpha_smooth[y, x] * 0.2))
         
         # Convert back to PIL Image
         return Image.fromarray(img_array, 'RGBA')
@@ -658,96 +683,135 @@ def add_drop_shadow(image, offset=(5, 5), blur_radius=10, shadow_color=(0, 0, 0,
         print(f"Error adding drop shadow: {e}")
         return image
 
+def crop_to_content(image, alpha_threshold=5):
+    """
+    Crop an RGBA image to the tight bounding box of non-transparent pixels.
+    This is used to remove empty padding around characters so positioning
+    (especially bottom alignment) is visually consistent.
+    """
+    try:
+        if image.mode != 'RGBA':
+            image = image.convert('RGBA')
+
+        alpha = image.split()[-1]
+        bbox = alpha.point(lambda p: 255 if p > alpha_threshold else 0).getbbox()
+        if bbox:
+            cropped = image.crop(bbox)
+            if cropped.size != image.size:
+                print(f"Cropping transparent padding: {image.size} -> {cropped.size}")
+            return cropped
+    except Exception as e:
+        print(f"Warning: crop_to_content failed: {e}")
+    return image
+
+
+def compute_character_scale(bg_height, char_height, target_ratio=0.75, min_scale=0.4, max_scale=2.0):
+    """
+    Compute a stable scale factor so the character occupies a predictable
+    fraction of the background height.
+    """
+    if char_height <= 0:
+        return 1.0
+    target_char_height = bg_height * target_ratio
+    scale = target_char_height / float(char_height)
+    return max(min_scale, min(max_scale, scale))
+
+
 def composite_images(foreground_image, background_image, position='bottom', scale=1.0, opacity=1.0, add_shadow=True):
     """
-    Composite foreground image onto background image with position control
-    
+    Composite foreground image onto background image with position control.
+
+    This function assumes the foreground is a character with transparency.
+    To make bottom positioning visually accurate, we first trim any fully
+    transparent padding around the character before doing layout math.
+
     Args:
         foreground_image: PIL Image object (converted image)
         background_image: PIL Image object (reference background)
-        position: Position string ('center', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'top', 'bottom', 'left', 'right') or tuple (x, y)
+        position: Position string ('center', 'top-left', 'top-right',
+                 'bottom-left', 'bottom-right', 'top', 'bottom', 'left', 'right')
+                 or tuple (x, y)
         scale: Scale factor for foreground image (default: 1.0)
         opacity: Opacity of foreground image (0.0 to 1.0, default: 1.0)
-    
+
     Returns:
         PIL Image object (composited result)
     """
     try:
         # Keep background at original size (don't resize to match foreground)
-        # This matches the frontend preview behavior where background stays full size
-        
-        # NOTE: The converted image from Google AI Studio is ALWAYS a full-length character
-        # No need for portrait detection or estimated missing height
-        
-        # Scale foreground image if needed
-        if scale != 1.0:
-            new_width = int(foreground_image.width * scale)
-            new_height = int(foreground_image.height * scale)
-            foreground_image = foreground_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Store original size before shadow (for positioning calculations)
-        original_fg_height = foreground_image.height
-        
-        # Add drop shadow for realistic composition
-        shadow_offset = None
-        shadow_blur = None
-        if add_shadow:
-            print("Adding drop shadow for realistic composition...")
-            shadow_offset = (int(5 * scale), int(5 * scale))  # Scale shadow with image
-            shadow_blur = int(10 * scale)
-            foreground_image = add_drop_shadow(foreground_image, offset=shadow_offset, blur_radius=shadow_blur)
-        
+        # This matches the frontend preview behavior where background stays full size.
+
+        # Ensure RGBA for the foreground and crop away transparent padding so
+        # bottom alignment always uses the visible character, not empty canvas.
+        foreground_image = crop_to_content(foreground_image)
+
         # Create a copy of background for compositing
         result_image = background_image.copy()
         bg_width, bg_height = result_image.size
-        fg_width, fg_height = foreground_image.size
-        
-        # Calculate position
-        if isinstance(position, tuple):
-            x, y = position
+
+        # Handle deterministic bottom positioning separately for kiosk safety
+        if isinstance(position, str) and position == 'bottom':
+            if foreground_image.mode != 'RGBA':
+                foreground_image = foreground_image.convert('RGBA')
+
+            # Compute a stable scale relative to background height; treat the user
+            # provided `scale` as a multiplier on the target ratio.
+            base_ratio = 0.75 * float(scale)  # character ~75% of bg height by default
+            base_ratio = max(0.4, min(1.2, base_ratio))  # clamp reasonable range
+
+            fg_width, fg_height = foreground_image.size
+            scale_factor = compute_character_scale(
+                bg_height, fg_height, target_ratio=base_ratio
+            )
+
+            if scale_factor != 1.0:
+                new_width = int(fg_width * scale_factor)
+                new_height = int(fg_height * scale_factor)
+                foreground_image = foreground_image.resize(
+                    (new_width, new_height), Image.Resampling.LANCZOS
+                )
+                fg_width, fg_height = foreground_image.size
+
+            # Optional drop shadow (added after scaling)
+            if add_shadow:
+                print("Adding drop shadow for realistic composition (bottom mode)...")
+                shadow_offset = (int(5 * scale_factor), int(5 * scale_factor))
+                shadow_blur = int(10 * scale_factor)
+                foreground_image = add_drop_shadow(
+                    foreground_image, offset=shadow_offset, blur_radius=shadow_blur
+                )
+                fg_width, fg_height = foreground_image.size
+
+            # Bottom-center alignment with fixed margin
+            bottom_margin = max(10, int(bg_height * 0.02))
+            x = (bg_width - fg_width) // 2
+            y = bg_height - fg_height - bottom_margin
+            y = max(0, y)
+
+            print(
+                f"Bottom positioning (stable): bg={bg_width}x{bg_height}, "
+                f"character={fg_width}x{fg_height}, margin={bottom_margin}, y={y}"
+            )
         else:
-            # Calculate position based on string
-            # For bottom positioning: Place character few pixels up from bottom
-            # The converted image is ALWAYS full-length
-            if position == 'bottom' and add_shadow and shadow_offset:
-                # Calculate where the original image sits within the composite (with shadow)
-                image_y_in_composite = max(0, -shadow_offset[1]) + shadow_blur
-                
-                # Calculate the actual bottom of the character in the composite
-                character_bottom_in_composite = image_y_in_composite + original_fg_height
-                
-                # Position few pixels up from bottom (adjustable offset)
-                pixels_up_from_bottom = max(5, int(original_fg_height * 0.01))  # ~1% of height, min 5px
-                
-                # Calculate desired y position
-                desired_y = bg_height - character_bottom_in_composite - pixels_up_from_bottom
-                
-                # Check if character is too large for background
-                # If so, resize background to fit the character while maintaining aspect ratio
-                if desired_y < 0 or fg_height > bg_height:
-                    print(f"Character ({fg_height}px) is larger than background ({bg_height}px)")
-                    
-                    # Calculate minimum background height needed to fit character at bottom
-                    min_bg_height_needed = fg_height + pixels_up_from_bottom + 50  # Add padding
-                    
-                    # Calculate new background dimensions maintaining aspect ratio
-                    aspect_ratio = bg_width / bg_height
-                    new_bg_height = min_bg_height_needed
-                    new_bg_width = int(new_bg_height * aspect_ratio)
-                    
-                    # Resize background
-                    result_image = background_image.resize((new_bg_width, new_bg_height), Image.Resampling.LANCZOS)
-                    bg_width, bg_height = result_image.size
-                    print(f"Background resized to {bg_width}x{bg_height} to fit character")
-                    
-                    # Recalculate y position with new background size
-                    desired_y = bg_height - character_bottom_in_composite - pixels_up_from_bottom
-                
-                # Position so character's feet are pixels_up_from_bottom above bg bottom
-                y = desired_y
-                x = bg_width // 2 - fg_width // 2
-                
-                print(f"Bottom positioning: bg={bg_width}x{bg_height}, character={fg_width}x{fg_height}, character_bottom_in_composite={character_bottom_in_composite}, pixels_up={pixels_up_from_bottom}, y={y}")
+            # Legacy positioning for non-bottom modes, with optional manual scale.
+            if foreground_image.mode != 'RGBA':
+                foreground_image = foreground_image.convert('RGBA')
+
+            if scale != 1.0:
+                new_width = int(foreground_image.width * scale)
+                new_height = int(foreground_image.height * scale)
+                foreground_image = foreground_image.resize(
+                    (new_width, new_height), Image.Resampling.LANCZOS
+                )
+
+            if add_shadow:
+                print("Adding drop shadow for realistic composition...")
+                foreground_image = add_drop_shadow(foreground_image)
+
+            fg_width, fg_height = foreground_image.size
+
+            if isinstance(position, tuple):
+                x, y = position
             else:
                 position_map = {
                     'center': (bg_width // 2 - fg_width // 2, bg_height // 2 - fg_height // 2),
@@ -756,35 +820,14 @@ def composite_images(foreground_image, background_image, position='bottom', scal
                     'bottom-left': (0, bg_height - fg_height),
                     'bottom-right': (bg_width - fg_width, bg_height - fg_height),
                     'top': (bg_width // 2 - fg_width // 2, 0),
-                    'bottom': (bg_width // 2 - fg_width // 2, bg_height - fg_height),
                     'left': (0, bg_height // 2 - fg_height // 2),
                     'right': (bg_width - fg_width, bg_height // 2 - fg_height // 2)
                 }
-                
                 x, y = position_map.get(position, position_map['center'])
-        
-        # Ensure position is within bounds
-        x = max(0, min(x, result_image.width - foreground_image.width))
-        
-        # Final bounds check - ensure character is always visible
-        # For bottom positioning, we've already resized background if needed, so just verify
-        if position == 'bottom' and add_shadow and shadow_offset:
-            # Final safety check - ensure character fits
-            if y < 0:
-                # Still negative after resize - this shouldn't happen, but position at top
-                y = 0
-                print(f"WARNING: y still negative after resize, adjusting to 0")
-            elif (y + foreground_image.height) > result_image.height:
-                # Bottom extends beyond - adjust
-                y = result_image.height - foreground_image.height
-                print(f"Adjusted y to {y} to keep character within bounds")
-            
-            # Verify final position
-            if y < 0 or (y + foreground_image.height) > result_image.height:
-                print(f"ERROR: Character still doesn't fit! y={y}, fg_height={foreground_image.height}, bg_height={result_image.height}")
-        else:
-            # Standard bounds check for other positions
-            y = max(0, min(y, result_image.height - foreground_image.height))
+
+            # Bounds check
+            x = max(0, min(x, bg_width - fg_width))
+            y = max(0, min(y, bg_height - fg_height))
         
         # Ensure background is in RGB mode for proper compositing
         if result_image.mode != 'RGB':
@@ -928,16 +971,174 @@ def index():
     """Main page"""
     return render_template('index.html')
 
-@app.route('/group-photo')
-def group_photo():
-    """Group photo processing page"""
-    return render_template('group_photo.html')
+@app.route('/generate-character-web', methods=['POST'])
+def generate_character_web():
+    """Handle character generation from web interface"""
+    try:
+        # Get selfie image
+        selfie_file = request.files.get('selfie')
+        if not selfie_file or not selfie_file.filename:
+            return jsonify({'error': 'Selfie image is required'}), 400
+        
+        if not allowed_file(selfie_file.filename):
+            return jsonify({'error': 'Invalid selfie file type. Allowed: PNG, JPG, JPEG, GIF, BMP, TIFF'}), 400
+        
+        # Get character prompt
+        character_prompt = request.form.get('character_prompt', '').strip()
+        if not character_prompt:
+            return jsonify({'error': 'Character prompt is required'}), 400
+        
+        # Get background (file or URL)
+        background_file = request.files.get('background')
+        background_url = request.form.get('background_url', '').strip()
+        
+        # Background is optional: if not provided, we generate a standalone character.
+        if background_file and background_url:
+            return jsonify({'error': 'Provide either background file or background_url, not both'}), 400
+        
+        # Get optional parameters
+        position = request.form.get('position', 'bottom').strip()  # Default to 'bottom' for character generator
+        scale = float(request.form.get('scale', '1.0'))
+        upload_background_to_s3 = request.form.get('upload_background_to_s3', 'true').lower() == 'true'
+        
+        # Debug logging
+        print(f"📋 Character Generator Request Parameters:")
+        print(f"   Position: '{position}' (from form: '{request.form.get('position', 'NOT_FOUND')}')")
+        print(f"   Scale: {scale}")
+        print(f"   Background URL: {background_url[:50] if background_url else 'N/A'}...")
+        
+        # Validate scale
+        if scale < 0.1 or scale > 3.0:
+            return jsonify({'error': 'Scale must be between 0.1 and 3.0'}), 400
+        
+        # Import the utility functions
+        from api.utils import (
+            generate_unique_filename,
+            upload_image_to_s3,
+            generate_character_with_identity,
+            generate_character_composited_with_background,
+            download_image_from_url,
+            cleanup_file,
+            get_image_info,
+        )
+        
+        # Save selfie
+        selfie_filename = generate_unique_filename(selfie_file.filename, 'selfie')
+        selfie_path = os.path.join(app.config['UPLOAD_FOLDER'], selfie_filename)
+        selfie_file.save(selfie_path)
+        
+        # Handle background
+        background_path = None
+        background_s3_url = None
+        
+        if background_file:
+            if not allowed_file(background_file.filename):
+                cleanup_file(selfie_path)
+                return jsonify({'error': 'Invalid background file type'}), 400
+            
+            background_filename = generate_unique_filename(background_file.filename, 'background')
+            background_path = os.path.join(app.config['UPLOAD_FOLDER'], background_filename)
+            background_file.save(background_path)
+            
+            # Upload to S3 if requested
+            if upload_background_to_s3:
+                background_s3_url = upload_image_to_s3(background_path)
+        elif background_url:
+            # Download background from URL
+            background_path = download_image_from_url(background_url, app.config['UPLOAD_FOLDER'])
+            if not background_path:
+                cleanup_file(selfie_path)
+                return jsonify({'error': 'Failed to download background from URL'}), 400
+        else:
+            background_path = None
+        
+        # Get canvas size and DPI from form
+        canvas_size = request.form.get('canvas_size', '').strip() or None
+        dpi = int(request.form.get('dpi', '300'))
 
-@app.route('/individual-photos')
-def individual_photos():
-    """Individual photos transformation page"""
-    return render_template('individual_photos.html')
+        # If background is provided, use one-shot Gemini compositing.
+        # Otherwise, generate a standalone character only.
+        if background_path:
+            output_filename = generate_unique_filename(f"composited_{selfie_filename}.png", 'output')
+        else:
+            output_filename = generate_unique_filename(f"character_{selfie_filename}.png", 'output')
+        output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        
+        print(f"🎨 Character Generator Flow:")
+        print(f"   Background provided: {bool(background_path)}")
+        print(f"   Position: '{position}' (type: {type(position)})")
+        print(f"   Scale: {scale}")
+        print(f"   Canvas size: {canvas_size}, DPI: {dpi}")
 
+        if background_path:
+            # One-shot composited result from Gemini
+            success, message = generate_character_composited_with_background(
+                selfie_path=selfie_path,
+                background_path=background_path,
+                character_prompt=character_prompt,
+                output_path=output_path,
+                position=position,
+                scale=scale,
+                canvas_size=canvas_size,
+                dpi=dpi
+            )
+        else:
+            # Character-only generation (no compositing)
+            success, message = generate_character_with_identity(
+                selfie_path=selfie_path,
+                character_prompt=character_prompt,
+                output_path=output_path,
+                # IMPORTANT: when no background is provided, keep whatever
+                # background Google AI Studio returns (no local removal).
+                white_background=False,
+                position=position,
+                scale=scale,
+                background_dimensions=None,
+                canvas_size=canvas_size,
+                dpi=dpi,
+            )
+        
+        if not success:
+            cleanup_file(selfie_path)
+            if background_path:
+                cleanup_file(background_path)
+            return jsonify({'error': f'Character generation failed: {message}'}), 500
+        
+        # Clean up input/background files (no intermediate character file now)
+        cleanup_file(selfie_path)
+        if background_path and not upload_background_to_s3:
+            cleanup_file(background_path)
+        
+        # Get image info
+        image_info = get_image_info(output_path)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Character generated successfully',
+            'output_filename': output_filename,
+            'metadata': {
+                'image_info': image_info,
+                'character_prompt': character_prompt,
+                'position': position,
+                'scale': scale,
+                'background_s3_url': background_s3_url
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"Error in character generation: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error: {str(e)}'}), 500
+
+
+@app.route('/api/generate-character', methods=['POST'])
+def api_generate_character():
+    """
+    API endpoint for character generation.
+    This simply delegates to the main web handler and returns the same JSON.
+    """
+    return generate_character_web()
 
 @app.route('/analyze-image', methods=['POST'])
 def analyze_image():

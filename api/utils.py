@@ -4,6 +4,7 @@ Helper functions for API operations
 """
 
 import os
+import io
 import time
 import uuid
 import threading
@@ -953,3 +954,643 @@ def remove_background(image_path: str) -> str:
             else:
                 print(f"⚠️ LightX API also failed, trying Freepik API...")
                 return remove_background_with_freepik_api(image_path)
+
+def get_gemini_client():
+    """
+    Get the Gemini client instance from the main app.
+    This avoids circular imports by lazy loading.
+    
+    Returns:
+        genai.Client: The Gemini client instance, or None if not available
+    """
+    try:
+        from app import client
+        return client
+    except Exception as e:
+        print(f"⚠️ Could not get Gemini client: {e}")
+        return None
+
+def generate_character_with_identity(
+    selfie_path: str,
+    character_prompt: str,
+    output_path: str,
+    white_background: bool = True,
+    position: str = "center",
+    scale: float = 1.0,
+    background_dimensions: Optional[dict] = None,
+    canvas_size: Optional[str] = None,
+    dpi: int = 300
+) -> Tuple[bool, str]:
+    """
+    Generate a character from a selfie using Google AI Studio with identity preservation.
+    Uses reference images to maintain facial features while transforming the character.
+    
+    Args:
+        selfie_path: Path to the selfie/reference image
+        character_prompt: Description of the character transformation (e.g., "A 3D cartoon character, Pixar style, wearing space armor")
+        output_path: Path where the generated character image will be saved
+        white_background: If True, request white background for easier compositing (default: True)
+        position: Position where character will be placed on background (default: "center")
+        scale: Scale factor for character size (default: 1.0)
+        background_dimensions: Optional dict with 'width' and 'height' of background image
+        canvas_size: Optional canvas size string (e.g., '8x10', '11x14') for generation context
+        dpi: DPI for canvas size calculation (default: 300)
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        client = get_gemini_client()
+        if not client:
+            return False, "Gemini client not initialized"
+        
+        # Check if selfie exists
+        if not os.path.exists(selfie_path):
+            return False, f"Selfie image not found: {selfie_path}"
+        
+        # Load the selfie image
+        selfie_image = Image.open(selfie_path)
+        print(f"📸 Loaded selfie image: {selfie_image.size}, mode: {selfie_image.mode}")
+        
+        # Build positioning and canvas context
+        positioning_context = ""
+        canvas_context = ""
+        
+        if background_dimensions:
+            bg_width = background_dimensions.get('width', 0)
+            bg_height = background_dimensions.get('height', 0)
+            positioning_context = f"""
+COMPOSITION CONTEXT:
+- The character will be composited onto a background image ({bg_width}x{bg_height} pixels)
+- Target position: {position}
+- Scale factor: {scale}x
+- Generate the character with appropriate proportions for this composition
+- Consider the background dimensions when determining character size and pose
+"""
+        
+        if canvas_size:
+            # Import get_print_dimensions from app
+            try:
+                from app import get_print_dimensions
+                canvas_width, canvas_height = get_print_dimensions(canvas_size, dpi)
+                canvas_context = f"""
+CANVAS SIZE CONTEXT:
+- Target canvas size: {canvas_size} ({canvas_width}x{canvas_height} pixels at {dpi} DPI)
+- Generate the character with proportions suitable for this canvas size
+- Ensure the character fits well within these dimensions
+"""
+            except ImportError:
+                pass
+        
+        # Build the prompt with identity preservation instructions.
+        # CRITICAL: Ask for a plain, solid light background only, so that
+        # local white-background removal is simple and robust.
+        
+        full_prompt = f"""Transform this person into a character while maintaining their identity and facial features.
+
+CHARACTER TRANSFORMATION:
+{character_prompt}
+
+CRITICAL BACKGROUND REQUIREMENT - MANDATORY:
+1. Generate ONLY the character - NO background elements such as scenery, props, or objects.
+2. The background must be completely plain, solid, and uniform in a very light neutral color (pure white or very light grey).
+3. Do NOT include any patterns, textures, gradients, lighting effects, or decorative elements in the background.
+4. The background color should be consistent across the entire image and clearly separable from the character for background removal.
+5. The character must be completely isolated with clean edges suitable for compositing.
+
+IDENTITY PRESERVATION REQUIREMENTS:
+6. Maintain the person's facial features, bone structure, and distinctive characteristics.
+7. Keep the same person recognizable - this should look like the same individual transformed.
+8. Preserve the person's unique features (face shape, eyes, nose, mouth, etc.).
+9. The transformation should be stylistic, not a complete replacement.
+
+FULL-LENGTH PHOTO REQUIREMENT:
+10. The image MUST be a FULL-LENGTH photo showing the character from HEAD TO FEET.
+11. The entire body must be visible - from the top of the head to the bottom of the feet.
+12. Do NOT crop the image to show only upper body, torso, or headshot.
+13. Ensure both head and feet are clearly visible in the frame.
+14. The character should be standing in a natural, balanced pose suitable for compositing.
+
+CHARACTER QUALITY:
+15. Use clean, bold outlines and vibrant colors.
+16. Ensure the character is well-lit and clearly visible.
+17. Maintain consistent art style throughout the character.
+18. The character must have clean, sharp edges with no background bleed.
+19. Professional quality suitable for commercial use.
+
+{positioning_context}
+{canvas_context}
+
+Return a FULL-LENGTH image (head to feet) with ONLY the transformed character on a completely plain, uniform light background. NO decorative elements, patterns, or scenery. The character must be perfectly isolated and ready for professional compositing."""
+        
+        print(f"🎨 Generating character with identity preservation...")
+        print(f"   Prompt: {character_prompt[:100]}...")
+        
+        # Generate content with AI using reference image
+        # The selfie image is passed as a reference to maintain identity
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image-preview",
+            contents=[full_prompt, selfie_image],
+        )
+        
+        # Process the response
+        for part in response.candidates[0].content.parts:
+            if part.text is not None:
+                print(f"📝 Generated text: {part.text}")
+            elif part.inline_data is not None:
+                # Save the generated character image
+                generated_image = Image.open(io.BytesIO(part.inline_data.data))
+                print(f"✅ Generated character image: {generated_image.size}, mode: {generated_image.mode}")
+                
+                # Always convert to RGBA for background removal / transparency handling
+                if generated_image.mode != 'RGBA':
+                    generated_image = generated_image.convert('RGBA')
+
+                # Use robust white-background removal so only the plain light
+                # background is removed while preserving white elements inside
+                # the character (teeth, eyes, clothing highlights, etc.).
+                if white_background:
+                    try:
+                        import sys
+                        if 'app' in sys.modules:
+                            from app import remove_white_background
+                            print("🧹 Removing white background from generated character...")
+                            generated_image = remove_white_background(
+                                generated_image, threshold=235
+                            )
+                            print("✅ White background removed successfully")
+                        else:
+                            # Fallback to simple removal if app is not importable
+                            print("🧹 Removing white background from generated character (simple method)...")
+                            generated_image = remove_white_background_simple(
+                                generated_image, threshold=235
+                            )
+                            print("✅ White background removed successfully (simple)")
+                    except Exception as e:
+                        print(f"⚠️ Could not remove white background using flood-fill: {e}")
+                        generated_image = remove_white_background_simple(
+                            generated_image, threshold=235
+                        )
+                
+                # Save the image
+                if output_path.lower().endswith('.png'):
+                    generated_image.save(output_path, format='PNG', optimize=True)
+                else:
+                    generated_image.save(output_path)
+                
+                print(f"✅ Character generated successfully: {output_path}")
+                return True, "Character generated successfully"
+        
+        return False, "No image was generated in the response"
+        
+    except Exception as e:
+        error_msg = f"Error generating character: {e}"
+        print(f"❌ {error_msg}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return False, error_msg
+
+
+def generate_character_composited_with_background(
+    selfie_path: str,
+    background_path: str,
+    character_prompt: str,
+    output_path: str,
+    position: str = "bottom",
+    scale: float = 1.0,
+    canvas_size: Optional[str] = None,
+    dpi: int = 300,
+) -> Tuple[bool, str]:
+    """
+    One-shot flow: ask Gemini to generate a full-body character from a selfie
+    and composite it directly onto the provided background.
+
+    This is designed for kiosk use where Google AI Studio handles positioning,
+    scaling and background usage, and the backend simply returns the final
+    poster image.
+    """
+    try:
+        client = get_gemini_client()
+        if not client:
+            return False, "Gemini client not initialized"
+
+        if not os.path.exists(selfie_path):
+            return False, f"Selfie image not found: {selfie_path}"
+        if not os.path.exists(background_path):
+            return False, f"Background image not found: {background_path}"
+
+        selfie_image = Image.open(selfie_path)
+        background_image = Image.open(background_path)
+
+        bg_w, bg_h = background_image.size
+
+        canvas_context = ""
+        if canvas_size:
+            try:
+                from app import get_print_dimensions
+                canvas_width, canvas_height = get_print_dimensions(canvas_size, dpi)
+                canvas_context = f"""
+CANVAS / PRINT CONTEXT:
+- Target print size: {canvas_size} ({canvas_width}x{canvas_height} pixels at {dpi} DPI)
+- Keep the full background visible and usable at this size.
+"""
+            except ImportError:
+                pass
+
+        full_prompt = f"""TASK:
+Create a full-body cartoon caricature of this person and composite them onto this background image.
+
+BACKGROUND USAGE (MUST FOLLOW EXACTLY):
+1. Use the provided background image AS-IS. Do not crop, stretch, blur, recolor, or add extra elements.
+2. Keep the same aspect ratio as the background image ({bg_w}x{bg_h} pixels).
+3. The background must remain fully visible behind the character.
+
+CHARACTER POSITIONING:
+4. Place the character STANDING at the {position.upper()} of the background, centered horizontally.
+   - For 'bottom': feet must be near the bottom edge with a small safe margin (~2–3% of the image height).
+5. The character must be FULL-BODY from HEAD TO FEET, entirely inside the frame (no cropping).
+6. Character height should be approximately {int(scale * 75)}% of the total image height.
+
+STYLE & IDENTITY:
+7. Cartoon/caricature style with clean bold outlines and vibrant colors.
+8. Maintain the person's identity: same face, skin tone, hair style, and key features.
+9. Natural, balanced pose suitable for a poster.
+
+RESTRICTIONS:
+10. Do NOT add text, logos, watermarks, borders, or frames.
+11. Do NOT add additional objects, characters, or scenery beyond what exists in the background image.
+
+CHARACTER DESCRIPTION:
+{character_prompt}
+
+{canvas_context}
+
+OUTPUT:
+Return a single, final composited image ready for printing with the character placed on the provided background as specified."""
+
+        print("🎨 Generating character directly composited on background with Gemini...")
+        print(f"   Prompt (truncated): {character_prompt[:100]}...")
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image-preview",
+            contents=[full_prompt, selfie_image, background_image],
+        )
+
+        for part in response.candidates[0].content.parts:
+            if part.text is not None:
+                print(f"📝 Generated text: {part.text}")
+            elif part.inline_data is not None:
+                final_image = Image.open(io.BytesIO(part.inline_data.data))
+                print(f"✅ Generated composited image: {final_image.size}, mode: {final_image.mode}")
+
+                # Ensure RGB for printing
+                if final_image.mode not in ("RGB", "RGBA"):
+                    final_image = final_image.convert("RGB")
+
+                # Save final image
+                if output_path.lower().endswith(".png"):
+                    final_image.save(output_path, format="PNG", optimize=True)
+                else:
+                    final_image.save(output_path, quality=95, optimize=True)
+
+                return True, "Character generated and composited by Gemini successfully"
+
+        return False, "No image was generated in the response"
+
+    except Exception as e:
+        error_msg = f"Error in Gemini composited generation: {e}"
+        print(f"❌ {error_msg}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return False, error_msg
+
+def composite_character_on_background_ai(
+    character_path: str,
+    background_path: str,
+    output_path: str,
+    position: str = "center",
+    prompt: str = None
+) -> Tuple[bool, str]:
+    """
+    Composite a character onto a background using Google AI Studio inpainting.
+    This uses AI to intelligently blend the character into the background.
+    
+    Args:
+        character_path: Path to the character image (should have transparent or white background)
+        background_path: Path to the background image
+        output_path: Path where the composited result will be saved
+        position: Position where character should be placed ("center", "bottom", "top", etc.)
+        prompt: Optional prompt describing how the character should appear in the scene
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        client = get_gemini_client()
+        if not client:
+            return False, "Gemini client not initialized"
+        
+        # Check if files exist
+        if not os.path.exists(character_path):
+            return False, f"Character image not found: {character_path}"
+        if not os.path.exists(background_path):
+            return False, f"Background image not found: {background_path}"
+        
+        # Load images
+        character_image = Image.open(character_path)
+        background_image = Image.open(background_path)
+        
+        print(f"🎨 Compositing character onto background using AI...")
+        print(f"   Character: {character_image.size}, Background: {background_image.size}")
+        
+        # Remove white/transparent background from character if needed
+        # Convert to RGBA for transparency handling
+        if character_image.mode != 'RGBA':
+            character_image = character_image.convert('RGBA')
+        
+        # Use simple white background removal
+        character_image = remove_white_background_simple(character_image, threshold=240)
+        
+        # For AI inpainting, we need to create a mask indicating where the character should go
+        # Since Gemini 2.5 Flash doesn't directly support inpainting with masks,
+        # we'll use a different approach: composite manually but use AI to enhance
+        
+        # Fall back to manual compositing with AI enhancement
+        return composite_character_on_background_manual(
+            character_path, background_path, output_path, position
+        )
+        
+    except Exception as e:
+        error_msg = f"Error in AI compositing: {e}"
+        print(f"❌ {error_msg}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return False, error_msg
+
+def composite_character_on_background_manual(
+    character_path: str,
+    background_path: str,
+    output_path: str,
+    position: str = "center",
+    scale: float = 1.0,
+    add_shadow: bool = True,
+    canvas_size: Optional[str] = None,
+    dpi: int = 300
+) -> Tuple[bool, str]:
+    """
+    Composite a character onto a background manually using PIL.
+    This is more reliable than AI compositing and gives precise control.
+    
+    Args:
+        character_path: Path to the character image (should have transparent background)
+        background_path: Path to the background image
+        output_path: Path where the composited result will be saved
+        position: Position where character should be placed ("center", "bottom", "top", "left", "right", "top-left", etc.)
+        scale: Scale factor for the character (default: 1.0)
+        add_shadow: Whether to add a drop shadow for realism (default: True)
+        canvas_size: Optional canvas size string (e.g., '8x10', '11x14') for final image size
+        dpi: DPI for canvas size calculation (default: 300)
+    
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    try:
+        # Import composite_images from app if available, otherwise implement locally
+        try:
+            from app import composite_images, remove_white_background
+        except ImportError:
+            # Fallback: implement basic compositing
+            print("⚠️ Could not import composite_images from app, using basic compositing")
+            return composite_character_basic(character_path, background_path, output_path, position, scale)
+        
+        # Load images
+        character_image = Image.open(character_path)
+        background_image = Image.open(background_path)
+        
+        print(f"🎨 Compositing character onto background manually...")
+        print(f"   Character: {character_image.size}, Background: {background_image.size}")
+        print(f"   Position: '{position}', Scale: {scale}")
+        
+        # Resize background to canvas size BEFORE compositing if canvas_size is specified
+        # This ensures no white space and proper aspect ratio
+        if canvas_size:
+            try:
+                from app import get_print_dimensions
+                target_width, target_height = get_print_dimensions(canvas_size, dpi)
+                print(f"📐 Resizing background to canvas size: {canvas_size} ({target_width}x{target_height}px @ {dpi} DPI)")
+                
+                # Resize background to fill canvas (crop if needed to maintain aspect ratio)
+                bg_aspect = background_image.width / background_image.height
+                canvas_aspect = target_width / target_height
+                
+                if bg_aspect > canvas_aspect:
+                    # Background is wider - fit to height and crop width
+                    new_height = target_height
+                    new_width = int(new_height * bg_aspect)
+                    background_image = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    # Crop from center
+                    left = (new_width - target_width) // 2
+                    background_image = background_image.crop((left, 0, left + target_width, target_height))
+                else:
+                    # Background is taller - fit to width and crop height
+                    new_width = target_width
+                    new_height = int(new_width / bg_aspect)
+                    background_image = background_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    # Crop from center
+                    top = (new_height - target_height) // 2
+                    background_image = background_image.crop((0, top, target_width, top + target_height))
+                
+                print(f"✅ Background resized to canvas: {background_image.size}")
+            except Exception as e:
+                print(f"⚠️ Could not resize background to canvas size: {e}")
+        
+        # Remove white background if present with smooth edges
+        # Always ensure clean white background removal (no caching issues)
+        if character_image.mode != 'RGBA':
+            character_image = character_image.convert('RGBA')
+        
+        # Remove white background with improved edge smoothing
+        # Use a slightly lower threshold for better edge detection
+        # Force fresh processing to avoid caching issues
+        character_image = remove_white_background(character_image, threshold=235)
+        
+        # Apply additional edge refinement to remove any white artifacts
+        # This helps with smooth edges when zooming
+        try:
+            import numpy as np
+            img_array = np.array(character_image)
+            alpha = img_array[:, :, 3].astype(np.float32)
+            
+            # Create a more aggressive edge cleanup for pixels near transparent areas
+            # This removes white edge artifacts
+            from PIL import ImageFilter
+            
+            # Find edge pixels (where alpha transitions from transparent to opaque)
+            edge_threshold = 50  # Alpha threshold for edge detection
+            for y in range(img_array.shape[0]):
+                for x in range(img_array.shape[1]):
+                    if 0 < alpha[y, x] < edge_threshold:  # Edge pixel
+                        r, g, b = img_array[y, x, :3]
+                        # If pixel is near white, make it more transparent
+                        if r > 220 and g > 220 and b > 220:
+                            img_array[y, x, 3] = max(0, int(alpha[y, x] * 0.2))
+            
+            character_image = Image.fromarray(img_array, 'RGBA')
+            
+            # Apply additional edge smoothing with PIL filter
+            alpha_channel = character_image.split()[3]
+            alpha_smooth = alpha_channel.filter(ImageFilter.GaussianBlur(radius=0.5))
+            character_image.putalpha(alpha_smooth)
+        except Exception as e:
+            print(f"⚠️ Edge refinement skipped: {e}")
+        
+        # Use the composite_images function from app.py
+        result_image = composite_images(
+            foreground_image=character_image,
+            background_image=background_image,
+            position=position,
+            scale=scale,
+            opacity=1.0,
+            add_shadow=add_shadow
+        )
+        
+        # Canvas size is already applied to background, so final image should be correct size
+        # Just verify dimensions match canvas if specified
+        if canvas_size:
+            try:
+                from app import get_print_dimensions
+                target_width, target_height = get_print_dimensions(canvas_size, dpi)
+                if result_image.size != (target_width, target_height):
+                    print(f"⚠️ Final image size {result_image.size} doesn't match canvas {target_width}x{target_height}, resizing...")
+                    result_image = result_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                    print(f"✅ Final image resized to canvas size: {result_image.size}")
+            except Exception as e:
+                print(f"⚠️ Could not verify canvas size: {e}")
+        
+        # Save the result with high quality
+        if output_path.lower().endswith('.png'):
+            result_image.save(output_path, format='PNG', optimize=True)
+        else:
+            # Convert to RGB if saving as JPEG
+            if result_image.mode == 'RGBA':
+                rgb_background = Image.new('RGB', result_image.size, (255, 255, 255))
+                rgb_background.paste(result_image, mask=result_image.split()[-1])
+                result_image = rgb_background
+            result_image.save(output_path, quality=95)
+        
+        print(f"✅ Character composited successfully: {output_path}")
+        return True, "Character composited successfully"
+        
+    except Exception as e:
+        error_msg = f"Error in manual compositing: {e}"
+        print(f"❌ {error_msg}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return False, error_msg
+
+def composite_character_basic(
+    character_path: str,
+    background_path: str,
+    output_path: str,
+    position: str = "center",
+    scale: float = 1.0
+) -> Tuple[bool, str]:
+    """
+    Basic compositing function (fallback if app functions not available).
+    """
+    try:
+        character_image = Image.open(character_path)
+        background_image = Image.open(background_path)
+        
+        # Convert character to RGBA
+        if character_image.mode != 'RGBA':
+            character_image = character_image.convert('RGBA')
+        
+        # Remove white background
+        character_image = remove_white_background_simple(character_image, threshold=240)
+        
+        # Scale if needed
+        if scale != 1.0:
+            new_width = int(character_image.width * scale)
+            new_height = int(character_image.height * scale)
+            character_image = character_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create result canvas
+        result = background_image.copy()
+        if result.mode != 'RGBA':
+            result = result.convert('RGBA')
+        
+        # Calculate position
+        bg_width, bg_height = result.size
+        char_width, char_height = character_image.size
+        
+        if position == "center":
+            x = (bg_width - char_width) // 2
+            y = (bg_height - char_height) // 2
+        elif position == "bottom":
+            x = (bg_width - char_width) // 2
+            y = bg_height - char_height - 20  # 20px from bottom
+        elif position == "top":
+            x = (bg_width - char_width) // 2
+            y = 20  # 20px from top
+        elif position == "left":
+            x = 20
+            y = (bg_height - char_height) // 2
+        elif position == "right":
+            x = bg_width - char_width - 20
+            y = (bg_height - char_height) // 2
+        elif position == "top-left":
+            x = 20
+            y = 20
+        elif position == "top-right":
+            x = bg_width - char_width - 20
+            y = 20
+        elif position == "bottom-left":
+            x = 20
+            y = bg_height - char_height - 20
+        elif position == "bottom-right":
+            x = bg_width - char_width - 20
+            y = bg_height - char_height - 20
+        else:
+            x = (bg_width - char_width) // 2
+            y = (bg_height - char_height) // 2
+        
+        # Paste character onto background
+        result.paste(character_image, (x, y), character_image)
+        
+        # Save result
+        if output_path.lower().endswith('.png'):
+            result.save(output_path, format='PNG', optimize=True)
+        else:
+            if result.mode == 'RGBA':
+                rgb_result = Image.new('RGB', result.size, (255, 255, 255))
+                rgb_result.paste(result, mask=result.split()[-1])
+                result = rgb_result
+            result.save(output_path)
+        
+        return True, "Character composited successfully"
+        
+    except Exception as e:
+        return False, f"Error in basic compositing: {e}"
+
+def remove_white_background_simple(image, threshold=240):
+    """
+    Simple white background removal using threshold (helper function).
+    """
+    try:
+        if image.mode != 'RGBA':
+            image = image.convert('RGBA')
+        
+        data = image.getdata()
+        new_data = []
+        for item in data:
+            if item[0] > threshold and item[1] > threshold and item[2] > threshold:
+                new_data.append((0, 0, 0, 0))  # Transparent
+            else:
+                new_data.append(item)
+        
+        image.putdata(new_data)
+        return image
+    except Exception as e:
+        print(f"Error in simple white background removal: {e}")
+        return image

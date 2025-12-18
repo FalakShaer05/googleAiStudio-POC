@@ -5,7 +5,10 @@ A RESTful API for image-to-image conversion using Google Gemini AI, with optiona
 ## Features
 
 - **Caricature Generation**: Transform images using AI-powered text prompts
+- **Character Generation with Identity Preservation**: Generate characters from selfies while maintaining facial features using Google AI Studio
 - **Background Merging**: Professional background removal and compositing
+- **Background Compositing**: Composite generated characters onto backgrounds without 3rd party services
+- **S3 Integration**: Upload and manage background images on S3
 - **Web Interface**: User-friendly web application
 - **REST API**: Programmatic access for integrations
 - **Secure Authentication**: API key-based access control
@@ -144,6 +147,74 @@ curl -X POST "http://localhost:5000/api/v1/process" \
   }
 }
 ```
+
+### Character Generation Endpoint
+
+Generate characters from selfies with identity preservation and composite onto backgrounds using Google AI Studio. This avoids the need for 3rd party background removal services.
+
+```http
+POST /api/v1/generate-character
+```
+
+**Parameters:**
+- `selfie` (file, required): Selfie/reference photo for identity preservation
+- `character_prompt` (string, required): Description of character transformation (e.g., "A 3D cartoon character, Pixar style, wearing space armor")
+- `background` (file, optional*): Background image file
+- `background_url` (string, optional*): URL of background image
+- `position` (string, optional): Position for compositing - 'center', 'bottom', 'top', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right' (default: 'center')
+- `scale` (float, optional): Scale factor for character 0.1-3.0 (default: 1.0)
+- `upload_background_to_s3` (boolean, optional): Whether to upload background to S3 first (default: true)
+
+*Either `background` or `background_url` is required, but not both.
+
+**Example Request:**
+
+```bash
+curl -X POST "http://localhost:5000/api/v1/generate-character" \
+  -H "X-API-Key: your-api-key" \
+  -F "selfie=@selfie.jpg" \
+  -F "character_prompt=A heroic fantasy character, digital art style, wearing medieval armor" \
+  -F "background=@background.jpg" \
+  -F "position=bottom" \
+  -F "scale=1.2" \
+  -F "upload_background_to_s3=true"
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "message": "Character generated and composited successfully",
+  "output_url": "http://localhost:5000/api/v1/download/composited_image.png",
+  "processing_time": "15.3s",
+  "file_size": "3.2MB",
+  "metadata": {
+    "image_info": {
+      "width": 1920,
+      "height": 1080,
+      "mode": "RGBA",
+      "format": "PNG"
+    },
+    "character_prompt": "A heroic fantasy character, digital art style, wearing medieval armor",
+    "position": "bottom",
+    "scale": 1.2,
+    "background_s3_url": "https://your-cloudfront.net/background.jpg"
+  }
+}
+```
+
+**How It Works:**
+1. **Identity Preservation**: Uses Google AI Studio's reference image feature to maintain facial features from the selfie
+2. **Character Generation**: Transforms the selfie into the desired character style while keeping the person recognizable
+3. **Background Compositing**: Manually composites the character onto the background with realistic shadows
+4. **S3 Integration**: Optionally uploads background images to S3 for reference or reuse
+
+**Benefits:**
+- No need for 3rd party background removal services (Freepik, LightX, etc.)
+- Identity preservation maintains facial features
+- Full-length character generation (head to feet)
+- Automatic shadow effects for realistic compositing
+- S3 integration for background image management
 
 ### Other API Endpoints
 

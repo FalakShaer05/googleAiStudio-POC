@@ -15,7 +15,8 @@ from .utils import (
     allowed_file, generate_unique_filename, format_file_size, 
     format_processing_time, cleanup_file, validate_image_file, 
     get_image_info, create_download_url, remove_background,
-    download_image_from_url
+    download_image_from_url, upload_image_to_s3,
+    generate_character_with_identity, composite_character_on_background_manual
 )
 
 # Import existing functions from main app (lazy import to avoid circular dependency)
@@ -374,4 +375,226 @@ def get_status():
         })
         
     except Exception as e:
+        return jsonify(create_error_response('SERVICE_003', str(e))), 500
+
+@api_bp.route('/generate-character', methods=['POST'])
+@cross_origin()
+@require_api_key
+def generate_character():
+    """
+    Generate a character from a selfie with identity preservation and composite onto background.
+    This endpoint uses Google AI Studio to generate characters and avoids 3rd party background removal services.
+    
+    Request parameters:
+    - selfie: Image file (selfie/reference photo)
+    - character_prompt: Description of the character transformation
+    - background: Background image file (optional, can use background_url instead)
+    - background_url: URL of background image (optional, can use background file instead)
+    - position: Position for compositing ('center', 'bottom', 'top', etc.) - default: 'center'
+    - scale: Scale factor for character (0.5 to 2.0) - default: 1.0
+    - upload_background_to_s3: Whether to upload background to S3 first (default: true)
+    """
+    start_time = time.time()
+    
+    try:
+        # Validate required parameters
+        character_prompt = request.form.get('character_prompt', '').strip()
+        if not character_prompt:
+            return jsonify(create_error_response('VALIDATION_001', 'character_prompt is required')), 400
+        
+        # Get selfie image
+        selfie_file = request.files.get('selfie')
+        if not selfie_file or not selfie_file.filename:
+            return jsonify(create_error_response('VALIDATION_001', 'selfie image file is required')), 400
+        
+        # Validate selfie file
+        is_valid, error_msg = validate_image_file(selfie_file)
+        if not is_valid:
+            return jsonify(create_error_response('VALIDATION_002', f'Selfie: {error_msg}')), 400
+        
+        # Get background (file or URL)
+        background_file = request.files.get('background')
+        background_url = request.form.get('background_url', '').strip()
+        
+        if not background_file and not background_url:
+            return jsonify(create_error_response('VALIDATION_001', 'Either background file or background_url is required')), 400
+        
+        if background_file and background_url:
+            return jsonify(create_error_response('VALIDATION_001', 'Provide either background file or background_url, not both')), 400
+        
+        # Get optional parameters
+        position = request.form.get('position', 'center').strip()
+        scale = float(request.form.get('scale', '1.0'))
+        upload_background_to_s3 = request.form.get('upload_background_to_s3', 'true').lower() == 'true'
+        
+        # Validate scale
+        if scale < 0.1 or scale > 3.0:
+            return jsonify(create_error_response('VALIDATION_001', 'scale must be between 0.1 and 3.0')), 400
+        
+        print(f"📋 Request parameters - character_prompt: {character_prompt[:50]}..., position: {position}, scale: {scale}")
+        
+        # Create upload and output directories
+        upload_dir = current_app.config['UPLOAD_FOLDER']
+        output_dir = current_app.config['OUTPUT_FOLDER']
+        os.makedirs(upload_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Save selfie
+        selfie_filename = generate_unique_filename(selfie_file.filename, 'selfie')
+        selfie_path = os.path.join(upload_dir, selfie_filename)
+        selfie_file.save(selfie_path)
+        print(f"✅ Selfie saved: {selfie_path}")
+        
+        # Handle background
+        background_path = None
+        background_s3_url = None
+        
+        if background_file:
+            # Validate background file
+            is_valid, error_msg = validate_image_file(background_file)
+            if not is_valid:
+                cleanup_file(selfie_path)
+                return jsonify(create_error_response('VALIDATION_002', f'Background: {error_msg}')), 400
+            
+            # Save background file
+            background_filename = generate_unique_filename(background_file.filename, 'background')
+            background_path = os.path.join(upload_dir, background_filename)
+            background_file.save(background_path)
+            print(f"✅ Background saved: {background_path}")
+            
+            # Upload to S3 if requested
+            if upload_background_to_s3:
+                print(f"📤 Uploading background to S3...")
+                background_s3_url = upload_image_to_s3(background_path)
+                if background_s3_url:
+                    print(f"✅ Background uploaded to S3: {background_s3_url}")
+                else:
+                    print(f"⚠️ S3 upload failed, using local file")
+        else:
+            # Download background from URL
+            print(f"📥 Downloading background from URL: {background_url}")
+            background_path = download_image_from_url(background_url, upload_dir)
+            if not background_path:
+                cleanup_file(selfie_path)
+                return jsonify(create_error_response('VALIDATION_002', 'Failed to download background from URL')), 400
+            print(f"✅ Background downloaded: {background_path}")
+        
+        # Get background dimensions for context
+        background_dimensions = None
+        if background_path and os.path.exists(background_path):
+            try:
+                from PIL import Image
+                with Image.open(background_path) as bg_img:
+                    background_dimensions = {'width': bg_img.width, 'height': bg_img.height}
+                    print(f"📐 Background dimensions: {bg_img.width}x{bg_img.height}")
+            except Exception as e:
+                print(f"⚠️ Could not read background dimensions: {e}")
+        
+        # Get canvas size and DPI from form (optional)
+        canvas_size = request.form.get('canvas_size', '').strip() or None
+        dpi = int(request.form.get('dpi', '300'))
+        
+        # Step 1: Generate character with identity preservation
+        print(f"🎨 Step 1: Generating character with identity preservation...")
+        character_filename = generate_unique_filename(f"character_{selfie_filename}.png", 'output')
+        character_path = os.path.join(output_dir, character_filename)
+        
+        success, message = generate_character_with_identity(
+            selfie_path=selfie_path,
+            character_prompt=character_prompt,
+            output_path=character_path,
+            white_background=True,  # Use white background for easier compositing
+            position=position,
+            scale=scale,
+            background_dimensions=background_dimensions,
+            canvas_size=canvas_size,
+            dpi=dpi
+        )
+        
+        if not success:
+            cleanup_file(selfie_path)
+            if background_path:
+                cleanup_file(background_path)
+            return jsonify(create_error_response('PROCESSING_001', f'Character generation failed: {message}')), 500
+        
+        print(f"✅ Step 1 complete: Character generated at {character_path}")
+        
+        # Step 2: Composite character onto background
+        print(f"🎨 Step 2: Compositing character onto background...")
+        output_filename = generate_unique_filename(f"composited_{selfie_filename}.png", 'output')
+        output_path = os.path.join(output_dir, output_filename)
+        
+        success, message = composite_character_on_background_manual(
+            character_path=character_path,
+            background_path=background_path,
+            output_path=output_path,
+            position=position,
+            scale=scale,
+            add_shadow=True,
+            canvas_size=canvas_size,
+            dpi=dpi
+        )
+        
+        if not success:
+            cleanup_file(selfie_path)
+            cleanup_file(character_path)
+            if background_path:
+                cleanup_file(background_path)
+            return jsonify(create_error_response('PROCESSING_002', f'Compositing failed: {message}')), 500
+        
+        print(f"✅ Step 2 complete: Character composited at {output_path}")
+        
+        # Clean up intermediate files
+        cleanup_file(selfie_path)
+        cleanup_file(character_path)
+        if background_path and not upload_background_to_s3:
+            # Keep background if uploaded to S3 (might be reused)
+            cleanup_file(background_path)
+        
+        # Calculate processing time
+        end_time = time.time()
+        processing_time = format_processing_time(start_time, end_time)
+        
+        # Get file size
+        file_size = format_file_size(os.path.getsize(output_path))
+        
+        # Create download URL
+        base_url = request.url_root.rstrip('/')
+        download_url = create_download_url(output_filename, base_url)
+        
+        # Schedule cleanup of output file (after 24 hours)
+        cleanup_file(output_path, delay_seconds=24 * 3600)
+        
+        # Get image metadata
+        image_info = get_image_info(output_path)
+        
+        return jsonify(create_success_response(
+            message="Character generated and composited successfully",
+            output_url=download_url,
+            processing_time=processing_time,
+            file_size=file_size,
+            output_filename=output_filename,
+            metadata={
+                'image_info': image_info,
+                'character_prompt': character_prompt,
+                'position': position,
+                'scale': scale,
+                'background_s3_url': background_s3_url
+            }
+        ))
+        
+    except Exception as e:
+        # Clean up any temporary files
+        try:
+            if 'selfie_path' in locals() and os.path.exists(selfie_path):
+                cleanup_file(selfie_path)
+            if 'background_path' in locals() and os.path.exists(background_path):
+                cleanup_file(background_path)
+            if 'character_path' in locals() and os.path.exists(character_path):
+                cleanup_file(character_path)
+            if 'output_path' in locals() and os.path.exists(output_path):
+                cleanup_file(output_path)
+        except:
+            pass
+        
         return jsonify(create_error_response('SERVICE_003', str(e))), 500

@@ -317,20 +317,13 @@
     <div class="container">
         <div class="main-container">
             <div class="header">
-                <h1><i class="fas fa-magic"></i> Image Converter</h1>
-                <p>Transform your images with AI-powered prompts using Google Gemini</p>
-                <div class="mt-3">
-                <a href="/group-photo" class="nav-link">
-                    <i class="fas fa-users me-2"></i>Group Photo Transformer
-                </a>
-                <a href="/individual-photos" class="nav-link">
-                    <i class="fas fa-user-friends me-2"></i>Individual Photos Transformer
-                </a>
-                </div>
+                <h1><i class="fas fa-user-astronaut"></i> Character Generator</h1>
+                <p>Create full-body caricature characters from selfies using Google Gemini.</p>
             </div>
             
             <div class="form-container">
-                <form id="conversionForm" enctype="multipart/form-data">
+                <!-- Hide legacy Image Converter UI -->
+                <form id="conversionForm" enctype="multipart/form-data" style="display: none;">
                     <input type="hidden" name="remove_bg" id="remove_bg" value="false">
                     <!-- File Upload Section -->
                     <div class="mb-4">
@@ -610,12 +603,212 @@
                         </div>
                     </div>
                 </form>
+                
+                <!-- Character Generator Form -->
+                <form id="characterForm" enctype="multipart/form-data">
+                    <!-- Selfie Upload Section -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Upload Selfie (Reference Photo)</label>
+                        <div class="upload-area" id="selfieUploadArea">
+                            <div class="upload-icon">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <h5>Drag & Drop your selfie here</h5>
+                            <p class="text-muted">or click to browse</p>
+                            <input type="file" id="selfieInput" name="selfie" class="file-input" accept="image/*" required>
+                        </div>
+                        <div class="file-info" id="selfieFileInfo" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="fas fa-image me-2"></i>
+                                <span id="selfieFileName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearSelfieFile()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Background Upload Section -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold">Background Image</label>
+                        <div class="upload-area" id="bgUploadArea">
+                            <div class="upload-icon">
+                                <i class="fas fa-image"></i>
+                            </div>
+                            <h6>Drag & Drop background image</h6>
+                            <p class="text-muted small">or click to browse</p>
+                            <input type="file" id="bgFileInput" name="background" class="file-input" accept="image/*">
+                        </div>
+                        <div class="file-info" id="bgFileInfo" style="display: none;">
+                            <div class="d-flex align-items-center">
+                                <i class="fas fa-image me-2"></i>
+                                <span id="bgFileName"></span>
+                                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearBgFile()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="form-label small">Or provide background URL:</label>
+                            <input type="text" id="backgroundUrl" name="background_url" class="form-control form-control-sm" placeholder="https://example.com/background.jpg">
+                        </div>
+                    </div>
+                    
+                    <!-- Character Prompt Section -->
+                    <div class="mb-4">
+                        <label for="characterPrompt" class="form-label fw-bold">Character Transformation Prompt</label>
+                        <textarea 
+                            id="characterPrompt" 
+                            name="character_prompt" 
+                            class="form-control prompt-textarea" 
+                            placeholder="Describe the character you want to create (e.g., 'A heroic fantasy character, digital art style, wearing medieval armor')"
+                            required></textarea>
+                        
+                        <!-- Example Character Prompts -->
+                        <div class="example-prompts">
+                            <h6 class="mb-2">Example Character Prompts (click to use):</h6>
+                            <button type="button" class="example-btn" onclick="setCharacterPrompt('A full-body, hand-drawn cartoon-style caricature with slightly exaggerated facial features and proportionally larger heads. Use bold black outlines, bright and vibrant colors, and a humorous comic style inspired by traditional marker and watercolor caricatures. The character should stand in a playful pose. Keep the exaggeration subtle and flattering, not overly distorted.')">
+                                Caricature Style
+                            </button>
+                            <button type="button" class="example-btn" onclick="setCharacterPrompt('A 3D cartoon character, Pixar style, wearing space armor. Full-body view with dynamic pose.')">
+                                Space Warrior
+                            </button>
+                            <button type="button" class="example-btn" onclick="setCharacterPrompt('A heroic fantasy character, digital art style, wearing medieval armor. Full-body view with confident stance.')">
+                                Fantasy Hero
+                            </button>
+                            <button type="button" class="example-btn" onclick="setCharacterPrompt('A cyberpunk character, neon aesthetic, futuristic clothing. Full-body view with edgy pose.')">
+                                Cyberpunk
+                            </button>
+                            <button type="button" class="example-btn" onclick="setCharacterPrompt('A superhero character, comic book style, with cape and mask. Full-body view in heroic pose.')">
+                                Superhero
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Canvas Size Options -->
+                    <div class="mb-4 upscaling-options">
+                        <label class="form-label fw-bold"><i class="fas fa-print me-2"></i>Canvas Size (Optional)</label>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label for="charCanvasSize" class="form-label">Canvas Size</label>
+                                <select class="form-select" id="charCanvasSize" name="canvas_size">
+                                    <option value="">No specific canvas size</option>
+                                    <option value="4x6">4×6 inches</option>
+                                    <option value="5x7">5×7 inches</option>
+                                    <option value="6x6">6×6 inches (Square)</option>
+                                    <option value="8x8">8×8 inches (Square)</option>
+                                    <option value="8x10">8×10 inches</option>
+                                    <option value="8x12">8×12 inches</option>
+                                    <option value="11x14">11×14 inches</option>
+                                    <option value="12x12">12×12 inches (Square)</option>
+                                    <option value="13x19">13×19 inches</option>
+                                    <option value="16x20">16×20 inches</option>
+                                    <option value="18x24">18×24 inches</option>
+                                    <option value="20x30">20×30 inches</option>
+                                    <option value="24x36">24×36 inches</option>
+                                </select>
+                                <small class="form-text text-muted">Select canvas size for character generation context</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="charDpi" class="form-label">Print Quality (DPI)</label>
+                                <select class="form-select" id="charDpi" name="dpi">
+                                    <option value="150">150 DPI (Good Enough)</option>
+                                    <option value="300" selected>300 DPI (Best Quality)</option>
+                                    <option value="600">600 DPI (Ultra High)</option>
+                                </select>
+                                <small class="form-text text-muted">Higher DPI = better quality but larger file size</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Position and Scale Controls -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold"><i class="fas fa-arrows-alt me-2"></i>Character Position & Scale</label>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label class="form-label">Position</label>
+                                <select class="form-select" id="charPosition" name="position">
+                                    <option value="center">Center</option>
+                                    <option value="bottom" selected>Bottom</option>
+                                    <option value="top">Top</option>
+                                    <option value="left">Left</option>
+                                    <option value="right">Right</option>
+                                    <option value="top-left">Top Left</option>
+                                    <option value="top-right">Top Right</option>
+                                    <option value="bottom-left">Bottom Left</option>
+                                    <option value="bottom-right">Bottom Right</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Scale</label>
+                                <input type="range" class="form-range" id="charScale" name="scale" min="0.5" max="2.0" step="0.1" value="1.0">
+                                <div class="d-flex justify-content-between">
+                                    <small>50%</small>
+                                    <small id="charScaleValue">100%</small>
+                                    <small>200%</small>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Style</label>
+                                <select class="form-select" id="characterStyle">
+                                    <option value="custom" selected>Custom</option>
+                                    <option value="caricature">Caricature</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- S3 Upload Option (optional for kiosk; keep but default off) -->
+                    <div class="mb-4" style="display: none;">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="uploadToS3" name="upload_background_to_s3" value="true" checked>
+                            <label class="form-check-label" for="uploadToS3">
+                                Upload background to S3 (recommended)
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Generate Button -->
+                    <button type="submit" class="convert-btn" id="generateCharacterBtn">
+                        <i class="fas fa-magic me-2"></i>Generate Character
+                    </button>
+                    
+                    <!-- Progress Bar -->
+                    <div class="progress-container" id="charProgressContainer" style="display: none;">
+                        <div class="progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+                        </div>
+                        <p class="text-center mt-2 mb-0">Generating character and compositing...</p>
+                    </div>
+                    
+                    <!-- Status Messages -->
+                    <div class="status-message" id="charStatusMessage"></div>
+                    
+                    <!-- Preview & Download Section -->
+                    <div class="file-info" id="charDownloadSection" style="display: none;">
+                        <h5 class="mb-3"><i class="fas fa-eye me-2"></i>Character Preview</h5>
+                        <div class="row g-3 align-items-center">
+                            <div class="col-md-6 text-center">
+                                <img id="charPreviewImage" src="" alt="Character Preview" class="preview-image" style="display: none;">
+                            </div>
+                            <div class="col-md-6 text-center">
+                                <i class="fas fa-check-circle text-success me-2"></i>
+                                <span id="charDownloadMessage">Character generated successfully!</span>
+                                <br>
+                                <button type="button" class="download-btn mt-2" id="charDownloadBtn">
+                                    <i class="fas fa-download me-2"></i>Download Result
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // Legacy Image Converter DOM references (kept to avoid JS errors; form is hidden)
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const fileInfo = document.getElementById('fileInfo');
@@ -1214,6 +1407,210 @@
 
         function clamp(value, min, max) {
             return Math.min(Math.max(value, min), max);
+        }
+        
+        // Character Generator Functions
+        let currentCharacterFilename = null;
+        
+        // Legacy mode toggle functions are no-ops now; page is always character mode.
+        function showImageConverter() {}
+        function showCharacterGenerator() {}
+        
+        // Character form elements
+        const selfieUploadArea = document.getElementById('selfieUploadArea');
+        const selfieInput = document.getElementById('selfieInput');
+        const selfieFileInfo = document.getElementById('selfieFileInfo');
+        const selfieFileName = document.getElementById('selfieFileName');
+        
+        const bgUploadArea = document.getElementById('bgUploadArea');
+        const bgFileInput = document.getElementById('bgFileInput');
+        const bgFileInfo = document.getElementById('bgFileInfo');
+        const bgFileName = document.getElementById('bgFileName');
+        
+        const charScale = document.getElementById('charScale');
+        const charScaleValue = document.getElementById('charScaleValue');
+        const characterForm = document.getElementById('characterForm');
+        const generateCharacterBtn = document.getElementById('generateCharacterBtn');
+        const charProgressContainer = document.getElementById('charProgressContainer');
+        const charStatusMessage = document.getElementById('charStatusMessage');
+        const charDownloadSection = document.getElementById('charDownloadSection');
+        const charPreviewImage = document.getElementById('charPreviewImage');
+        const characterStyleSelect = document.getElementById('characterStyle');
+        const charDownloadBtn = document.getElementById('charDownloadBtn');
+        const charDownloadMessage = document.getElementById('charDownloadMessage');
+        
+        // Selfie upload handling
+        if (selfieUploadArea && selfieInput) {
+            selfieUploadArea.addEventListener('click', () => selfieInput.click());
+            selfieInput.addEventListener('change', handleSelfieSelect);
+        }
+        
+        // Background upload handling
+        if (bgUploadArea && bgFileInput) {
+            bgUploadArea.addEventListener('click', () => bgFileInput.click());
+            bgFileInput.addEventListener('change', handleBgSelect);
+        }
+        
+        // Scale display update
+        if (charScale && charScaleValue) {
+            charScale.addEventListener('input', (e) => {
+                charScaleValue.textContent = Math.round(e.target.value * 100) + '%';
+            });
+        }
+        
+        function handleSelfieSelect() {
+            const file = selfieInput.files[0];
+            if (file) {
+                selfieFileName.textContent = file.name;
+                selfieFileInfo.style.display = 'block';
+                selfieUploadArea.style.display = 'none';
+            }
+        }
+        
+        function clearSelfieFile() {
+            selfieInput.value = '';
+            selfieFileInfo.style.display = 'none';
+            selfieUploadArea.style.display = 'block';
+        }
+        
+        function handleBgSelect() {
+            const file = bgFileInput.files[0];
+            if (file) {
+                bgFileName.textContent = file.name;
+                bgFileInfo.style.display = 'block';
+                bgUploadArea.style.display = 'none';
+                // Clear URL input if file is selected
+                document.getElementById('backgroundUrl').value = '';
+            }
+        }
+        
+        function clearBgFile() {
+            bgFileInput.value = '';
+            bgFileInfo.style.display = 'none';
+            bgUploadArea.style.display = 'block';
+        }
+        
+        function setCharacterPrompt(prompt) {
+            document.getElementById('characterPrompt').value = prompt;
+        }
+
+        // Style selector: when "Caricature" is chosen, pre-fill the prompt.
+        if (characterStyleSelect) {
+            characterStyleSelect.addEventListener('change', (e) => {
+                if (e.target.value === 'caricature') {
+                    setCharacterPrompt(
+                        'A full-body, hand-drawn cartoon-style caricature with slightly exaggerated facial features and proportionally larger heads. Use bold black outlines, bright and vibrant colors, and a humorous comic style inspired by traditional marker and watercolor caricatures. The character should stand in a playful pose. Keep the exaggeration subtle and flattering, not overly distorted.'
+                    );
+                }
+            });
+        }
+        
+        // Character form submission
+        if (characterForm) {
+            characterForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const formData = new FormData(characterForm);
+                
+                // Debug: Log form data
+                const positionValue = document.getElementById('charPosition').value;
+                const scaleValue = document.getElementById('charScale').value;
+                console.log('Form submission - Position:', positionValue, 'Scale:', scaleValue);
+                
+                // Ensure position is in formData
+                if (!formData.has('position')) {
+                    formData.append('position', positionValue);
+                }
+                if (!formData.has('scale')) {
+                    formData.append('scale', scaleValue);
+                }
+                
+                // Background is optional now. If both are present, prefer file.
+                const bgFile = bgFileInput.files[0];
+                const bgUrl = document.getElementById('backgroundUrl').value.trim();
+                
+                if (bgFile && bgUrl) {
+                    // Prefer uploaded file
+                    formData.set('background_url', '');
+                }
+                
+                showCharProgress();
+                hideCharStatus();
+                hideCharDownload();
+                
+                try {
+                    const response = await fetch('/generate-character-web', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    hideCharProgress();
+                    
+                    if (result.success) {
+                        currentCharacterFilename = result.output_filename;
+                        const imageUrl = `/download/${currentCharacterFilename}`;
+                        showCharSuccess('Character generated successfully!');
+                        if (charPreviewImage) {
+                            charPreviewImage.src = imageUrl;
+                            charPreviewImage.style.display = 'block';
+                        }
+                        showCharDownload();
+                    } else {
+                        showCharError(result.error || 'Character generation failed');
+                    }
+                } catch (error) {
+                    hideCharProgress();
+                    showCharError('Network error: ' + error.message);
+                }
+            });
+        }
+        
+        // Character download handling
+        if (charDownloadBtn) {
+            charDownloadBtn.addEventListener('click', () => {
+                if (currentCharacterFilename) {
+                    window.open(`/download/${currentCharacterFilename}`, '_blank');
+                }
+            });
+        }
+        
+        // Character UI helper functions
+        function showCharProgress() {
+            generateCharacterBtn.disabled = true;
+            generateCharacterBtn.innerHTML = '<span class="spinner me-2"></span>Generating...';
+            charProgressContainer.style.display = 'block';
+        }
+        
+        function hideCharProgress() {
+            generateCharacterBtn.disabled = false;
+            generateCharacterBtn.innerHTML = '<i class="fas fa-magic me-2"></i>Generate Character';
+            charProgressContainer.style.display = 'none';
+        }
+        
+        function showCharSuccess(message) {
+            charStatusMessage.className = 'status-message status-success';
+            charStatusMessage.textContent = message;
+            charStatusMessage.style.display = 'block';
+        }
+        
+        function showCharError(message) {
+            charStatusMessage.className = 'status-message status-error';
+            charStatusMessage.textContent = message;
+            charStatusMessage.style.display = 'block';
+        }
+        
+        function hideCharStatus() {
+            charStatusMessage.style.display = 'none';
+        }
+        
+        function showCharDownload() {
+            charDownloadSection.style.display = 'block';
+        }
+        
+        function hideCharDownload() {
+            charDownloadSection.style.display = 'none';
         }
     </script>
 </body>
