@@ -1,4 +1,4 @@
-# Fast Dockerfile - minimal dependencies
+# Fast Dockerfile - minimal dependencies for v2 project
 FROM python:3.11-slim
 
 # Set working directory
@@ -11,14 +11,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FLASK_ENV=production
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY v2/requirements.txt .
 
 # Install Python dependencies (no system dependencies needed for basic functionality)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy v2 application code
+COPY v2/ .
 
 # Create necessary directories
 RUN mkdir -p uploads outputs

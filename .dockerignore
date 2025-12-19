@@ -54,8 +54,11 @@ docker-compose.yml
 .dockerignore
 
 # Application specific
-uploads/
-outputs/
+v2/uploads/
+v2/outputs/
+v2/venv/
+v2/__pycache__/
+v2/**/__pycache__/
 *.log
 *.pid
 
@@ -63,6 +66,7 @@ outputs/
 .env
 .env.local
 .env.production
+.env.lod
 
 # Documentation
 README.md

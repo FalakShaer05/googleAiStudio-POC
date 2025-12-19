@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Character Generator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <link
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    rel="stylesheet"
+  />
+  <style>
+    body {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .main-container {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto;
+      max-width: 780px;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border-radius: 20px 20px 0 0;
+      padding: 2rem;
+      text-align: center;
+    }
+    .upload-area {
+      border: 3px dashed #667eea;
+      border-radius: 14px;
+      padding: 2.5rem 2rem;
+      text-align: center;
+      background: #f8f9ff;
+      cursor: pointer;
+    }
+    .upload-icon {
+      font-size: 2.8rem;
+      color: #667eea;
+      margin-bottom: 0.75rem;
+    }
+    .file-input {
+      display: none;
+    }
+    .file-info {
+      background: #e8f0ff;
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      margin-top: 0.75rem;
+      display: none;
+    }
+    .prompt-textarea {
+      border-radius: 10px;
+      border: 2px solid #e9ecef;
+      min-height: 120px;
+    }
+    .example-prompts {
+      background: #f8f9ff;
+      border-radius: 10px;
+      padding: 1rem;
+      margin-top: 0.75rem;
+    }
+    .example-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      color: #fff;
+      padding: 0.4rem 0.9rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      margin: 0.15rem;
+    }
+    .convert-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      color: #fff;
+      padding: 0.9rem 1.5rem;
+      border-radius: 25px;
+      font-weight: 600;
+      width: 100%;
+    }
+    .status-message {
+      display: none;
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+    }
+    .status-success {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status-error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .preview-image {
+      width: 100%;
+      max-height: 340px;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid #dee2e6;
+    }
+    .download-btn {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      border: none;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="main-container">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-user-astronaut me-2"></i>Character Generator
+        </h1>
+        <p class="mb-0">
+          Upload a selfie and optionally a background. Gemini will create the final
+          character image.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <form id="characterForm" enctype="multipart/form-data">
+          <!-- Selfie -->
+          <div class="mb-3">
+            <label class="form-label fw-bold">Selfie / Photo (required)</label>
+            <div class="upload-area" id="selfieUploadArea">
+              <div class="upload-icon"><i class="fas fa-user"></i></div>
+              <h5 class="mb-1">Click to choose a photo</h5>
+              <p class="text-muted mb-0">Face clearly visible works best</p>
+              <input
+                type="file"
+                id="selfieInput"
+                name="selfie"
+                class="file-input"
+                accept="image/*"
+                required
+              />
+            </div>
+            <div class="file-info" id="selfieFileInfo">
+              <div class="d-flex align-items-center">
+                <i class="fas fa-image me-2"></i>
+                <span id="selfieFileName"></span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-danger ms-auto"
+                  id="clearSelfieBtn"
+                >
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Background -->
+          <div class="mb-3">
+            <label class="form-label fw-bold">Background (optional)</label>
+            <div class="upload-area" id="bgUploadArea">
+              <div class="upload-icon"><i class="fas fa-image"></i></div>
+              <h6 class="mb-1">Click to choose background</h6>
+              <p class="text-muted small mb-0">Leave empty to let Gemini choose</p>
+              <input
+                type="file"
+                id="bgFileInput"
+                name="background"
+                class="file-input"
+                accept="image/*"
+              />
+            </div>
+            <div class="file-info" id="bgFileInfo">
+              <div class="d-flex align-items-center">
+                <i class="fas fa-image me-2"></i>
+                <span id="bgFileName"></span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-danger ms-auto"
+                  id="clearBgBtn"
+                >
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div class="mt-2">
+              <label class="form-label small mb-1">Or background URL:</label>
+              <input
+                type="url"
+                id="backgroundUrl"
+                name="background_url"
+                class="form-control form-control-sm"
+                placeholder="https://example.com/background.jpg"
+              />
+            </div>
+          </div>
+
+          <!-- Prompt & style -->
+          <div class="mb-3">
+            <label class="form-label fw-bold">Character Prompt</label>
+            <textarea
+              id="characterPrompt"
+              name="character_prompt"
+              class="form-control prompt-textarea"
+              placeholder="Describe the character you want to create..."
+              required
+            ></textarea>
+            <div class="example-prompts">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Quick styles</h6>
+                <select
+                  class="form-select form-select-sm w-auto"
+                  id="characterStyle"
+                >
+                  <option value="custom" selected>Custom</option>
+                  <option value="caricature">Caricature</option>
+                </select>
+              </div>
+              <button
+                type="button"
+                class="example-btn"
+                onclick="setCharacterPrompt('A full-body, hand-drawn cartoon-style caricature with slightly exaggerated facial features and bright colors, standing in a playful pose.')"
+              >
+                Caricature
+              </button>
+              <button
+                type="button"
+                class="example-btn"
+                onclick="setCharacterPrompt('A 3D cartoon character in Pixar style wearing colorful streetwear, smiling and posing confidently, full-body.')"
+              >
+                3D Cartoon
+              </button>
+              <button
+                type="button"
+                class="example-btn"
+                onclick="setCharacterPrompt('A heroic fantasy character in detailed digital art style wearing medieval armor, full-body dynamic pose.')"
+              >
+                Fantasy Hero
+              </button>
+            </div>
+          </div>
+
+          <!-- Layout -->
+          <div class="row mb-3">
+            <div class="col-md-4">
+              <label class="form-label">Position</label>
+              <select class="form-select" id="charPosition" name="position">
+                <option value="center">Center</option>
+                <option value="bottom" selected>Bottom</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Scale</label>
+              <input
+                type="range"
+                class="form-range"
+                id="charScale"
+                name="scale"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value="1.0"
+              />
+              <div class="d-flex justify-content-between">
+                <small>50%</small>
+                <small id="charScaleValue">100%</small>
+                <small>200%</small>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Print Size (optional)</label>
+              <select class="form-select" id="charCanvasSize" name="canvas_size">
+                <option value="">Original</option>
+                <option value="8x10">8×10</option>
+                <option value="11x14">11×14</option>
+                <option value="16x20">16×20</option>
+              </select>
+            </div>
+          </div>
+
+          <input type="hidden" name="dpi" value="300" />
+          <input type="hidden" name="upload_background_to_s3" value="false" />
+
+          <button type="submit" class="convert-btn" id="generateCharacterBtn">
+            <i class="fas fa-magic me-2"></i>Generate Character
+          </button>
+
+          <div class="mt-3" id="charProgress" style="display: none;">
+            <div class="progress">
+              <div
+                class="progress-bar progress-bar-striped progress-bar-animated"
+                style="width: 100%;"
+              ></div>
+            </div>
+            <p class="text-center mt-2 mb-0">Generating with Gemini...</p>
+          </div>
+
+          <div class="status-message" id="charStatus"></div>
+
+          <div class="file-info mt-3" id="charResult" style="display: none;">
+            <h5 class="mb-3">
+              <i class="fas fa-eye me-2"></i>Preview
+            </h5>
+            <div class="row g-3 align-items-center">
+              <div class="col-md-6 text-center">
+                <img
+                  id="charPreviewImage"
+                  class="preview-image"
+                  alt="Character Preview"
+                />
+              </div>
+              <div class="col-md-6 text-center">
+                <p class="mb-2" id="charResultMessage">
+                  Character generated successfully!
+                </p>
+                <button
+                  type="button"
+                  class="download-btn mt-1"
+                  id="charDownloadBtn"
+                >
+                  <i class="fas fa-download me-2"></i>Download Result
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentFilename = null;
+
+    const selfieUploadArea = document.getElementById("selfieUploadArea");
+    const selfieInput = document.getElementById("selfieInput");
+    const selfieFileInfo = document.getElementById("selfieFileInfo");
+    const selfieFileName = document.getElementById("selfieFileName");
+    const clearSelfieBtn = document.getElementById("clearSelfieBtn");
+
+    const bgUploadArea = document.getElementById("bgUploadArea");
+    const bgFileInput = document.getElementById("bgFileInput");
+    const bgFileInfo = document.getElementById("bgFileInfo");
+    const bgFileName = document.getElementById("bgFileName");
+    const clearBgBtn = document.getElementById("clearBgBtn");
+
+    const charScale = document.getElementById("charScale");
+    const charScaleValue = document.getElementById("charScaleValue");
+    const characterStyleSelect = document.getElementById("characterStyle");
+    const characterForm = document.getElementById("characterForm");
+    const generateCharacterBtn = document.getElementById("generateCharacterBtn");
+    const charProgress = document.getElementById("charProgress");
+    const charStatus = document.getElementById("charStatus");
+    const charResult = document.getElementById("charResult");
+    const charPreviewImage = document.getElementById("charPreviewImage");
+    const charDownloadBtn = document.getElementById("charDownloadBtn");
+
+    function setCharacterPrompt(text) {
+      document.getElementById("characterPrompt").value = text;
+    }
+
+    // Style dropdown shortcut
+    characterStyleSelect.addEventListener("change", (e) => {
+      if (e.target.value === "caricature") {
+        setCharacterPrompt(
+          "A full-body, hand-drawn cartoon-style caricature with slightly exaggerated facial features and proportionally larger heads. Use bold black outlines, bright and vibrant colors, and a humorous comic style. The character should stand in a playful pose. Keep the exaggeration subtle and flattering."
+        );
+      }
+    });
+
+    selfieUploadArea.addEventListener("click", () => selfieInput.click());
+    selfieInput.addEventListener("change", () => {
+      const file = selfieInput.files[0];
+      if (file) {
+        selfieFileName.textContent = file.name;
+        selfieFileInfo.style.display = "block";
+        selfieUploadArea.style.display = "none";
+      }
+    });
+    clearSelfieBtn.addEventListener("click", () => {
+      selfieInput.value = "";
+      selfieFileInfo.style.display = "none";
+      selfieUploadArea.style.display = "block";
+    });
+
+    bgUploadArea.addEventListener("click", () => bgFileInput.click());
+    bgFileInput.addEventListener("change", () => {
+      const file = bgFileInput.files[0];
+      if (file) {
+        bgFileName.textContent = file.name;
+        bgFileInfo.style.display = "block";
+        bgUploadArea.style.display = "none";
+        document.getElementById("backgroundUrl").value = "";
+      }
+    });
+    clearBgBtn.addEventListener("click", () => {
+      bgFileInput.value = "";
+      bgFileInfo.style.display = "none";
+      bgUploadArea.style.display = "block";
+    });
+
+    charScale.addEventListener("input", (e) => {
+      charScaleValue.textContent = Math.round(e.target.value * 100) + "%";
+    });
+
+    function showProgress() {
+      generateCharacterBtn.disabled = true;
+      generateCharacterBtn.innerHTML =
+        '<span class="spinner me-2"></span>Generating...';
+      charProgress.style.display = "block";
+    }
+    function hideProgress() {
+      generateCharacterBtn.disabled = false;
+      generateCharacterBtn.innerHTML =
+        '<i class="fas fa-magic me-2"></i>Generate Character';
+      charProgress.style.display = "none";
+    }
+    function showStatus(msg, isError) {
+      charStatus.className =
+        "status-message " + (isError ? "status-error" : "status-success");
+      charStatus.textContent = msg;
+      charStatus.style.display = "block";
+    }
+    function hideStatus() {
+      charStatus.style.display = "none";
+    }
+
+    characterForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData(characterForm);
+      formData.set("position", document.getElementById("charPosition").value);
+      formData.set("scale", document.getElementById("charScale").value);
+
+      const bgFile = bgFileInput.files[0];
+      const bgUrlInput = document.getElementById("backgroundUrl");
+      if (bgFile && bgUrlInput.value.trim()) {
+        formData.set("background_url", "");
+      }
+
+      hideStatus();
+      charResult.style.display = "none";
+      showProgress();
+
+      try {
+        const res = await fetch("/generate-character-web", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        hideProgress();
+
+        if (!data.success) {
+          showStatus(data.error || "Character generation failed", true);
+          return;
+        }
+        currentFilename = data.output_filename;
+        const url = `/download/${currentFilename}`;
+        charPreviewImage.src = url;
+        charResult.style.display = "block";
+        showStatus("Character generated successfully!", false);
+      } catch (err) {
+        hideProgress();
+        showStatus("Network error: " + err.message, true);
+      }
+    });
+
+    charDownloadBtn.addEventListener("click", () => {
+      if (currentFilename) {
+        window.open(`/download/${currentFilename}`, "_blank");
+      }
+    });
+  </script>
+</body>
+</html>

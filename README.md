@@ -1,525 +1,423 @@
-# Image Processing API
+# Character Generator API
 
-A RESTful API for image-to-image conversion using Google Gemini AI, with optional background merging capabilities. This service provides both a web interface and a programmatic API for caricature generation and background compositing.
+A Flask-based character generation API using Google Gemini AI and Freepik background removal. This service provides both a web interface and a programmatic API for character generation, background removal, and image compositing with automatic S3 upload and CloudFront CDN serving.
 
 ## Features
 
-- **Caricature Generation**: Transform images using AI-powered text prompts
-- **Character Generation with Identity Preservation**: Generate characters from selfies while maintaining facial features using Google AI Studio
-- **Background Merging**: Professional background removal and compositing
-- **Background Compositing**: Composite generated characters onto backgrounds without 3rd party services
-- **S3 Integration**: Upload and manage background images on S3
-- **Web Interface**: User-friendly web application
+- **Character Generation**: Transform selfies into characters using Google Gemini AI with identity preservation
+- **Background Removal**: Remove backgrounds from images using Freepik API
+- **Automatic S3 Upload**: All generated images are automatically uploaded to S3
+- **CloudFront CDN**: Images are served via CloudFront CDN for fast global delivery
+- **Flexible Input**: Support for both file uploads and image URLs
+- **Docker Support**: Easy deployment with Docker and Docker Compose
+- **Web Interface**: User-friendly web application for testing
 - **REST API**: Programmatic access for integrations
-- **Secure Authentication**: API key-based access control
-- **Rate Limiting**: Configurable request limits per API key
-- **Auto Cleanup**: Automatic file cleanup after processing
-- **Multiple Formats**: Support for PNG, JPG, JPEG, GIF, BMP, TIFF
 
 ## Quick Start
 
-### 1. Setup
+### Using Docker (Recommended)
+
+1. **Set up environment variables** in the root `.env` file:
+   ```bash
+   GEMINI_API_KEY=your_gemini_api_key
+   AWS_ACCESS_KEY_ID=your_aws_key
+   AWS_SECRET_ACCESS_KEY=your_aws_secret
+   S3_BUCKET=mosida
+   CLOUDFRONT_URL=https://d2s4ngnid78ki4.cloudfront.net
+   FREEPIK_API_KEY=your_freepik_key
+   ```
+
+2. **Build and run with Docker Compose**:
+   ```bash
+   docker-compose up --build
+   ```
+
+3. **Access the application**:
+   - Web UI: http://localhost:5000
+   - API: http://localhost:5000/generate-character-web
+   - Health: http://localhost:5000/health
+
+### Local Development
+
+1. **Create virtual environment**:
+   ```bash
+   cd v2
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Set up environment variables** (create `.env` in root directory):
+   ```bash
+   # The .env file should be in the root directory
+   # See Environment Variables section below for required variables
+   ```
+
+4. **Run the application**:
+   ```bash
+   python app.py
+   ```
+
+## Environment Variables
+
+### Required Environment Variables
+
+#### Google Gemini API
+```bash
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+Required for character generation using Google Gemini API.
+
+#### AWS S3 Configuration
+```bash
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+S3_BUCKET=mosida
+```
+Required for uploading images to S3. The bucket name should match your S3 bucket.
+
+#### CloudFront CDN URL
+```bash
+CLOUDFRONT_URL=https://d2s4ngnid78ki4.cloudfront.net
+```
+Required for serving images via CloudFront CDN. This is the CloudFront distribution URL.
+
+#### Freepik API (for background removal)
+```bash
+FREEPIK_API_KEY=your_freepik_api_key_here
+```
+Required if you want to use the `/remove-bg` endpoint for background removal.
+
+### Optional Environment Variables
+
+#### AWS Region
+```bash
+AWS_DEFAULT_REGION=us-east-1
+```
+AWS region for S3 operations. Defaults to `us-east-1` if not specified.
+
+#### S3 Prefix
+```bash
+S3_PREFIX=converted/
+```
+Optional prefix/folder path in S3 bucket. Defaults to `converted/` if not specified.
+
+#### Local Path Matching (Fallback)
+```bash
+LIGHTX_IMAGE_BASE_PATH=outputs
+```
+Optional local path for fallback image serving if S3 is not configured.
+
+### Example .env File
+
+Create a `.env` file in the project root with the following content:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Google Gemini API
+GEMINI_API_KEY=your_gemini_api_key_here
 
-# Copy environment file
-cp env.example .env
+# AWS S3 Configuration
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+AWS_DEFAULT_REGION=us-east-1
+S3_BUCKET=mosida
+S3_PREFIX=converted/
 
-# Edit .env and add your Google API key
-# GOOGLE_API_KEY=your-google-api-key-here
+# CloudFront CDN URL
+CLOUDFRONT_URL=https://d2s4ngnid78ki4.cloudfront.net
 
-# Setup API keys (optional, for API access)
-python setup_api.py
-
-# Start server
-python start_server.py
+# Freepik API
+FREEPIK_API_KEY=your_freepik_api_key_here
 ```
 
-### 2. Access the Application
+## API Endpoints
 
-- **Web Interface**: http://localhost:5000
-- **API Health Check**: http://localhost:5000/api/v1/health
+### Character Generation
 
-### 3. Test API (Optional)
-
-```bash
-# Run test suite
-python test_api.py
-
-# Test CORS in browser
-open test_cors.html
-```
-
-## Web Interface
-
-The web application provides a user-friendly interface for:
-
-- Uploading images for conversion
-- Entering transformation prompts
-- Adding background images for merging
-- Adjusting position, scale, and opacity
-- Downloading processed results
-
-## API Usage
-
-### CORS Support
-
-The API supports Cross-Origin Resource Sharing (CORS) for web applications:
-
-- **Allowed Origins**: All origins (`*`)
-- **Allowed Methods**: GET, POST, PUT, DELETE, OPTIONS
-- **Allowed Headers**: Content-Type, Authorization, X-API-Key
-- **Credentials**: Supported
-
-### Authentication
-
-All API endpoints require authentication via API key. Provide the API key in the header:
-
-```bash
-curl -H "X-API-Key: your-api-key" http://localhost:5000/api/v1/health
-```
-
-### Main Endpoint: Process Image
-
+#### Generate Character
 ```http
-POST /api/v1/process
+POST /generate-character-web
+POST /api/generate-character  # API alias
 ```
 
 **Parameters:**
-- `image` (file, required*): Input image file
-- `image_url` (string, required*): URL of input image to download
-- `prompt` (string, required): Transformation prompt
-- `background` (file, optional): Background image file
-- `background_url` (string, optional): URL of background image to download
-- `position` (string, optional): Position for merging (default: 'center')
-- `scale` (float, optional): Scale factor 0.1-1.5 (default: 1.0)
-- `opacity` (float, optional): Opacity 0.0-1.0 (default: 1.0)
-- `canvas_size` (string, optional): Print size (e.g., '8x10')
-
-*Either `image` or `image_url` is required, but not both.
-
-**Example Request (File Upload):**
-
-```bash
-curl -X POST "http://localhost:5000/api/v1/process" \
-  -H "X-API-Key: your-api-key" \
-  -F "image=@input.jpg" \
-  -F "prompt=Transform this into a cartoon caricature" \
-  -F "background=@background.jpg" \
-  -F "position=center" \
-  -F "scale=1.2"
-```
-
-**Example Request (Image URL):**
-
-```bash
-curl -X POST "http://localhost:5000/api/v1/process" \
-  -H "X-API-Key: your-api-key" \
-  -F "image_url=https://example.com/image.jpg" \
-  -F "prompt=Transform this into a cartoon caricature" \
-  -F "background_url=https://example.com/background.jpg" \
-  -F "position=center" \
-  -F "scale=1.2"
-```
+- `selfie` (file) OR `selfie_url` (string, required): Selfie/reference photo
+- `character_prompt` (string, required): Description of character transformation
+- `background` (file, optional) OR `background_url` (string, optional): Background image
+- `position` (string, optional): Position for compositing - 'center', 'bottom' (default: 'bottom')
+- `scale` (float, optional): Scale factor 0.1-3.0 (default: 1.0)
+- `canvas_size` (string, optional): Print size (e.g., '8x10', '11x14', '16x20')
+- `dpi` (int, optional): DPI for print (default: 300)
 
 **Success Response:**
 ```json
 {
   "success": true,
-  "message": "Image processed successfully",
-  "output_url": "http://localhost:5000/api/v1/download/processed_image.jpg",
-  "processing_time": "12.5s",
-  "file_size": "2.1MB",
+  "message": "Character generated successfully",
+  "output_filename": "output_abc123_composited_selfie_xyz.png",
+  "image_url": "https://d2s4ngnid78ki4.cloudfront.net/converted/uuid_filename.png",
+  "local_path": "/outputs/output_abc123_composited_selfie_xyz.png",
   "metadata": {
     "image_info": {
-      "width": 1920,
-      "height": 1080,
+      "width": 1024,
+      "height": 1024,
       "mode": "RGB",
-      "format": "JPEG"
-    },
-    "prompt_used": "Transform this into a cartoon caricature",
-    "background_merged": true,
-    "position": "center",
-    "scale": 1.0,
-    "opacity": 1.0
-  }
-}
-```
-
-### Character Generation Endpoint
-
-Generate characters from selfies with identity preservation and composite onto backgrounds using Google AI Studio. This avoids the need for 3rd party background removal services.
-
-```http
-POST /api/v1/generate-character
-```
-
-**Parameters:**
-- `selfie` (file, required): Selfie/reference photo for identity preservation
-- `character_prompt` (string, required): Description of character transformation (e.g., "A 3D cartoon character, Pixar style, wearing space armor")
-- `background` (file, optional*): Background image file
-- `background_url` (string, optional*): URL of background image
-- `position` (string, optional): Position for compositing - 'center', 'bottom', 'top', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right' (default: 'center')
-- `scale` (float, optional): Scale factor for character 0.1-3.0 (default: 1.0)
-- `upload_background_to_s3` (boolean, optional): Whether to upload background to S3 first (default: true)
-
-*Either `background` or `background_url` is required, but not both.
-
-**Example Request:**
-
-```bash
-curl -X POST "http://localhost:5000/api/v1/generate-character" \
-  -H "X-API-Key: your-api-key" \
-  -F "selfie=@selfie.jpg" \
-  -F "character_prompt=A heroic fantasy character, digital art style, wearing medieval armor" \
-  -F "background=@background.jpg" \
-  -F "position=bottom" \
-  -F "scale=1.2" \
-  -F "upload_background_to_s3=true"
-```
-
-**Success Response:**
-```json
-{
-  "success": true,
-  "message": "Character generated and composited successfully",
-  "output_url": "http://localhost:5000/api/v1/download/composited_image.png",
-  "processing_time": "15.3s",
-  "file_size": "3.2MB",
-  "metadata": {
-    "image_info": {
-      "width": 1920,
-      "height": 1080,
-      "mode": "RGBA",
       "format": "PNG"
     },
-    "character_prompt": "A heroic fantasy character, digital art style, wearing medieval armor",
+    "character_prompt": "...",
     "position": "bottom",
-    "scale": 1.2,
-    "background_s3_url": "https://your-cloudfront.net/background.jpg"
+    "scale": 1.0
   }
 }
 ```
 
-**How It Works:**
-1. **Identity Preservation**: Uses Google AI Studio's reference image feature to maintain facial features from the selfie
-2. **Character Generation**: Transforms the selfie into the desired character style while keeping the person recognizable
-3. **Background Compositing**: Manually composites the character onto the background with realistic shadows
-4. **S3 Integration**: Optionally uploads background images to S3 for reference or reuse
+### Background Removal
 
-**Benefits:**
-- No need for 3rd party background removal services (Freepik, LightX, etc.)
-- Identity preservation maintains facial features
-- Full-length character generation (head to feet)
-- Automatic shadow effects for realistic compositing
-- S3 integration for background image management
-
-### Other API Endpoints
-
-- `GET /api/v1/health` - Health check
-- `POST /api/v1/validate` - Validate API key
-- `GET /api/v1/download/{filename}` - Download processed image
-- `GET /api/v1/status` - Usage statistics
-
-## Programming Examples
-
-### Python
-
-```python
-import requests
-
-def process_image(image_path, prompt, background_path=None, api_key="your-api-key"):
-    url = "http://localhost:5000/api/v1/process"
-    headers = {"X-API-Key": api_key}
-    
-    files = {"image": open(image_path, "rb")}
-    data = {"prompt": prompt}
-    
-    if background_path:
-        files["background"] = open(background_path, "rb")
-        data.update({
-            "position": "center",
-            "scale": "1.0",
-            "opacity": "1.0"
-        })
-    
-    response = requests.post(url, headers=headers, files=files, data=data)
-    return response.json()
-
-# Usage
-result = process_image("input.jpg", "Transform into cartoon caricature")
-if result["success"]:
-    print(f"Success! Download: {result['output_url']}")
+#### Remove Background
+```http
+POST /remove-bg
 ```
 
-### JavaScript
+**Parameters:**
+- `image` (file) OR `image_url` (string, required): Image to process
 
-```javascript
-async function processImage(imageFile, prompt, backgroundFile = null, apiKey = "your-api-key") {
-    const formData = new FormData();
-    formData.append('image', imageFile);
-    formData.append('prompt', prompt);
-    
-    if (backgroundFile) {
-        formData.append('background', backgroundFile);
-        formData.append('position', 'center');
-        formData.append('scale', '1.0');
-        formData.append('opacity', '1.0');
-    }
-    
-    const response = await fetch('http://localhost:5000/api/v1/process', {
-        method: 'POST',
-        headers: {'X-API-Key': apiKey},
-        body: formData
-    });
-    
-    return await response.json();
-}
-
-// Usage
-const fileInput = document.getElementById('imageInput');
-const result = await processImage(fileInput.files[0], 'Transform into cartoon caricature');
-console.log(result);
-```
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file with the following variables:
-
-```bash
-# Required
-GOOGLE_API_KEY=your-google-api-key
-
-# API Configuration (optional)
-API_KEYS=dev-key-123,prod-key-456
-API_RATE_LIMIT_REQUESTS=100
-API_RATE_LIMIT_WINDOW_MINUTES=60
-
-# Optional
-API_FILE_CLEANUP_HOURS=24
-API_MAX_FILE_SIZE_MB=16
-```
-
-### Rate Limiting
-
-- Default: 100 requests per hour per API key
-- Configurable via `API_RATE_LIMIT_REQUESTS`
-- Window configurable via `API_RATE_LIMIT_WINDOW_MINUTES`
-
-## Error Handling
-
-The API returns standardized error responses:
-
+**Success Response:**
 ```json
 {
-  "success": false,
-  "error": "Invalid API key",
-  "error_code": "AUTH_002",
-  "details": "API key not found or invalid",
-  "timestamp": "2024-01-01T12:00:00Z"
+  "success": true,
+  "message": "Background removed successfully",
+  "output_filename": "output_abc123_bg_removed_image_xyz.png",
+  "image_url": "https://d2s4ngnid78ki4.cloudfront.net/converted/uuid_filename.png",
+  "local_path": "/outputs/output_abc123_bg_removed_image_xyz.png",
+  "metadata": {
+    "image_info": {
+      "width": 1024,
+      "height": 1024,
+      "mode": "RGBA",
+      "format": "PNG"
+    }
+  }
 }
 ```
 
-### Common Error Codes
+### Health Check
 
-- `AUTH_001`: API key required
-- `AUTH_002`: Invalid API key
-- `RATE_001`: Rate limit exceeded
-- `VALIDATION_001`: Missing required parameter
-- `VALIDATION_002`: Invalid file type
-- `VALIDATION_003`: File too large
-- `PROCESSING_001`: Image conversion failed
-- `PROCESSING_002`: Background removal failed
-- `PROCESSING_003`: Image compositing failed
+#### Health Check
+```http
+GET /health
+```
 
-## File Management
+**Response:**
+```json
+{
+  "status": "ok"
+}
+```
 
-- **Upload Limit**: 16MB maximum file size
-- **Supported Formats**: PNG, JPG, JPEG, GIF, BMP, TIFF
-- **Auto Cleanup**: Files deleted after 24 hours
-- **Temporary Storage**: Processed files stored in `outputs/` directory
+## API Testing with cURL
 
-## Security
+### Base URL
+```
+http://localhost:5000
+```
 
-- **API Key Authentication**: Secure token-based access
-- **Input Validation**: File type and size validation
-- **Rate Limiting**: Prevents abuse
-- **File Sanitization**: Safe filename handling
-- **Error Logging**: Comprehensive error tracking
-
-## Docker Deployment
-
-### Quick Start with Docker
+### 1. Health Check
 
 ```bash
-# Build and run with Docker Compose
-docker compose up --build
-
-# Access the application
-# Web Interface: http://localhost:80
-# API: http://localhost:80/api/v1/health
+curl -X GET http://localhost:5000/health
 ```
+
+### 2. Character Generation
+
+#### With Selfie File and Background File
+```bash
+curl -X POST http://localhost:5000/generate-character-web \
+  -F "selfie=@/path/to/your/selfie.jpg" \
+  -F "background=@/path/to/your/background.jpg" \
+  -F "character_prompt=A full-body cartoon caricature with bright colors" \
+  -F "position=bottom" \
+  -F "scale=1.0"
+```
+
+#### With Selfie URL and Background URL
+```bash
+curl -X POST http://localhost:5000/generate-character-web \
+  -F "selfie_url=https://example.com/selfie.jpg" \
+  -F "background_url=https://example.com/background.jpg" \
+  -F "character_prompt=A cartoon character with vibrant colors" \
+  -F "position=bottom" \
+  -F "scale=1.0"
+```
+
+#### With Selfie Only (No Background)
+```bash
+curl -X POST http://localhost:5000/generate-character-web \
+  -F "selfie=@/path/to/your/selfie.jpg" \
+  -F "character_prompt=A heroic fantasy character in detailed digital art style" \
+  -F "position=center" \
+  -F "scale=1.0"
+```
+
+### 3. Background Removal
+
+#### With Image File Upload
+```bash
+curl -X POST http://localhost:5000/remove-bg \
+  -F "image=@/path/to/your/image.jpg"
+```
+
+#### With Image URL
+```bash
+curl -X POST http://localhost:5000/remove-bg \
+  -F "image_url=https://example.com/image.jpg"
+```
+
+### 4. Download Generated Image
+
+```bash
+curl -X GET http://localhost:5000/download/output_filename.png \
+  --output downloaded_image.png
+```
+
+### Error Responses
+
+#### Missing Required Field
+```json
+{
+  "error": "Selfie image is required"
+}
+```
+
+#### Invalid File Type
+```json
+{
+  "error": "Invalid selfie file type"
+}
+```
+
+#### Generation Failed
+```json
+{
+  "error": "Character generation failed: No image generated by Gemini"
+}
+```
+
+## Docker Deployment
 
 ### Docker Commands
 
 ```bash
-# Build the image
-docker build -t image-converter .
+# Build image
+docker-compose build
 
-# Run the container
-docker run -p 5000:5000 --env-file .env image-converter
+# Start services
+docker-compose up
 
-# Run with docker compose
-docker compose up -d
+# Start in background
+docker-compose up -d
 
 # View logs
-docker compose logs -f
+docker-compose logs -f
 
-# Stop the application
-docker compose down
+# Stop services
+docker-compose down
+
+# Rebuild and restart
+docker-compose up --build --force-recreate
 ```
 
-### SSL/HTTPS Setup
+### Docker Configuration
 
-For production deployment with free SSL certificates from Let's Encrypt:
+- **Service Name**: `character-generator`
+- **Container Name**: `character-generator-app`
+- **Port**: `5000:5000`
+- **Volumes**:
+  - `./v2/uploads:/app/uploads` - Upload directory
+  - `./v2/outputs:/app/outputs` - Output directory
+  - `./.env:/app/.env:ro` - Environment variables (read-only)
 
-**Prerequisites:**
-- Domain points to your server IP
-- Ports 80 and 443 are open and accessible
+### Production Deployment with Nginx
 
-**Initial Setup:**
-
-1. Update email in `scripts/ssl/init-letsencrypt.sh`:
-   ```bash
-   EMAIL="your-email@example.com"
-   ```
-
-2. Run the initialization script:
-   ```bash
-   ./scripts/ssl/init-letsencrypt.sh
-   ```
-
-3. Start services with production profile:
-   ```bash
-   docker compose --profile production up -d
-   ```
-
-**SSL Management:**
+The `docker-compose.yml` includes optional Nginx reverse proxy and Certbot for SSL certificates:
 
 ```bash
-# Check certificate status
-./scripts/ssl/check-certificate.sh
-
-# Get production certificate (if you have staging)
-./scripts/ssl/get-production-cert.sh
-
-# Manual certificate renewal (auto-renewal runs every 12 hours)
-./scripts/ssl/renew-cert.sh
+# Start with production profile (includes Nginx and SSL)
+docker-compose --profile production up -d
 ```
 
-**How It Works:**
-- Nginx handles HTTP (port 80) and HTTPS (port 443)
-- Certbot automatically renews certificates every 12 hours
-- Certificates are stored in Docker volumes
-- HTTP automatically redirects to HTTPS
+## Project Structure
 
-**Troubleshooting:**
-
-```bash
-# Check nginx logs
-docker compose logs nginx
-
-# Check certbot logs
-docker compose logs certbot
-
-# Test nginx configuration
-docker compose exec nginx nginx -t
-
-# Fix network issues
-./scripts/fix-network.sh
+```
+googleAiStudio-POC/
+├── .env                      # Environment variables (root directory)
+├── docker-compose.yml        # Docker Compose configuration
+├── Dockerfile                # Docker image definition
+├── Dockerfile.fast           # Fast Docker build (minimal dependencies)
+├── README.md                 # This file
+└── v2/                       # Main application directory
+    ├── app.py                # Main Flask application
+    ├── requirements.txt      # Python dependencies
+    ├── utils/
+    │   ├── character_utils.py  # Character generation utilities
+    │   ├── bg_remover.py       # Background removal utilities
+    │   └── s3_utils.py         # S3 and CloudFront utilities
+    ├── templates/
+    │   └── index.html        # Web UI
+    ├── uploads/              # Temporary upload directory
+    └── outputs/              # Generated images directory
 ```
 
-## Production Deployment
+## Notes
 
-### Environment Setup
-
-1. Set production API keys
-2. Configure rate limits
-3. Set up monitoring
-4. Enable HTTPS
-5. Configure backup storage
-
-### Monitoring
-
-- Health check endpoint: `/api/v1/health`
-- Usage statistics: `/api/v1/status`
-- Error logging: Check application logs
-- File cleanup: Automatic after 24 hours
+- The `.env` file should be in the root directory (not in v2/)
+- Docker will mount the root `.env` file to `/app/.env` in the container
+- Uploads and outputs are persisted in `v2/uploads/` and `v2/outputs/` directories
+- All generated images are automatically uploaded to S3 and served via CloudFront CDN
+- The application will return both `image_url` (CloudFront URL) and `local_path` (local fallback) in API responses
+- If S3 upload fails, the application will still work but will only return local paths
+- Make sure your S3 bucket has proper permissions and CloudFront is configured to serve from it
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"API key required"** - Add `X-API-Key` header
-2. **"Invalid API key"** - Check your API key in `.env` file
-3. **"Rate limit exceeded"** - Wait and retry with exponential backoff
-4. **"File too large"** - Reduce image size (max 16MB)
-5. **"Invalid file type"** - Use supported formats (PNG, JPG, etc.)
+1. **"FREEPIK_API_KEY not found"** - Add `FREEPIK_API_KEY` to your `.env` file
+2. **"S3 upload skipped: missing env vars"** - Check AWS credentials in `.env`
+3. **"Background removal failed"** - Verify Freepik API key is valid
+4. **"Character generation failed"** - Check Gemini API key and image accessibility
+5. **Docker build fails** - Ensure you're running from the root directory
 
 ### Debug Mode
 
-Enable debug logging by setting environment variable:
+Enable debug logging:
 ```bash
 export FLASK_DEBUG=1
-python start_server.py
+python v2/app.py
 ```
 
-## Development
+### Check Logs
 
-### Project Structure
+```bash
+# Docker logs
+docker-compose logs -f character-generator
 
+# Local logs
+# Check console output when running python app.py
 ```
-/
-├── app.py                    # Main Flask application
-├── api/                      # API module
-│   ├── __init__.py          # Module initialization
-│   ├── auth.py              # Authentication & rate limiting
-│   ├── models.py            # Data models & error codes
-│   ├── utils.py             # Utility functions
-│   └── endpoints.py         # API endpoints
-├── templates/               # Web interface templates
-├── static/                  # Static assets
-├── uploads/                 # Temporary upload storage
-├── outputs/                 # Processed image storage
-├── requirements.txt         # Python dependencies
-├── Dockerfile              # Docker configuration
-├── docker-compose.yml      # Docker Compose setup
-├── scripts/                # Utility scripts
-│   ├── ssl/               # SSL certificate management
-│   └── fix-network.sh     # Network troubleshooting
-└── README.md               # This file
-```
-
-### Adding New Features
-
-1. **API Endpoints**: Add to `api/endpoints.py`
-2. **Authentication**: Modify `api/auth.py`
-3. **Data Models**: Update `api/models.py`
-4. **Utilities**: Add to `api/utils.py`
-
-## License
-
-This project follows the same license as the Google AI Studio examples (Apache 2.0 License).
 
 ## Support
 
 For issues and questions:
 1. Check the logs for error details
-2. Verify API key configuration
-3. Test with the provided test script
+2. Verify environment variables in `.env` file
+3. Test with the provided cURL examples
 4. Check network connectivity
 5. Review the troubleshooting section above
+
+## License
+
+This project follows the same license as the Google AI Studio examples (Apache 2.0 License).
