@@ -12,6 +12,7 @@ ENV/
 .env
 .env.local
 .env.lod
+.env.backup
 
 # IDE
 .vscode/
