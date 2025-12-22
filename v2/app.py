@@ -2,6 +2,8 @@ import os
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
+from flasgger import Swagger, swag_from
+from flask_cors import CORS
 
 # Load environment variables from .env file
 # Try to load from parent directory (root) first, then current directory
@@ -28,8 +30,10 @@ from utils.character_utils import (
 )
 from utils.bg_remover import remove_background_with_freepik_api
 from utils.s3_utils import upload_image_to_s3
+from utils.auth import require_api_key
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for API access
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -41,6 +45,49 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff"}
+
+# Swagger configuration
+swagger_config = {
+    "headers": [],
+    "specs": [
+        {
+            "endpoint": "apispec",
+            "route": "/apispec.json",
+            "rule_filter": lambda rule: True,
+            "model_filter": lambda tag: True,
+        }
+    ],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/api-docs"
+}
+
+swagger_template = {
+    "swagger": "2.0",
+    "info": {
+        "title": "Character Generator API",
+        "description": "API for generating AI characters and removing backgrounds from images",
+        "version": "1.0.0",
+        "contact": {
+            "name": "API Support"
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "name": "X-API-Key",
+            "in": "header",
+            "description": "API key for authentication. Get your API key from the administrator."
+        }
+    },
+    "security": [
+        {
+            "ApiKeyAuth": []
+        }
+    ]
+}
+
+swagger = Swagger(app, config=swagger_config, template=swagger_template)
 
 
 def allowed_file(filename: str) -> bool:
@@ -201,8 +248,100 @@ def generate_character_web():
 
 
 @app.route("/api/generate-character", methods=["POST"])
+@require_api_key
 def api_generate_character():
-    """API alias; same JSON as /generate-character-web."""
+    """
+    Generate a character from a selfie using Google AI Studio.
+    ---
+    tags:
+      - Character Generation
+    security:
+      - ApiKeyAuth: []
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: selfie
+        type: file
+        required: false
+        description: Selfie image file (PNG, JPG, JPEG, GIF, BMP, TIFF)
+      - in: formData
+        name: selfie_url
+        type: string
+        required: false
+        description: URL of the selfie image (alternative to file upload)
+      - in: formData
+        name: character_prompt
+        type: string
+        required: true
+        description: Description of the character to generate
+        example: "A full-body cartoon caricature with bright colors"
+      - in: formData
+        name: background
+        type: file
+        required: false
+        description: Background image file (optional)
+      - in: formData
+        name: background_url
+        type: string
+        required: false
+        description: URL of the background image (optional)
+      - in: formData
+        name: position
+        type: string
+        required: false
+        default: bottom
+        enum: [center, bottom]
+        description: Character position on background
+      - in: formData
+        name: scale
+        type: number
+        required: false
+        default: 1.0
+        description: Character scale (0.1 to 3.0)
+      - in: formData
+        name: canvas_size
+        type: string
+        required: false
+        enum: ["", "8x10", "11x14", "16x20"]
+        description: Print size (optional)
+      - in: formData
+        name: dpi
+        type: integer
+        required: false
+        default: 300
+        description: Output DPI
+      - in: header
+        name: X-API-Key
+        type: string
+        required: true
+        description: API key for authentication
+    responses:
+      200:
+        description: Character generated successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            message:
+              type: string
+            output_filename:
+              type: string
+            local_path:
+              type: string
+            image_url:
+              type: string
+              description: CloudFront CDN URL
+            metadata:
+              type: object
+      400:
+        description: Bad request (missing parameters or invalid input)
+      401:
+        description: Unauthorized (missing or invalid API key)
+      500:
+        description: Server error
+    """
     return generate_character_web()
 
 
@@ -222,10 +361,61 @@ def serve_upload(filename):
 
 
 @app.route("/remove-bg", methods=["POST"])
+@require_api_key
 def remove_bg():
     """
     Remove background from an image using Freepik API.
-    Accepts either a file upload or an image URL.
+    ---
+    tags:
+      - Background Removal
+    security:
+      - ApiKeyAuth: []
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: image
+        type: file
+        required: false
+        description: Image file to remove background from (PNG, JPG, JPEG, GIF, BMP, TIFF)
+      - in: formData
+        name: image_url
+        type: string
+        required: false
+        description: URL of the image (alternative to file upload)
+      - in: header
+        name: X-API-Key
+        type: string
+        required: true
+        description: API key for authentication
+    responses:
+      200:
+        description: Background removed successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+            message:
+              type: string
+            output_filename:
+              type: string
+            local_path:
+              type: string
+            image_url:
+              type: string
+              description: CloudFront CDN URL
+            metadata:
+              type: object
+              properties:
+                image_info:
+                  type: object
+      400:
+        description: Bad request (missing parameters or invalid input)
+      401:
+        description: Unauthorized (missing or invalid API key)
+      500:
+        description: Server error
     """
     try:
         image_file = request.files.get("image")
@@ -313,7 +503,32 @@ def remove_bg():
 
 @app.route("/health")
 def health():
+    """
+    Health check endpoint.
+    ---
+    tags:
+      - System
+    responses:
+      200:
+        description: Service is healthy
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ok
+    """
     return jsonify({"status": "ok"})
+
+
+@app.route("/api-docs")
+def api_docs_redirect():
+    """Redirect to Swagger UI."""
+    return render_template("swagger_redirect.html") if os.path.exists(os.path.join(BASE_DIR, "templates", "swagger_redirect.html")) else jsonify({
+        "message": "Swagger documentation available at /api-docs",
+        "swagger_ui": "/api-docs",
+        "api_spec": "/apispec.json"
+    })
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ A Flask-based character generation API using Google Gemini AI and Freepik backgr
 - **Docker Support**: Easy deployment with Docker and Docker Compose
 - **Web Interface**: User-friendly web application for testing
 - **REST API**: Programmatic access for integrations
+- **API Authentication**: Secure API endpoints with API key authentication
+- **Swagger Documentation**: Interactive API documentation with Swagger UI
 
 ## Quick Start
 
@@ -25,16 +27,25 @@ A Flask-based character generation API using Google Gemini AI and Freepik backgr
    S3_BUCKET=mosida
    CLOUDFRONT_URL=https://d2s4ngnid78ki4.cloudfront.net
    FREEPIK_API_KEY=your_freepik_key
+   API_KEY=your_api_key_here  # Optional: Set to secure API endpoints
    ```
 
 2. **Build and run with Docker Compose**:
+   
+   **For local development (without SSL/certbot):**
    ```bash
    docker-compose up --build
+   ```
+   
+   **For production (with SSL/certbot):**
+   ```bash
+   docker-compose --profile production up --build
    ```
 
 3. **Access the application**:
    - Web UI: http://localhost:5000
-   - API: http://localhost:5000/generate-character-web
+   - API Documentation (Swagger): http://localhost:5000/api-docs
+   - API Spec (JSON): http://localhost:5000/apispec.json
    - Health: http://localhost:5000/health
 
 ### Local Development
@@ -91,6 +102,12 @@ Required for serving images via CloudFront CDN. This is the CloudFront distribut
 FREEPIK_API_KEY=your_freepik_api_key_here
 ```
 Required if you want to use the `/remove-bg` endpoint for background removal.
+
+#### API Key (for securing API endpoints)
+```bash
+API_KEY=your_secret_api_key_here
+```
+Optional: Set this to secure API endpoints. If not set, API endpoints are publicly accessible (development mode). When set, all API endpoints require this key via `X-API-Key` header or `api_key` query parameter.
 
 ### Optional Environment Variables
 
@@ -218,6 +235,47 @@ GET /health
 }
 ```
 
+## API Documentation
+
+### Swagger UI
+
+Interactive API documentation is available at:
+- **Swagger UI**: http://localhost:5000/api-docs
+- **API Spec (JSON)**: http://localhost:5000/apispec.json
+
+The Swagger UI provides:
+- Complete API endpoint documentation
+- Interactive testing interface
+- Request/response examples
+- Authentication testing
+
+### API Authentication
+
+All API endpoints (except `/health` and `/`) require authentication when `API_KEY` is set in your `.env` file.
+
+**Authentication Methods:**
+
+1. **Header (Recommended)**:
+   ```bash
+   curl -H "X-API-Key: your_api_key_here" ...
+   ```
+
+2. **Query Parameter**:
+   ```bash
+   curl "http://localhost:5000/api/generate-character?api_key=your_api_key_here" ...
+   ```
+
+**Public Endpoints (No Authentication Required):**
+- `GET /` - Web UI
+- `GET /health` - Health check
+- `GET /api-docs` - Swagger documentation
+- `GET /apispec.json` - API specification
+
+**Protected Endpoints (Require API Key):**
+- `POST /generate-character-web` - Character generation
+- `POST /api/generate-character` - Character generation (API alias)
+- `POST /remove-bg` - Background removal
+
 ## API Testing with cURL
 
 ### Base URL
@@ -233,9 +291,12 @@ curl -X GET http://localhost:5000/health
 
 ### 2. Character Generation
 
+**Note**: Add `-H "X-API-Key: your_api_key"` if API authentication is enabled.
+
 #### With Selfie File and Background File
 ```bash
-curl -X POST http://localhost:5000/generate-character-web \
+curl -X POST http://localhost:5000/api/generate-character \
+  -H "X-API-Key: your_api_key_here" \
   -F "selfie=@/path/to/your/selfie.jpg" \
   -F "background=@/path/to/your/background.jpg" \
   -F "character_prompt=A full-body cartoon caricature with bright colors" \
@@ -245,7 +306,8 @@ curl -X POST http://localhost:5000/generate-character-web \
 
 #### With Selfie URL and Background URL
 ```bash
-curl -X POST http://localhost:5000/generate-character-web \
+curl -X POST http://localhost:5000/api/generate-character \
+  -H "X-API-Key: your_api_key_here" \
   -F "selfie_url=https://example.com/selfie.jpg" \
   -F "background_url=https://example.com/background.jpg" \
   -F "character_prompt=A cartoon character with vibrant colors" \
@@ -255,7 +317,8 @@ curl -X POST http://localhost:5000/generate-character-web \
 
 #### With Selfie Only (No Background)
 ```bash
-curl -X POST http://localhost:5000/generate-character-web \
+curl -X POST http://localhost:5000/api/generate-character \
+  -H "X-API-Key: your_api_key_here" \
   -F "selfie=@/path/to/your/selfie.jpg" \
   -F "character_prompt=A heroic fantasy character in detailed digital art style" \
   -F "position=center" \
@@ -267,12 +330,14 @@ curl -X POST http://localhost:5000/generate-character-web \
 #### With Image File Upload
 ```bash
 curl -X POST http://localhost:5000/remove-bg \
+  -H "X-API-Key: your_api_key_here" \
   -F "image=@/path/to/your/image.jpg"
 ```
 
 #### With Image URL
 ```bash
 curl -X POST http://localhost:5000/remove-bg \
+  -H "X-API-Key: your_api_key_here" \
   -F "image_url=https://example.com/image.jpg"
 ```
 
@@ -284,6 +349,22 @@ curl -X GET http://localhost:5000/download/output_filename.png \
 ```
 
 ### Error Responses
+
+#### Missing API Key
+```json
+{
+  "error": "API key required",
+  "message": "Please provide an API key via X-API-Key header or api_key query parameter"
+}
+```
+
+#### Invalid API Key
+```json
+{
+  "error": "Invalid API key",
+  "message": "The provided API key is invalid"
+}
+```
 
 #### Missing Required Field
 ```json
@@ -308,46 +389,77 @@ curl -X GET http://localhost:5000/download/output_filename.png \
 
 ## Docker Deployment
 
+### Local Development (No SSL/Certbot)
+
+For local development, run only the Flask application:
+
+```bash
+# Start only the Flask app (no nginx, no certbot)
+docker-compose up -d
+
+# Access directly on port 5000
+# http://localhost:5000
+```
+
+This will start only the `character-generator` service. Nginx and Certbot are excluded.
+
+### Production Deployment (With SSL/Certbot)
+
+For production with SSL certificates:
+
+```bash
+# Start all services including nginx and certbot
+docker-compose --profile production up -d
+
+# Access via nginx on ports 80/443
+# http://your-domain.com or https://your-domain.com
+```
+
+This starts:
+- `character-generator` - Flask application
+- `nginx` - Reverse proxy with SSL
+- `certbot` - SSL certificate management
+
 ### Docker Commands
 
 ```bash
 # Build image
 docker-compose build
 
-# Start services
+# Start services (local - Flask only)
 docker-compose up
 
-# Start in background
+# Start in background (local - Flask only)
 docker-compose up -d
+
+# Start in background (production - with nginx and certbot)
+docker-compose --profile production up -d
 
 # View logs
 docker-compose logs -f
 
+# View logs for specific service
+docker-compose logs -f character-generator
+
 # Stop services
 docker-compose down
 
-# Rebuild and restart
+# Rebuild and restart (local)
 docker-compose up --build --force-recreate
+
+# Rebuild and restart (production)
+docker-compose --profile production up --build --force-recreate
 ```
 
 ### Docker Configuration
 
 - **Service Name**: `character-generator`
 - **Container Name**: `character-generator-app`
-- **Port**: `5000:5000`
+- **Port**: `5000:5000` (direct access for local development)
 - **Volumes**:
   - `./v2/uploads:/app/uploads` - Upload directory
   - `./v2/outputs:/app/outputs` - Output directory
   - `./.env:/app/.env:ro` - Environment variables (read-only)
-
-### Production Deployment with Nginx
-
-The `docker-compose.yml` includes optional Nginx reverse proxy and Certbot for SSL certificates:
-
-```bash
-# Start with production profile (includes Nginx and SSL)
-docker-compose --profile production up -d
-```
 
 ## Project Structure
 

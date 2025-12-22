@@ -24,7 +24,9 @@ services:
     networks:
       - character-generator-network
 
-  # Optional: Add a reverse proxy for production
+  # Optional: Add a reverse proxy (nginx)
+  # For local development, you can skip nginx and access Flask directly on port 5000
+  # For production, use: docker-compose --profile production up
   nginx:
     image: nginx:alpine
     container_name: character-generator-nginx
@@ -42,9 +44,11 @@ services:
     restart: unless-stopped
     networks:
       - character-generator-network
+    profiles:
+      - production
     command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
 
-  # Certbot for SSL certificate management
+  # Certbot for SSL certificate management (only needed in production)
   certbot:
     image: certbot/certbot
     container_name: character-generator-certbot
@@ -54,6 +58,8 @@ services:
       - certbot-www:/var/www/certbot
     networks:
       - character-generator-network
+    profiles:
+      - production
     entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
 
 networks:
