@@ -37,7 +37,8 @@ services:
       - certbot-var:/var/lib/letsencrypt:ro
       - certbot-www:/var/www/certbot:ro
     depends_on:
-      - character-generator
+      character-generator:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - character-generator-network
