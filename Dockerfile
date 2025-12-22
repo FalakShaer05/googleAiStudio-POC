@@ -34,15 +34,25 @@ RUN mkdir -p uploads outputs
 RUN groupadd -r -g 1000 appuser && useradd -r -u 1000 -g appuser appuser
 RUN chown -R appuser:appuser /app
 
-# Create startup script to fix permissions
+# Create startup script to fix permissions (runs as root, then switches to appuser)
 RUN echo '#!/bin/bash\n\
-# Fix permissions for mounted volumes\n\
-chmod -R 755 /app/uploads /app/outputs 2>/dev/null || true\n\
-chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
-# Start the application\n\
-exec "$@"' > /app/start.sh && chmod +x /app/start.sh
+set -e\n\
+# Fix permissions for mounted volumes (run as root before switching user)\n\
+if [ "$(id -u)" = "0" ]; then\n\
+    chmod -R 777 /app/uploads /app/outputs 2>/dev/null || true\n\
+    chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
+    # Switch to appuser and execute the command\n\
+    exec gosu appuser "$@"\n\
+else\n\
+    # Already running as appuser\n\
+    exec "$@"\n\
+fi' > /app/start.sh && chmod +x /app/start.sh
 
-USER appuser
+# Install gosu for user switching
+RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/*
+
+# Don't switch to appuser here - start.sh will do it after fixing permissions
+# This allows the container to start as root and fix mounted volume permissions
 
 # Expose port
 EXPOSE 5000
