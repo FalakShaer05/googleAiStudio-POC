@@ -48,7 +48,7 @@ certbot/
 Thumbs.db
 
 # Uploads and outputs (keep structure, ignore contents)
-uploads/*
-!uploads/.gitkeep
-outputs/*
-!outputs/.gitkeep
+v2/uploads/*
+!v2/uploads/.gitkeep
+v2/outputs/*
+!v2/outputs/.gitkeep

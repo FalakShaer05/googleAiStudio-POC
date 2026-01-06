@@ -126,11 +126,130 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
+    .nav-tabs-container {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto 0;
+      max-width: 780px;
+      padding: 0;
+      overflow: hidden;
+    }
+    .nav-tabs {
+      display: flex;
+      border-bottom: 2px solid #e9ecef;
+      background: #f8f9ff;
+      margin: 0;
+      padding: 0;
+    }
+    .nav-tab {
+      flex: 1;
+      padding: 1rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: #667eea;
+      font-weight: 600;
+      font-size: 1rem;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+    .nav-tab:hover {
+      background: rgba(102, 126, 234, 0.1);
+    }
+    .nav-tab.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .nav-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -2px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .content-section {
+      display: none;
+    }
+    .content-section.active {
+      display: block;
+    }
+    .batch-item {
+      background: #f8f9ff;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+      position: relative;
+    }
+    .batch-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .batch-item-number {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+    }
+    .batch-item-remove {
+      background: #dc3545;
+      border: none;
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    .batch-result-item {
+      background: #f8f9ff;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .batch-result-success {
+      border-color: #28a745;
+    }
+    .batch-result-error {
+      border-color: #dc3545;
+    }
+    .batch-result-image {
+      max-width: 100%;
+      max-height: 300px;
+      border-radius: 8px;
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
+  <!-- Navigation Tabs -->
   <div class="container">
-    <div class="main-container">
+    <div class="nav-tabs-container">
+      <div class="nav-tabs">
+        <button class="nav-tab active" id="singleTab" onclick="switchTab('single')">
+          <i class="fas fa-user-astronaut me-2"></i>Single Character
+        </button>
+        <button class="nav-tab" id="batchTab" onclick="switchTab('batch')">
+          <i class="fas fa-layer-group me-2"></i>Batch Processing
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Single Character Section -->
+  <div class="container">
+    <div class="main-container content-section active" id="singleSection">
       <div class="header">
         <h1 class="mb-1">
           <i class="fas fa-user-astronaut me-2"></i>Character Generator
@@ -347,7 +466,172 @@
     </div>
   </div>
 
+  <!-- Batch Processing Section -->
+  <div class="container">
+    <div class="main-container content-section" id="batchSection">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-layer-group me-2"></i>Batch Character Generator
+        </h1>
+        <p class="mb-0">
+          Upload multiple images with individual prompts. All characters will be generated in parallel.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <!-- Step 1: Upload Background (Optional) -->
+        <div class="mb-4 p-3" style="background: #f8f9ff; border-radius: 12px; border: 2px solid #e9ecef;">
+          <h5 class="mb-3"><i class="fas fa-image me-2"></i>Step 1: Upload Background (Optional)</h5>
+          <p class="text-muted small mb-3">Upload a background image now. All generated characters will be placed on this background.</p>
+          
+          <div class="mb-3">
+            <div class="upload-area" onclick="document.getElementById('batchBgInput').click()">
+              <div class="upload-icon"><i class="fas fa-image"></i></div>
+              <h6 class="mb-1">Click to choose background</h6>
+              <p class="text-muted small mb-0">Or enter URL below</p>
+              <input type="file" id="batchBgInput" class="file-input" accept="image/*" 
+                     onchange="handleBatchBackgroundFile(this)" />
+            </div>
+            <div class="file-info mt-2" id="batchBgFileInfo" style="display: none;">
+              <div class="d-flex align-items-center">
+                <i class="fas fa-image me-2"></i>
+                <span id="batchBgFileName"></span>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearBatchBackground()">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div class="mt-2">
+              <label class="form-label small mb-1">Or background URL:</label>
+              <input type="url" id="batchBackgroundUrl" class="form-control form-control-sm" 
+                     placeholder="https://example.com/background.jpg" />
+            </div>
+            <button type="button" class="btn btn-sm btn-primary mt-2" id="uploadBgBtn" onclick="uploadBatchBackground()">
+              <i class="fas fa-upload me-2"></i>Upload Background
+            </button>
+            <div class="status-message mt-2" id="batchBgStatus" style="display: none;"></div>
+          </div>
+        </div>
+
+        <!-- Step 2: Add Selfies and Prompts -->
+        <div class="mb-4">
+          <h5 class="mb-3"><i class="fas fa-users me-2"></i>Step 2: Add Selfies with Prompts</h5>
+          <div id="batchItemsContainer"></div>
+          
+          <button type="button" class="btn btn-outline-primary mb-3" id="addBatchItemBtn">
+            <i class="fas fa-plus me-2"></i>Add Image
+          </button>
+        </div>
+
+        <!-- Step 3: Generate Characters -->
+        <div class="mb-4">
+          <div class="d-flex gap-2 mb-3">
+            <button type="button" class="convert-btn" id="generateBatchBtn">
+              <i class="fas fa-magic me-2"></i>Generate All Characters
+            </button>
+            <button type="button" class="btn btn-outline-danger" id="clearBatchBtn">
+              <i class="fas fa-trash me-2"></i>Clear All
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-3" id="batchProgress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" id="batchProgressBar" style="width: 0%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0" id="batchProgressText">Preparing batch processing...</p>
+        </div>
+
+        <div class="status-message" id="batchStatus"></div>
+
+        <div id="batchResults" class="mt-4"></div>
+
+        <!-- Step 3: Composite on Background (if background was uploaded) -->
+        <div id="compositeSection" class="mt-4" style="display: none;">
+          <hr class="my-4">
+          <h5 class="mb-3"><i class="fas fa-layer-group me-2"></i>Step 3: Composite All Characters on Background</h5>
+          <p class="text-muted small mb-3">Your background has been uploaded. Adjust settings and composite all characters.</p>
+
+          <div class="row mb-3">
+            <div class="col-md-3">
+              <label class="form-label">Position</label>
+              <select class="form-select" id="compositePosition">
+                <option value="center">Center</option>
+                <option value="bottom" selected>Bottom</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Scale</label>
+              <input type="range" class="form-range" id="compositeScale" min="0.5" max="2.0" step="0.1" value="1.0" />
+              <div class="d-flex justify-content-between">
+                <small>50%</small>
+                <small id="compositeScaleValue">100%</small>
+                <small>200%</small>
+              </div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Canvas Size (optional)</label>
+              <select class="form-select" id="compositeCanvasSize">
+                <option value="">Original</option>
+                <option value="8x10">8×10</option>
+                <option value="11x14">11×14</option>
+                <option value="16x20">16×20</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Compositing Method</label>
+              <select class="form-select" id="compositeMethod">
+                <option value="pil">PIL (Exact Background)</option>
+                <option value="gemini" selected>Gemini (Artistic Blend)</option>
+              </select>
+              <small class="text-muted">Use Gemini for better integration with artistic backgrounds</small>
+            </div>
+          </div>
+
+          <button type="button" class="convert-btn" id="compositeBtn">
+            <i class="fas fa-magic me-2"></i>Composite All Characters on Background
+          </button>
+
+          <div class="mt-3" id="compositeProgress" style="display: none;">
+            <div class="progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+            </div>
+            <p class="text-center mt-2 mb-0">Compositing characters on background...</p>
+          </div>
+
+          <div class="status-message" id="compositeStatus"></div>
+
+          <div class="file-info mt-3" id="compositeResult" style="display: none;">
+            <h5 class="mb-3"><i class="fas fa-eye me-2"></i>Composited Result</h5>
+            <div class="row g-3 align-items-center">
+              <div class="col-md-6 text-center">
+                <img id="compositePreviewImage" class="preview-image" alt="Composited Preview" />
+              </div>
+              <div class="col-md-6 text-center">
+                <p class="mb-2" id="compositeResultMessage">Characters composited successfully!</p>
+                <button type="button" class="download-btn mt-1" id="compositeDownloadBtn">
+                  <i class="fas fa-download me-2"></i>Download Result
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
+    // Navigation functionality
+    function switchTab(tab) {
+      // Update tab buttons
+      document.getElementById("singleTab").classList.toggle("active", tab === "single");
+      document.getElementById("batchTab").classList.toggle("active", tab === "batch");
+      
+      // Show/hide sections
+      document.getElementById("singleSection").classList.toggle("active", tab === "single");
+      document.getElementById("batchSection").classList.toggle("active", tab === "batch");
+    }
+
     let currentFilename = null;
 
     const selfieUploadArea = document.getElementById("selfieUploadArea");
@@ -488,6 +772,431 @@
         window.open(`/download/${currentFilename}`, "_blank");
       }
     });
+
+    // Batch Processing JavaScript
+    let batchItems = [];
+    let batchItemCounter = 0;
+
+    function addBatchItem() {
+      const itemId = batchItemCounter++;
+      const item = {
+        id: itemId,
+        selfieFile: null,
+        selfieUrl: "",
+        characterPrompt: "",
+        canvasSize: "",
+        dpi: 300
+      };
+      batchItems.push(item);
+      renderBatchItems();
+    }
+
+    function removeBatchItem(itemId) {
+      batchItems = batchItems.filter(item => item.id !== itemId);
+      renderBatchItems();
+    }
+
+    function clearBatchItems() {
+      batchItems = [];
+      batchItemCounter = 0;
+      renderBatchItems();
+      document.getElementById("batchResults").innerHTML = "";
+      document.getElementById("batchStatus").style.display = "none";
+    }
+
+    function renderBatchItems() {
+      const container = document.getElementById("batchItemsContainer");
+      if (batchItems.length === 0) {
+        container.innerHTML = '<p class="text-muted text-center">No items added. Click "Add Image" to start.</p>';
+        return;
+      }
+
+      container.innerHTML = batchItems.map(item => {
+        const itemIndex = batchItems.indexOf(item);
+        return `
+          <div class="batch-item" data-item-id="${item.id}">
+            <div class="batch-item-header">
+              <div class="batch-item-number">${itemIndex + 1}</div>
+              <button type="button" class="batch-item-remove" onclick="removeBatchItem(${item.id})">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+            
+            <div class="mb-3">
+              <label class="form-label fw-bold">Selfie / Photo (required)</label>
+              <div class="upload-area" onclick="document.getElementById('selfieInput_${item.id}').click()">
+                <div class="upload-icon"><i class="fas fa-user"></i></div>
+                <h6 class="mb-1">Click to choose or enter URL</h6>
+                <input type="file" id="selfieInput_${item.id}" class="file-input" accept="image/*" 
+                       onchange="handleSelfieFile(${item.id}, this)" />
+              </div>
+              <input type="url" class="form-control mt-2" placeholder="Or enter selfie URL" 
+                     value="${item.selfieUrl}" onchange="batchItems.find(i => i.id === ${item.id}).selfieUrl = this.value" />
+              ${item.selfieFile ? `<div class="file-info mt-2" style="display: block;"><i class="fas fa-image me-2"></i>${item.selfieFile.name}</div>` : ''}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label fw-bold">Character Prompt (required)</label>
+              
+              <!-- Hobby Selection -->
+              <div class="mb-2">
+                <label class="form-label small">Quick Select Hobby:</label>
+                <select class="form-select form-select-sm" id="hobbySelect_${item.id}" 
+                        onchange="selectHobby(${item.id}, this.value)">
+                  <option value="">-- Select a hobby --</option>
+                  <option value="football">⚽ Playing Football</option>
+                  <option value="basketball">🏀 Playing Basketball</option>
+                  <option value="baseball">⚾ Playing Baseball</option>
+                  <option value="cricket">🏏 Playing Cricket</option>
+                  <option value="skateboarding">🛹 Playing Skateboarding</option>
+                </select>
+              </div>
+              
+              <textarea class="form-control prompt-textarea" id="prompt_${item.id}"
+                        placeholder="Describe the character or select a hobby above..." 
+                        required onchange="batchItems.find(i => i.id === ${item.id}).characterPrompt = this.value">${item.characterPrompt}</textarea>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function handleSelfieFile(itemId, input) {
+      const file = input.files[0];
+      if (file) {
+        const item = batchItems.find(i => i.id === itemId);
+        if (item) {
+          item.selfieFile = file;
+          item.selfieUrl = "";
+          renderBatchItems();
+        }
+      }
+    }
+
+    function setBatchPrompt(itemId, prompt) {
+      const item = batchItems.find(i => i.id === itemId);
+      if (item) {
+        item.characterPrompt = prompt;
+        renderBatchItems();
+      }
+    }
+
+    // Hobby prompts (matching backend constants)
+    const hobbyPrompts = {
+      football: `A full-body, hand-drawn cartoon-style caricature with slightly exaggerated features and proportionally larger heads. Each character is actively playing football (soccer), wearing detailed football outfits — jerseys, shorts, socks, cleats, and optional accessories like shin guards, headbands, or captain armbands — in bright and vibrant colors. They are engaged in grounded, realistic poses such as dribbling, passing, shooting, tackling, or celebrating a goal, with clear contact to the ground to avoid any floating appearance. Use bold black outlines, vivid comic-style coloring, and a humorous, energetic aesthetic inspired by traditional marker and watercolor caricatures. The background must be plain white with no patterns or scenery. Maintain full visibility of each subject from head to toe — do not crop, remove, or merge any person. Keep the exaggeration subtle and flattering, not overly distorted.`,
+      
+      basketball: `A full-body, hand-drawn cartoon-style caricature with slightly exaggerated features and proportionally larger heads. Each character is actively playing basketball, wearing detailed basketball outfits — jerseys, shorts, sneakers, and optional accessories like headbands, wristbands, or knee pads — in bright and vibrant colors. They are engaged in grounded, realistic poses such as dribbling, shooting, dunking, passing, or celebrating a basket, with clear contact to the court surface to avoid any floating appearance. Use bold black outlines, vivid comic-style coloring, and a humorous, energetic aesthetic inspired by traditional marker and watercolor caricatures. The background must be plain white with no patterns or scenery. Maintain full visibility of each subject from head to toe — do not crop, remove, or merge any person. Keep the exaggeration subtle and flattering, not overly distorted.`,
+      
+      baseball: `A full-body, hand-drawn cartoon-style caricature with slightly exaggerated features and proportionally larger heads. Each character is actively playing baseball, wearing detailed baseball outfits — jerseys, pants, cleats, caps or helmets, and optional accessories like gloves, bats, catcher's gear, or wristbands — in bright and vibrant colors. They are engaged in grounded, realistic poses such as pitching, batting, catching, sliding, or celebrating a home run, with clear contact to the ground to avoid any floating appearance. Use bold black outlines, vivid comic-style coloring, and a humorous, dynamic aesthetic inspired by traditional marker and watercolor caricatures. The background must be plain white with no patterns or scenery. Maintain full visibility of each subject from head to toe — do not crop, remove, or merge any person. Keep the exaggeration subtle and flattering, not overly distorted.`,
+      
+      cricket: `A full-body, hand-drawn cartoon-style caricature with slightly exaggerated features and proportionally larger heads. Each character is actively playing cricket, wearing detailed cricket outfits — jerseys, pants, cricket shoes, helmets, pads, gloves, and optional accessories like caps, arm guards, or cricket bats — in bright and vibrant colors. They are engaged in grounded, realistic poses such as batting, bowling, fielding, catching, or celebrating a wicket, with clear contact to the ground to avoid any floating appearance. Use bold black outlines, vivid comic-style coloring, and a humorous, dynamic aesthetic inspired by traditional marker and watercolor caricatures. The background must be plain white with no patterns or scenery. Maintain full visibility of each subject from head to toe — do not crop, remove, or merge any person. Keep the exaggeration subtle and flattering, not overly distorted.`,
+      
+      skateboarding: `A full-body, hand-drawn cartoon-style caricature with slightly exaggerated features and proportionally larger heads. Each character is actively skateboarding, wearing detailed skate outfits — t-shirts, hoodies, shorts or pants, sneakers, and optional accessories like helmets, knee pads, elbow pads, or wristbands — in bright and vibrant colors. They are engaged in grounded, realistic poses such as riding, performing tricks, jumping, grinding, or celebrating a successful move, with clear contact between the skateboard and the ground to avoid any floating appearance. Use bold black outlines, vivid comic-style coloring, and a humorous, energetic aesthetic inspired by traditional marker and watercolor caricatures. The background must be plain white with no patterns or scenery. Maintain full visibility of each subject and skateboard from end to end — do not crop, remove, or merge any part. Keep the exaggeration subtle and flattering, not overly distorted.`
+    };
+
+    function selectHobby(itemId, hobby) {
+      if (hobby && hobbyPrompts[hobby]) {
+        const item = batchItems.find(i => i.id === itemId);
+        if (item) {
+          item.characterPrompt = hobbyPrompts[hobby];
+          const promptElement = document.getElementById(`prompt_${itemId}`);
+          if (promptElement) {
+            promptElement.value = hobbyPrompts[hobby];
+          }
+        }
+      }
+    }
+
+    let batchBackgroundFilename = null;
+    let batchBackgroundFile = null;
+    let batchBackgroundUrl = "";
+    let generatedCharacterFilenames = [];
+
+    function handleBatchBackgroundFile(input) {
+      const file = input.files[0];
+      if (file) {
+        batchBackgroundFile = file;
+        batchBackgroundUrl = "";
+        document.getElementById("batchBgFileName").textContent = file.name;
+        document.getElementById("batchBgFileInfo").style.display = "block";
+        document.getElementById("batchBackgroundUrl").value = "";
+      }
+    }
+
+    function clearBatchBackground() {
+      batchBackgroundFile = null;
+      batchBackgroundUrl = "";
+      batchBackgroundFilename = null;
+      document.getElementById("batchBgInput").value = "";
+      document.getElementById("batchBgFileInfo").style.display = "none";
+      document.getElementById("batchBackgroundUrl").value = "";
+      document.getElementById("batchBgStatus").style.display = "none";
+      document.getElementById("compositeSection").style.display = "none";
+    }
+
+    async function uploadBatchBackground() {
+      const bgFile = batchBackgroundFile;
+      const bgUrl = document.getElementById("batchBackgroundUrl").value.trim();
+
+      if (!bgFile && !bgUrl) {
+        showBatchBgStatus("Please provide a background image or URL", true);
+        return;
+      }
+
+      if (bgFile && bgUrl) {
+        showBatchBgStatus("Provide either background file or URL, not both", true);
+        return;
+      }
+
+      const formData = new FormData();
+      if (bgFile) {
+        formData.append("background", bgFile);
+      } else {
+        formData.append("background_url", bgUrl);
+      }
+
+      try {
+        const response = await fetch("/upload-batch-background", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          showBatchBgStatus(data.error || "Background upload failed", true);
+          return;
+        }
+
+        batchBackgroundFilename = data.background_filename;
+        showBatchBgStatus("Background uploaded successfully!", false);
+        document.getElementById("compositeSection").style.display = "block";
+      } catch (err) {
+        showBatchBgStatus("Network error: " + err.message, true);
+      }
+    }
+
+    function showBatchBgStatus(msg, isError) {
+      const statusEl = document.getElementById("batchBgStatus");
+      statusEl.className = "status-message " + (isError ? "status-error" : "status-success");
+      statusEl.textContent = msg;
+      statusEl.style.display = "block";
+    }
+
+    document.getElementById("compositeScale").addEventListener("input", (e) => {
+      document.getElementById("compositeScaleValue").textContent = Math.round(e.target.value * 100) + "%";
+    });
+
+    document.getElementById("addBatchItemBtn").addEventListener("click", addBatchItem);
+    document.getElementById("clearBatchBtn").addEventListener("click", clearBatchItems);
+
+    document.getElementById("generateBatchBtn").addEventListener("click", async () => {
+      if (batchItems.length === 0) {
+        showBatchStatus("Please add at least one item", true);
+        return;
+      }
+
+      // Validate all items
+      for (const item of batchItems) {
+        if (!item.selfieFile && !item.selfieUrl) {
+          showBatchStatus(`Item ${batchItems.indexOf(item) + 1}: Selfie is required`, true);
+          return;
+        }
+        if (!item.characterPrompt.trim()) {
+          showBatchStatus(`Item ${batchItems.indexOf(item) + 1}: Character prompt is required`, true);
+          return;
+        }
+      }
+
+      // Prepare items for API (no background fields)
+      const itemsToSend = batchItems.map(item => ({
+        selfie_url: item.selfieUrl || undefined,
+        character_prompt: item.characterPrompt,
+        canvas_size: item.canvasSize || undefined,
+        dpi: item.dpi
+      }));
+
+      // Prepare FormData with JSON items array and indexed files
+      const formData = new FormData();
+      formData.append("items", JSON.stringify(itemsToSend));
+      batchItems.forEach((item, idx) => {
+        if (item.selfieFile) {
+          formData.append(`selfie_${idx}`, item.selfieFile);
+        }
+      });
+
+      showBatchProgress(0, "Starting batch processing...");
+      document.getElementById("batchResults").innerHTML = "";
+      hideBatchStatus();
+
+      try {
+        const response = await fetch("/generate-characters-batch-web", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        hideBatchProgress();
+
+        if (!data.success) {
+          showBatchStatus(data.error || "Batch processing failed", true);
+          return;
+        }
+
+        showBatchStatus(data.message, false);
+        renderBatchResults(data.results);
+        
+        // Show compositing section if there are successful results and background was uploaded
+        const successfulResults = data.results.filter(r => r.success);
+        if (successfulResults.length > 0) {
+          generatedCharacterFilenames = successfulResults.map(r => r.output_filename);
+          if (batchBackgroundFilename) {
+            document.getElementById("compositeSection").style.display = "block";
+          }
+        }
+
+      } catch (err) {
+        hideBatchProgress();
+        showBatchStatus("Network error: " + err.message, true);
+      }
+    });
+
+    function showBatchProgress(percent, text) {
+      document.getElementById("batchProgress").style.display = "block";
+      document.getElementById("batchProgressBar").style.width = percent + "%";
+      document.getElementById("batchProgressText").textContent = text;
+    }
+
+    function hideBatchProgress() {
+      document.getElementById("batchProgress").style.display = "none";
+    }
+
+    function showBatchStatus(msg, isError) {
+      const statusEl = document.getElementById("batchStatus");
+      statusEl.className = "status-message " + (isError ? "status-error" : "status-success");
+      statusEl.textContent = msg;
+      statusEl.style.display = "block";
+    }
+
+    function hideBatchStatus() {
+      document.getElementById("batchStatus").style.display = "none";
+    }
+
+    function renderBatchResults(results) {
+      const container = document.getElementById("batchResults");
+      container.innerHTML = `
+        <h5 class="mb-3"><i class="fas fa-list me-2"></i>Results</h5>
+        ${results.map((result, idx) => `
+          <div class="batch-result-item ${result.success ? 'batch-result-success' : 'batch-result-error'}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <strong>Item ${result.index + 1}</strong>
+              <span class="badge ${result.success ? 'bg-success' : 'bg-danger'}">
+                ${result.success ? 'Success' : 'Failed'}
+              </span>
+            </div>
+            ${result.success ? `
+              <p class="mb-2">${result.message}</p>
+              ${result.image_url ? `
+                <img src="${result.image_url}" class="batch-result-image" alt="Generated character" />
+              ` : result.local_path ? `
+                <img src="${result.local_path}" class="batch-result-image" alt="Generated character" />
+              ` : ''}
+              <div class="mt-2">
+                <a href="/download/${result.output_filename}" class="btn btn-sm download-btn" download>
+                  <i class="fas fa-download me-2"></i>Download
+                </a>
+              </div>
+            ` : `
+              <p class="text-danger mb-0">${result.error || 'Unknown error'}</p>
+            `}
+          </div>
+        `).join('')}
+      `;
+    }
+
+    // Composite button handler
+    document.getElementById("compositeBtn").addEventListener("click", async () => {
+      if (generatedCharacterFilenames.length === 0) {
+        showCompositeStatus("No characters to composite. Please generate characters first.", true);
+        return;
+      }
+
+      if (!batchBackgroundFilename) {
+        showCompositeStatus("Please upload a background first in Step 1", true);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("character_filenames", JSON.stringify(generatedCharacterFilenames));
+      formData.append("background_filename", batchBackgroundFilename);
+      formData.append("position", document.getElementById("compositePosition").value);
+      formData.append("scale", document.getElementById("compositeScale").value);
+      formData.append("canvas_size", document.getElementById("compositeCanvasSize").value);
+      formData.append("dpi", "300");
+      formData.append("use_gemini_compositing", document.getElementById("compositeMethod").value === "gemini" ? "true" : "false");
+
+      showCompositeProgress();
+      document.getElementById("compositeResult").style.display = "none";
+      hideCompositeStatus();
+
+      try {
+        const response = await fetch("/composite-characters-on-background", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        hideCompositeProgress();
+
+        if (!data.success) {
+          showCompositeStatus(data.error || "Compositing failed", true);
+          return;
+        }
+
+        const url = data.image_url || data.local_path || `/outputs/${data.output_filename}`;
+        document.getElementById("compositePreviewImage").src = url;
+        document.getElementById("compositeResult").style.display = "block";
+        showCompositeStatus("Characters composited successfully!", false);
+        
+        // Store filename for download
+        window.compositeFilename = data.output_filename;
+      } catch (err) {
+        hideCompositeProgress();
+        showCompositeStatus("Network error: " + err.message, true);
+      }
+    });
+
+    document.getElementById("compositeDownloadBtn").addEventListener("click", () => {
+      if (window.compositeFilename) {
+        window.open(`/download/${window.compositeFilename}`, "_blank");
+      }
+    });
+
+    function showCompositeProgress() {
+      document.getElementById("compositeBtn").disabled = true;
+      document.getElementById("compositeBtn").innerHTML = '<span class="spinner me-2"></span>Compositing...';
+      document.getElementById("compositeProgress").style.display = "block";
+    }
+
+    function hideCompositeProgress() {
+      document.getElementById("compositeBtn").disabled = false;
+      document.getElementById("compositeBtn").innerHTML = '<i class="fas fa-magic me-2"></i>Composite All Characters on Background';
+      document.getElementById("compositeProgress").style.display = "none";
+    }
+
+    function showCompositeStatus(msg, isError) {
+      const statusEl = document.getElementById("compositeStatus");
+      statusEl.className = "status-message " + (isError ? "status-error" : "status-success");
+      statusEl.textContent = msg;
+      statusEl.style.display = "block";
+    }
+
+    function hideCompositeStatus() {
+      document.getElementById("compositeStatus").style.display = "none";
+    }
+
+    // Initialize with one item
+    addBatchItem();
   </script>
 </body>
 </html>

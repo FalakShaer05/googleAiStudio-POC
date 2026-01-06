@@ -40,7 +40,7 @@ set -e\n\
 # Fix permissions for mounted volumes (run as root before switching user)\n\
 if [ "$(id -u)" = "0" ]; then\n\
     chmod -R 777 /app/uploads /app/outputs 2>/dev/null || true\n\
-    chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
+chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
     # Switch to appuser and execute the command\n\
     exec gosu appuser "$@"\n\
 else\n\
