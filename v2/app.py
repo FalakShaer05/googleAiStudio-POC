@@ -616,7 +616,11 @@ def composite_characters_on_background():
 
             canvas_context_str = f"\n{canvas_context}" if canvas_context else ""
             
-            full_prompt = f"""{COMPOSITING_PROMPT}
+            # Get custom compositing prompt if provided, otherwise use default
+            custom_compositing_prompt = request.form.get("compositing_prompt", "").strip()
+            base_prompt = custom_compositing_prompt if custom_compositing_prompt else COMPOSITING_PROMPT
+            
+            full_prompt = f"""{base_prompt}
 
 ADDITIONAL INSTRUCTIONS:
 - Number of characters to merge: {num_characters}
