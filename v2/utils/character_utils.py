@@ -80,6 +80,9 @@ def generate_character_with_identity(
     """
     Generate a character from a selfie only. If white_background=True, we ask
     the model for a simple light background; we do NOT remove it locally.
+    
+    Detects if the prompt is a style conversion (like pencil sketch) vs character transformation,
+    and handles them differently to preserve original composition.
     """
     try:
         client = get_gemini_client()
@@ -87,6 +90,15 @@ def generate_character_with_identity(
             return False, f"Selfie not found: {selfie_path}"
 
         selfie_image = Image.open(selfie_path)
+
+        # Detect if this is a style conversion task (pencil sketch, painting, etc.)
+        # vs a character transformation task
+        style_keywords = [
+            "pencil sketch", "sketch", "drawing", "hand-drawn", "graphite",
+            "convert", "transform into", "render as", "style of", "in the style",
+            "painting", "watercolor", "oil painting", "charcoal", "ink drawing"
+        ]
+        is_style_conversion = any(keyword.lower() in character_prompt.lower() for keyword in style_keywords)
 
         bg_context = ""
         if background_dimensions:
@@ -98,10 +110,16 @@ def generate_character_with_identity(
 
         canvas_context = ""
         if canvas_size:
-            canvas_context = (
-                f"\nTarget print size: {canvas_size} at {dpi} DPI. "
-                f"Ensure the full body fits comfortably inside this canvas."
-            )
+            if is_style_conversion:
+                canvas_context = (
+                    f"\nTarget print size: {canvas_size} at {dpi} DPI. "
+                    f"Maintain the same aspect ratio and composition as the input image."
+                )
+            else:
+                canvas_context = (
+                    f"\nTarget print size: {canvas_size} at {dpi} DPI. "
+                    f"Ensure the full body fits comfortably inside this canvas."
+                )
 
         if white_background:
             bg_req = (
@@ -111,7 +129,33 @@ def generate_character_with_identity(
         else:
             bg_req = "You may choose an appropriate background; do not crop the subject."
 
-        full_prompt = f"""Transform this person into a character while preserving their identity.
+        if is_style_conversion:
+            # For style conversions, preserve exact composition and framing
+            full_prompt = f"""Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
+
+CRITICAL REQUIREMENTS:
+- Preserve the EXACT same framing, crop, and composition as the input image
+- Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
+- Maintain the same aspect ratio
+- Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
+- Do NOT change the subject's position or pose
+- Apply the style transformation to the EXISTING image composition
+
+STYLE CONVERSION:
+{character_prompt}
+
+BACKGROUND:
+{bg_req}
+
+{bg_context}
+{canvas_context}
+
+OUTPUT:
+Return the converted image with the exact same composition and framing as the input, only with the style applied.
+"""
+        else:
+            # For character transformations, use the original prompt structure
+            full_prompt = f"""Transform this person into a character while preserving their identity.
 
 CHARACTER TRANSFORMATION:
 {character_prompt}
