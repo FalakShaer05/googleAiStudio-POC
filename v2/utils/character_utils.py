@@ -100,6 +100,18 @@ def generate_character_with_identity(
         ]
         is_style_conversion = any(keyword.lower() in character_prompt.lower() for keyword in style_keywords)
 
+        monochrome_keywords = [
+            "monochrome", "grayscale", "black and white", "black-and-white", "b&w",
+            "pencil sketch", "graphite", "charcoal", "ink drawing", "strict monochrome",
+            "no color", "ignore color", "ignore all colors", "purely black and white"
+        ]
+        is_monochrome = any(keyword.lower() in character_prompt.lower() for keyword in monochrome_keywords)
+
+        if is_monochrome:
+            if selfie_image.mode != 'L':
+                selfie_image = selfie_image.convert('L').convert('RGB')
+                print("🖼️ Converted input image to grayscale for monochrome processing")
+
         bg_context = ""
         if background_dimensions:
             bg_context = (
@@ -130,9 +142,25 @@ def generate_character_with_identity(
             bg_req = "You may choose an appropriate background; do not crop the subject."
 
         if is_style_conversion:
+            # Build monochrome instructions if needed
+            monochrome_instructions = ""
+            if is_monochrome:
+                monochrome_instructions = """
+CRITICAL COLOR REQUIREMENTS (HIGHEST PRIORITY):
+- Output MUST be 100% monochrome/grayscale - NO colors whatsoever
+- Use ONLY shades of gray: white, light gray, mid gray, dark gray, and black
+- IGNORE all colors from the input image completely - treat them as grayscale values only
+- Do NOT add any color tints, color casts, or color temperature effects
+- Do NOT preserve any original colors (blue, red, green, etc.) - convert everything to grayscale
+- If the input has blue, red, or any colored elements, render them as gray tones based on their brightness only
+- The output must be pure black-and-white or grayscale - absolutely no color channels should be active
+- Any hint of blue, sepia, warm gray, cool gray, or color tint is FORBIDDEN
+- Work in pure grayscale mode - RGB values should be equal (R=G=B) for every pixel
+"""
+            
             # For style conversions, preserve exact composition and framing
             full_prompt = f"""Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
-
+{monochrome_instructions}
 CRITICAL REQUIREMENTS:
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
@@ -152,6 +180,7 @@ BACKGROUND:
 
 OUTPUT:
 Return the converted image with the exact same composition and framing as the input, only with the style applied.
+{monochrome_instructions if is_monochrome else ""}
 """
         else:
             # For character transformations, use the original prompt structure
