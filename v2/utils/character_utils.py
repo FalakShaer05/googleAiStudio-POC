@@ -4,11 +4,19 @@ Character generation utilities using Google Gemini API.
 import os
 import uuid
 import io
+import time
+import random
 from typing import Optional, Tuple, Dict, Any
 
 from PIL import Image
 import requests
 import google.genai as genai
+
+try:
+    # Newer google-genai SDKs expose GenerateContentConfig / ImageConfig here
+    from google.genai import types  # type: ignore
+except Exception:  # pragma: no cover
+    types = None  # type: ignore
 
 
 def get_gemini_client() -> genai.Client:
@@ -16,6 +24,165 @@ def get_gemini_client() -> genai.Client:
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
     return genai.Client(api_key=api_key)
+
+
+def get_gemini_image_model() -> str:
+    """
+    Returns the Gemini model id used for image generation/editing.
+
+    Defaults to the stable GA model. Override via GEMINI_IMAGE_MODEL to avoid
+    code changes when Google retires preview model ids.
+    """
+    return os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+
+
+def get_gemini_fallback_image_model() -> Optional[str]:
+    """
+    Optional fallback model id used when the primary model is temporarily unavailable.
+    """
+    value = (os.getenv("GEMINI_FALLBACK_IMAGE_MODEL") or "").strip()
+    return value or None
+
+
+def _is_transient_gemini_error(exc: Exception) -> bool:
+    """
+    Best-effort classification of transient Gemini API errors.
+
+    We intentionally keep this heuristic string-based because google-genai exceptions
+    differ across SDK versions, and we don't want production to break due to import issues.
+    """
+    msg = str(exc)
+    transient_markers = [
+        "503", "UNAVAILABLE",
+        "Deadline expired", "DEADLINE_EXCEEDED",
+        "429", "RESOURCE_EXHAUSTED",
+        "Internal", "500",
+    ]
+    return any(m in msg for m in transient_markers)
+
+
+def _iter_gemini_response_parts(response):
+    """
+    Normalize response parts across google-genai SDK versions.
+
+    Some versions expose `response.parts`; others expose `response.candidates[0].content.parts`.
+    """
+    if response is None:
+        return []
+    parts = getattr(response, "parts", None)
+    if parts is not None:
+        return parts
+    candidates = getattr(response, "candidates", None)
+    if candidates:
+        content = getattr(candidates[0], "content", None)
+        if content is not None:
+            return getattr(content, "parts", []) or []
+    return []
+
+
+def _extract_final_image_from_response(response) -> Optional[Image.Image]:
+    """
+    Extract the final rendered image from a Gemini response.
+
+    For Gemini 3 Pro Image, the model may emit interim "thought" images first; we skip those and
+    prefer the last non-thought image.
+    """
+    parts = _iter_gemini_response_parts(response)
+    if not parts:
+        return None
+
+    non_thought_images = []
+    any_images = []
+
+    for part in parts:
+        inline = getattr(part, "inline_data", None)
+        if inline is None:
+            continue
+        # Prefer SDK helper if present
+        as_image = getattr(part, "as_image", None)
+        try:
+            img = as_image() if callable(as_image) else Image.open(io.BytesIO(inline.data))
+        except Exception:
+            continue
+
+        any_images.append(img)
+        if not bool(getattr(part, "thought", False)):
+            non_thought_images.append(img)
+
+    if non_thought_images:
+        return non_thought_images[-1]
+    if any_images:
+        return any_images[-1]
+    return None
+
+
+def _generate_content_image(client: genai.Client, model: str, contents):
+    """
+    Call `client.models.generate_content` with an optional config to force image output.
+
+    Falls back to calling without config for older SDK versions.
+    """
+    # If the SDK supports it, force image-only output for consistency.
+    config = None
+    if types is not None and hasattr(types, "GenerateContentConfig"):
+        try:
+            config = types.GenerateContentConfig(response_modalities=["IMAGE"])
+        except Exception:
+            config = None
+
+    def _call(selected_model: str):
+        try:
+            if config is not None:
+                return client.models.generate_content(model=selected_model, contents=contents, config=config)
+            return client.models.generate_content(model=selected_model, contents=contents)
+        except TypeError:
+            # Some SDK versions don't accept `config=...`
+            return client.models.generate_content(model=selected_model, contents=contents)
+
+    max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+    initial_delay_s = float(os.getenv("GEMINI_RETRY_INITIAL_DELAY_S", "1.0"))
+    max_delay_s = float(os.getenv("GEMINI_RETRY_MAX_DELAY_S", "10.0"))
+
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                print(f"🔁 Gemini retry {attempt}/{max_retries} (model={model})")
+            return _call(model)
+        except Exception as e:
+            last_exc = e
+            if not _is_transient_gemini_error(e) or attempt >= max_retries:
+                break
+
+            # exponential backoff with jitter
+            delay = min(max_delay_s, initial_delay_s * (2 ** (attempt - 0)))
+            delay = delay * (0.7 + random.random() * 0.6)  # jitter 0.7x..1.3x
+            print(f"⏳ Gemini transient error, backing off {delay:.1f}s: {e}")
+            time.sleep(delay)
+
+    # Optional fallback model (useful for gemini-3-pro-image-preview 503s)
+    fallback_model = get_gemini_fallback_image_model()
+    if fallback_model and fallback_model != model:
+        print(f"↩️ Falling back to Gemini model={fallback_model} after error on model={model}: {last_exc}")
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    print(f"🔁 Gemini retry {attempt}/{max_retries} (model={fallback_model})")
+                return _call(fallback_model)
+            except Exception as e:
+                last_exc = e
+                if not _is_transient_gemini_error(e) or attempt >= max_retries:
+                    break
+                delay = min(max_delay_s, initial_delay_s * (2 ** (attempt - 0)))
+                delay = delay * (0.7 + random.random() * 0.6)
+                print(f"⏳ Gemini transient error (fallback), backing off {delay:.1f}s: {e}")
+                time.sleep(delay)
+
+    # Give the original exception context back to the caller.
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini request failed with unknown error")
 
 
 def generate_unique_filename(original_name: str, prefix: str = "output") -> str:
@@ -198,14 +365,14 @@ Show the character from head to feet, entirely inside the frame.
 {bg_context}
 {canvas_context}
 """
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-image-preview",
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
             contents=[full_prompt, selfie_image],
         )
 
-        for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                img = Image.open(io.BytesIO(part.inline_data.data))
+        img = _extract_final_image_from_response(response)
+        if img is not None:
                 
                 # Post-process: If monochrome was requested, ensure output is pure grayscale
                 # This prevents any color tints (like blue shades) that Gemini might add
@@ -285,17 +452,17 @@ OUTPUT:
 Return a SINGLE final composited image ready for printing.
 """
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-image-preview",
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
             contents=[full_prompt, selfie_image, background_image],
         )
 
-        for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                img = Image.open(io.BytesIO(part.inline_data.data))
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                img.save(output_path)
-                return True, "Gemini composited character successfully"
+        img = _extract_final_image_from_response(response)
+        if img is not None:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            img.save(output_path)
+            return True, "Gemini composited character successfully"
 
         return False, "No composited image generated by Gemini"
     except Exception as e:
