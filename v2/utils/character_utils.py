@@ -4,11 +4,12 @@ Character generation utilities using Google Gemini API.
 import os
 import uuid
 import io
+import re
 import time
 import random
 from typing import Optional, Tuple, Dict, Any
 
-from PIL import Image
+from PIL import Image, ImageOps
 import requests
 import google.genai as genai
 
@@ -101,7 +102,18 @@ def _extract_final_image_from_response(response) -> Optional[Image.Image]:
         # Prefer SDK helper if present
         as_image = getattr(part, "as_image", None)
         try:
-            img = as_image() if callable(as_image) else Image.open(io.BytesIO(inline.data))
+            if callable(as_image):
+                img = as_image()
+                # Ensure it's a PIL Image object - convert if needed
+                if not isinstance(img, Image.Image):
+                    # If it's not a PIL Image, try to convert from bytes
+                    img = Image.open(io.BytesIO(inline.data))
+            else:
+                img = Image.open(io.BytesIO(inline.data))
+            
+            # Verify the image has the size attribute (PIL Image should have it)
+            if not hasattr(img, 'size'):
+                continue
         except Exception:
             continue
 
@@ -219,6 +231,24 @@ def cleanup_file(path: Optional[str]) -> None:
             pass
 
 
+def apply_exif_orientation(img: Image.Image) -> Image.Image:
+    """
+    Apply EXIF orientation data to image if present.
+    This ensures images are displayed in the correct orientation.
+    Uses PIL's ImageOps.exif_transpose for reliable EXIF handling.
+    """
+    try:
+        # Use PIL's built-in method to handle EXIF orientation
+        # This automatically applies the correct rotation/flip based on EXIF data
+        img = ImageOps.exif_transpose(img)
+    except (AttributeError, KeyError, TypeError, Exception) as e:
+        # No EXIF data or error reading it, return image as-is
+        # This is expected for images without EXIF orientation data
+        pass
+    
+    return img
+
+
 def get_image_info(path: str) -> Dict[str, Any]:
     try:
         with Image.open(path) as img:
@@ -256,7 +286,9 @@ def generate_character_with_identity(
         if not os.path.exists(selfie_path):
             return False, f"Selfie not found: {selfie_path}"
 
+        # Load image and apply EXIF orientation to preserve correct orientation
         selfie_image = Image.open(selfie_path)
+        selfie_image = apply_exif_orientation(selfie_image)
 
         # Detect if this is a style conversion task (pencil sketch, painting, etc.)
         # vs a character transformation task
@@ -266,6 +298,10 @@ def generate_character_with_identity(
             "painting", "watercolor", "oil painting", "charcoal", "ink drawing"
         ]
         is_style_conversion = any(keyword.lower() in character_prompt.lower() for keyword in style_keywords)
+        
+        # Detect if this is specifically a pencil sketch (to handle background differently)
+        pencil_sketch_keywords = ["pencil sketch", "graphite", "hand-drawn graphite"]
+        is_pencil_sketch = any(keyword.lower() in character_prompt.lower() for keyword in pencil_sketch_keywords)
 
         # Detect if this is a monochrome/grayscale request
         monochrome_keywords = [
@@ -326,23 +362,120 @@ FINAL COLOR CHECK:
 Before outputting, verify that the image is pure grayscale with no color tints. If any color is present, convert it to neutral gray.
 """
             
+            # Get image dimensions for orientation preservation
+            img_width, img_height = selfie_image.size
+            is_portrait = img_height > img_width
+            
             # For style conversions, preserve exact composition and framing
-            full_prompt = f"""{monochrome_prefix}Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
+            # Process user's prompt to handle "Negative prompt:" section (common in Stable Diffusion format)
+            # Convert it to explicit "DO NOT" instructions for Gemini
+            processed_prompt = character_prompt
+            negative_prompt_section = ""
+            
+            if "Negative prompt:" in character_prompt or "negative prompt:" in character_prompt:
+                # Split the prompt and negative prompt
+                parts = character_prompt.split("Negative prompt:", 1)
+                if len(parts) == 1:
+                    parts = character_prompt.split("negative prompt:", 1)
+                
+                if len(parts) == 2:
+                    processed_prompt = parts[0].strip()
+                    negative_items = parts[1].strip().split(",")
+                    negative_items = [item.strip() for item in negative_items if item.strip()]
+                    
+                    # For pencil sketch, remove background-related items from negative prompt
+                    # For other style conversions, keep all negative prompt items (including background removal)
+                    if is_pencil_sketch:
+                        background_related = ['background', 'scenery', 'room', 'landscape', 'horizon']
+                        negative_items = [item for item in negative_items 
+                                         if not any(bg_term in item.lower() for bg_term in background_related)]
+                    
+                    if negative_items:
+                        negative_list = '\n'.join([f'- {item}' for item in negative_items])
+                        negative_prompt_section = f"""
+STRICT PROHIBITIONS - DO NOT INCLUDE:
+{negative_list}
+"""
+            
+            # For pencil sketch, remove background removal instructions from the prompt
+            if is_pencil_sketch:
+                # Remove background removal phrases
+                background_removal_patterns = [
+                    (r'[^.]*?completely removing the background[^.]*?\.', ''),
+                    (r'[^.]*?removing the background[^.]*?\.', ''),
+                    (r'[^.]*?remove the background[^.]*?\.', ''),
+                    (r'[^.]*?completely removing the background so[^.]*?\.', ''),
+                    (r'[^.]*?removing the background so[^.]*?\.', ''),
+                    (r'[^.]*?subjects appear alone on a pure white canvas[^.]*?\.', ''),
+                    (r'[^.]*?appear alone on a pure white canvas[^.]*?\.', ''),
+                    (r'[^.]*?on a pure white canvas[^.]*?\.', ''),
+                    (r'[^.]*?pure white canvas[^.]*?\.', ''),
+                    (r'[^.]*?white canvas[^.]*?\.', ''),
+                    (r'completely removing the background[^,.]*?[,.]', ''),
+                    (r'removing the background[^,.]*?[,.]', ''),
+                    (r'remove the background[^,.]*?[,.]', ''),
+                    (r'pure white canvas[^,.]*?[,.]', ''),
+                    (r'white canvas[^,.]*?[,.]', ''),
+                ]
+                
+                for pattern, replacement in background_removal_patterns:
+                    processed_prompt = re.sub(pattern, replacement, processed_prompt, flags=re.IGNORECASE)
+                
+                # Remove standalone phrases
+                for phrase in [r'\bno background\b', r'\bwithout background\b', r'\bwhite background\b', r'\bno shadows\b']:
+                    processed_prompt = re.sub(phrase, '', processed_prompt, flags=re.IGNORECASE)
+                
+                # Clean up formatting
+                processed_prompt = re.sub(r'\s+', ' ', processed_prompt)
+                processed_prompt = re.sub(r'\s*\.\s*\.+', '.', processed_prompt)
+                processed_prompt = re.sub(r'\s*,\s*,+', ',', processed_prompt)
+                processed_prompt = re.sub(r'^\s*[.,;]\s*', '', processed_prompt)
+                processed_prompt = processed_prompt.strip()
+            
+            # Add background preservation instruction for pencil sketch, or background section for others
+            background_preservation_instruction = ""
+            background_section = ""
+            
+            if is_pencil_sketch:
+                background_preservation_instruction = """
+BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
+- You MUST preserve the original background from the reference image exactly as it appears
+- Do NOT remove, replace, modify, or change the background in any way
+- Keep ALL background elements, colors, textures, and details from the original image
+- The background should appear in the same style (pencil sketch) but remain in its original location and composition
+- If the original has a background, it must be visible in the output
+- Do NOT create a white canvas, transparent background, or remove any background elements
 
+"""
+            else:
+                # Only add background section if user hasn't specified background removal
+                has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
+                    'remove background', 'removing background', 'no background', 'without background',
+                    'white background', 'transparent background', 'pure white', 'white canvas'
+                ])
+                
+                if not has_background_removal:
+                    background_section = f"""
+BACKGROUND:
+{bg_req}
+"""
+            
+            full_prompt = f"""{monochrome_prefix}Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
+{background_preservation_instruction}
 CRITICAL REQUIREMENTS:
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
-- Maintain the same aspect ratio
+- Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
+- Do NOT rotate, flip, or change the orientation of the image
 - Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
 - Do NOT change the subject's position or pose
 - Apply the style transformation to the EXISTING image composition
+{f"- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch else ""}
 
 STYLE CONVERSION:
-{character_prompt}
-
-BACKGROUND:
-{bg_req}
-
+{processed_prompt}
+{negative_prompt_section}
+{background_section}
 {bg_context}
 {canvas_context}
 
@@ -373,19 +506,27 @@ Show the character from head to feet, entirely inside the frame.
 
         img = _extract_final_image_from_response(response)
         if img is not None:
-                
-                # Post-process: If monochrome was requested, ensure output is pure grayscale
-                # This prevents any color tints (like blue shades) that Gemini might add
-                if is_monochrome:
-                    # Convert to grayscale (L mode) then back to RGB to ensure pure grayscale
-                    # This removes any color information and ensures R=G=B for all pixels
-                    if img.mode != 'L':
-                        img = img.convert('L').convert('RGB')
-                        print("🖼️ Post-processed output to ensure pure grayscale (removed any color tints)")
-                
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                img.save(output_path)
-                return True, "Character generated successfully"
+            # Ensure img is a valid PIL Image with size attribute
+            if not hasattr(img, 'size') or not isinstance(img, Image.Image):
+                return False, "Invalid image object returned from Gemini (missing size attribute)"
+            
+            # Preserve original orientation - check if output orientation matches input
+            original_width, original_height = selfie_image.size
+            output_width, output_height = img.size
+            original_is_portrait = original_height > original_width
+            output_is_portrait = output_height > output_width
+            
+            # If orientation doesn't match, rotate to match original
+            if original_is_portrait != output_is_portrait:
+                img = img.rotate(-90, expand=True)
+            
+            # Post-process: If monochrome was requested, ensure output is pure grayscale
+            if is_monochrome and img.mode != 'L':
+                img = img.convert('L').convert('RGB')
+            
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            img.save(output_path)
+            return True, "Character generated successfully"
 
         return False, "No image generated by Gemini"
     except Exception as e:
@@ -413,8 +554,11 @@ def generate_character_composited_with_background(
         if not os.path.exists(background_path):
             return False, f"Background not found: {background_path}"
 
+        # Load images and apply EXIF orientation to preserve correct orientation
         selfie_image = Image.open(selfie_path)
+        selfie_image = apply_exif_orientation(selfie_image)
         background_image = Image.open(background_path)
+        background_image = apply_exif_orientation(background_image)
         bg_w, bg_h = background_image.size
 
         canvas_context = ""
@@ -460,6 +604,10 @@ Return a SINGLE final composited image ready for printing.
 
         img = _extract_final_image_from_response(response)
         if img is not None:
+            # Ensure img is a valid PIL Image with size attribute
+            if not hasattr(img, 'size') or not isinstance(img, Image.Image):
+                return False, "Invalid image object returned from Gemini (missing size attribute)"
+            
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             img.save(output_path)
             return True, "Gemini composited character successfully"
