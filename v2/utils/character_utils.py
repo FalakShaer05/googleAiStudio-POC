@@ -273,10 +273,12 @@ def generate_character_with_identity(
     background_dimensions: Optional[dict] = None,
     canvas_size: Optional[str] = None,
     dpi: int = 300,
+    character_only: bool = False,
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
     the model for a simple light background; we do NOT remove it locally.
+    If character_only=True, explicitly request character without any background.
     
     Detects if the prompt is a style conversion (like pencil sketch) vs character transformation,
     and handles them differently to preserve original composition.
@@ -312,7 +314,26 @@ def generate_character_with_identity(
         ]
         is_monochrome = any(keyword.lower() in character_prompt.lower() for keyword in monochrome_keywords)
 
+        # Initialize variables to avoid UnboundLocalError in f-strings
         bg_context = ""
+        canvas_context = ""
+        full_prompt = None
+        monochrome_prefix = ""
+        monochrome_suffix = ""
+        negative_prompt_section = ""
+        background_preservation_instruction = ""
+        background_section = ""
+        prompt_to_use = character_prompt
+        character_only_override = ""
+        prohibitions_section = ""
+        background_preservation_text = ""
+        background_removal_text = ""
+        preserve_bg_text = ""
+        img_width = 0
+        img_height = 0
+        is_portrait = False
+        processed_prompt = character_prompt
+
         if background_dimensions:
             bg_context = (
                 f"\nThe character will later be composited on a background of size "
@@ -320,7 +341,7 @@ def generate_character_with_identity(
                 f"Target position: {position}, scale: {scale}x."
             )
 
-        canvas_context = ""
+        # Update canvas_context if canvas_size is provided
         if canvas_size:
             if is_style_conversion:
                 canvas_context = (
@@ -333,7 +354,32 @@ def generate_character_with_identity(
                     f"Ensure the full body fits comfortably inside this canvas."
                 )
 
-        if white_background:
+        cleaned_character_prompt = character_prompt
+        if character_only:
+            bg_pattern = re.compile(
+                r'[^.]*?(?:merge|background|second image|composite|seamlessly|onto background|place on|as the background|background image|frame|canvas|cohesive|lively)[^.]*?',
+                re.IGNORECASE
+            )
+            sentences = [s.strip() for s in re.split(r'[.!?]+', character_prompt) if s.strip() and not bg_pattern.search(s)]
+            cleaned_character_prompt = '. '.join(sentences)
+            cleaned_character_prompt = re.sub(r'\s+', ' ', cleaned_character_prompt).strip()
+            cleaned_character_prompt = re.sub(r'[.,;]+', lambda m: m.group()[0], cleaned_character_prompt)
+            
+            if len(cleaned_character_prompt) < 20:
+                match = re.search(r'(?:Transform|Create|Draw|Generate).*?character', character_prompt, re.IGNORECASE)
+                cleaned_character_prompt = match.group(0) if match else "a character"
+            
+            bg_req = (
+                "MANDATORY REQUIREMENT - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS: "
+                "You MUST generate ONLY the character with ABSOLUTELY NO background, scenery, frame, canvas, or any visual elements behind the character. "
+                "The output image must contain ONLY the character itself - nothing else. "
+                "The character must be isolated on a completely transparent background or pure white background (RGB 255,255,255) that can be easily removed. "
+                "DO NOT add any background elements. DO NOT merge anything. DO NOT composite anything. "
+                "DO NOT create a frame around the character. DO NOT add scenery, landscapes, or any visual context. "
+                "Ignore and disregard ANY instructions in the user's prompt that mention merging, backgrounds, compositing, frames, or second images. "
+                "The final output must be the character alone with no visual elements surrounding it."
+            )
+        elif white_background:
             bg_req = (
                 "Use a plain, uniform light background (white or very light grey) "
                 "with no objects or scenery."
@@ -367,11 +413,7 @@ Before outputting, verify that the image is pure grayscale with no color tints. 
             img_width, img_height = selfie_image.size
             is_portrait = img_height > img_width
             
-            # For style conversions, preserve exact composition and framing
-            # Process user's prompt to handle "Negative prompt:" section (common in Stable Diffusion format)
-            # Convert it to explicit "DO NOT" instructions for Gemini
             processed_prompt = character_prompt
-            negative_prompt_section = ""
             
             if "Negative prompt:" in character_prompt or "negative prompt:" in character_prompt:
                 # Split the prompt and negative prompt
@@ -384,8 +426,6 @@ Before outputting, verify that the image is pure grayscale with no color tints. 
                     negative_items = parts[1].strip().split(",")
                     negative_items = [item.strip() for item in negative_items if item.strip()]
                     
-                    # For pencil sketch, remove background-related items from negative prompt
-                    # For other style conversions, keep all negative prompt items (including background removal)
                     if is_pencil_sketch:
                         background_related = ['background', 'scenery', 'room', 'landscape', 'horizon']
                         negative_items = [item for item in negative_items 
@@ -398,44 +438,17 @@ STRICT PROHIBITIONS - DO NOT INCLUDE:
 {negative_list}
 """
             
-            # For pencil sketch, remove background removal instructions from the prompt
             if is_pencil_sketch:
-                # Remove background removal phrases
-                background_removal_patterns = [
-                    (r'[^.]*?completely removing the background[^.]*?\.', ''),
-                    (r'[^.]*?removing the background[^.]*?\.', ''),
-                    (r'[^.]*?remove the background[^.]*?\.', ''),
-                    (r'[^.]*?completely removing the background so[^.]*?\.', ''),
-                    (r'[^.]*?removing the background so[^.]*?\.', ''),
-                    (r'[^.]*?subjects appear alone on a pure white canvas[^.]*?\.', ''),
-                    (r'[^.]*?appear alone on a pure white canvas[^.]*?\.', ''),
-                    (r'[^.]*?on a pure white canvas[^.]*?\.', ''),
-                    (r'[^.]*?pure white canvas[^.]*?\.', ''),
-                    (r'[^.]*?white canvas[^.]*?\.', ''),
-                    (r'completely removing the background[^,.]*?[,.]', ''),
-                    (r'removing the background[^,.]*?[,.]', ''),
-                    (r'remove the background[^,.]*?[,.]', ''),
-                    (r'pure white canvas[^,.]*?[,.]', ''),
-                    (r'white canvas[^,.]*?[,.]', ''),
-                ]
-                
-                for pattern, replacement in background_removal_patterns:
-                    processed_prompt = re.sub(pattern, replacement, processed_prompt, flags=re.IGNORECASE)
-                
-                # Remove standalone phrases
-                for phrase in [r'\bno background\b', r'\bwithout background\b', r'\bwhite background\b', r'\bno shadows\b']:
-                    processed_prompt = re.sub(phrase, '', processed_prompt, flags=re.IGNORECASE)
-                
-                # Clean up formatting
-                processed_prompt = re.sub(r'\s+', ' ', processed_prompt)
-                processed_prompt = re.sub(r'\s*\.\s*\.+', '.', processed_prompt)
-                processed_prompt = re.sub(r'\s*,\s*,+', ',', processed_prompt)
-                processed_prompt = re.sub(r'^\s*[.,;]\s*', '', processed_prompt)
-                processed_prompt = processed_prompt.strip()
-            
-            # Add background preservation instruction for pencil sketch, or background section for others
-            background_preservation_instruction = ""
-            background_section = ""
+                bg_removal_pattern = re.compile(
+                    r'[^.]*?(?:completely removing|removing|remove)\s+the\s+background[^.]*?\.|'
+                    r'[^.]*?(?:subjects|appear)\s+alone\s+on\s+a\s+pure\s+white\s+canvas[^.]*?\.|'
+                    r'[^.]*?pure\s+white\s+canvas[^.]*?\.|'
+                    r'[^.]*?white\s+canvas[^.]*?\.|'
+                    r'\b(?:no|without)\s+background\b|\bwhite\s+background\b|\bno\s+shadows\b',
+                    re.IGNORECASE
+                )
+                processed_prompt = bg_removal_pattern.sub('', processed_prompt)
+                processed_prompt = re.sub(r'\s+', ' ', processed_prompt).strip()
             
             if is_pencil_sketch:
                 background_preservation_instruction = """
@@ -449,20 +462,53 @@ BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
 
 """
             else:
-                # Only add background section if user hasn't specified background removal
-                has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
-                    'remove background', 'removing background', 'no background', 'without background',
-                    'white background', 'transparent background', 'pure white', 'white canvas'
-                ])
-                
-                if not has_background_removal:
-                    background_section = f"""
+                if not character_only:
+                    has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
+                        'remove background', 'removing background', 'no background', 'without background',
+                        'white background', 'transparent background', 'pure white', 'white canvas'
+                    ])
+                    
+                    if not has_background_removal:
+                        background_section = f"""
 BACKGROUND:
 {bg_req}
 """
             
-            full_prompt = f"""{monochrome_prefix}Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
-{background_preservation_instruction}
+            prompt_to_use = cleaned_character_prompt if character_only else processed_prompt
+            
+            if character_only and not is_pencil_sketch:
+                character_only_override = """⚠️ CRITICAL INSTRUCTION - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS ⚠️
+
+YOU MUST GENERATE ONLY THE CHARACTER WITH NO BACKGROUND WHATSOEVER.
+
+REQUIREMENTS:
+- Output ONLY the character - no background, no scenery, no frame, no canvas
+- Character must be on transparent or pure white background (RGB 255,255,255)
+- DO NOT merge, composite, or place the character on any background
+- DO NOT add any visual elements behind or around the character
+- IGNORE any instructions in the user's prompt about merging, backgrounds, compositing, or second images
+- The character must be completely isolated with nothing surrounding it
+
+THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
+
+"""
+            
+            if character_only and not is_pencil_sketch:
+                prohibitions_section = """
+STRICT PROHIBITIONS (when character_only=True):
+- DO NOT add any background, scenery, or visual context
+- DO NOT merge or composite the character onto anything
+- DO NOT create frames, borders, or canvases
+- DO NOT add any elements behind or around the character
+- The output must be ONLY the character on transparent/white background
+"""
+            
+            background_preservation_text = "" if character_only else background_preservation_instruction
+            background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_pencil_sketch else ""
+            preserve_bg_text = "- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch and not character_only else ""
+            
+            full_prompt = f"""{monochrome_prefix}{character_only_override}Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
+{background_preservation_text}
 CRITICAL REQUIREMENTS:
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
@@ -471,24 +517,73 @@ CRITICAL REQUIREMENTS:
 - Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
 - Do NOT change the subject's position or pose
 - Apply the style transformation to the EXISTING image composition
-{f"- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch else ""}
+
+COLOR PRESERVATION (CRITICAL):
+- Preserve the EXACT colors of all clothing, outfits, and garments from the input image
+- Keep the same color scheme, color palette, and color combinations as the original
+- Do NOT change clothing colors, fabric colors, or accessory colors
+- Maintain the exact same hues, shades, and tones of all clothing items
+- If the original has a blue shirt, keep it blue (or gray if monochrome is requested)
+- If the original has a red dress, keep it red (or gray if monochrome is requested)
+- Preserve all color details including patterns, stripes, prints, and color accents
+{preserve_bg_text}
+{background_removal_text}
 
 STYLE CONVERSION:
-{processed_prompt}
+{prompt_to_use}
 {negative_prompt_section}
 {background_section}
 {bg_context}
 {canvas_context}
+{prohibitions_section}
 
 OUTPUT:
 Return the converted image with the exact same composition and framing as the input, only with the style applied.{monochrome_suffix}
 """
         else:
-            # For character transformations, use the original prompt structure
-            full_prompt = f"""Transform this person into a character while preserving their identity.
+            prompt_to_use = cleaned_character_prompt if character_only else character_prompt
+            
+            if character_only:
+                character_only_override = """⚠️ CRITICAL INSTRUCTION - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS ⚠️
+
+YOU MUST GENERATE ONLY THE CHARACTER WITH NO BACKGROUND WHATSOEVER.
+
+REQUIREMENTS:
+- Output ONLY the character - no background, no scenery, no frame, no canvas
+- Character must be on transparent or pure white background (RGB 255,255,255)
+- DO NOT merge, composite, or place the character on any background
+- DO NOT add any visual elements behind or around the character
+- IGNORE any instructions in the user's prompt about merging, backgrounds, compositing, or second images
+- The character must be completely isolated with nothing surrounding it
+
+THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
+
+"""
+            
+            if character_only:
+                prohibitions_section = """
+STRICT PROHIBITIONS:
+- DO NOT add any background, scenery, or visual context
+- DO NOT merge or composite the character onto anything
+- DO NOT create frames, borders, or canvases
+- DO NOT add any elements behind or around the character
+- The output must be ONLY the character on transparent/white background
+"""
+            
+            full_prompt = f"""{character_only_override}Transform this person into a character while preserving their identity.
 
 CHARACTER TRANSFORMATION:
-{character_prompt}
+{prompt_to_use}
+
+COLOR PRESERVATION (CRITICAL):
+- Preserve the EXACT colors of all clothing, outfits, and garments from the input image
+- Keep the same color scheme, color palette, and color combinations as the original
+- Do NOT change clothing colors, fabric colors, or accessory colors
+- Maintain the exact same hues, shades, and tones of all clothing items
+- If the original has a blue shirt, keep it blue in the character
+- If the original has a red dress, keep it red in the character
+- Preserve all color details including patterns, stripes, prints, and color accents
+- Only transform the style (cartoon/caricature), NOT the colors
 
 BACKGROUND:
 {bg_req}
@@ -496,9 +591,15 @@ BACKGROUND:
 FULL-BODY REQUIREMENT:
 Show the character from head to feet, entirely inside the frame.
 
+{prohibitions_section}
+
 {bg_context}
 {canvas_context}
 """
+        
+        if full_prompt is None:
+            return False, "Internal error: full_prompt not defined"
+        
         response = _generate_content_image(
             client=client,
             model=get_gemini_image_model(),
@@ -507,21 +608,17 @@ Show the character from head to feet, entirely inside the frame.
 
         img = _extract_final_image_from_response(response)
         if img is not None:
-            # Ensure img is a valid PIL Image with size attribute
             if not hasattr(img, 'size') or not isinstance(img, Image.Image):
                 return False, "Invalid image object returned from Gemini (missing size attribute)"
             
-            # Preserve original orientation - check if output orientation matches input
             original_width, original_height = selfie_image.size
             output_width, output_height = img.size
             original_is_portrait = original_height > original_width
             output_is_portrait = output_height > output_width
             
-            # If orientation doesn't match, rotate to match original
             if original_is_portrait != output_is_portrait:
                 img = img.rotate(-90, expand=True)
             
-            # Post-process: If monochrome was requested, ensure output is pure grayscale
             if is_monochrome and img.mode != 'L':
                 img = img.convert('L').convert('RGB')
             
@@ -544,9 +641,13 @@ def generate_character_composited_with_background(
     scale: float = 1.0,
     canvas_size: Optional[str] = None,
     dpi: int = 300,
+    use_gemini_compositing: bool = True,
 ) -> Tuple[bool, str]:
     """
-    One-shot: Gemini creates a character AND composites it onto the given background.
+    Generate character and composite onto background.
+    
+    If use_gemini_compositing=True (default): Gemini creates character AND composites it onto background.
+    If use_gemini_compositing=False: Generate character first, then composite background locally using PIL.
     """
     try:
         client = get_gemini_client()
@@ -563,13 +664,15 @@ def generate_character_composited_with_background(
         bg_w, bg_h = background_image.size
 
         canvas_context = ""
-        if canvas_size:
-            canvas_context = (
-                f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                f"the provided background ({bg_w}x{bg_h})."
-            )
 
-        full_prompt = f"""TASK:
+        if use_gemini_compositing:
+            if canvas_size:
+                canvas_context = (
+                    f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
+                    f"the provided background ({bg_w}x{bg_h})."
+                )
+
+            full_prompt = f"""TASK:
 Create a full-body cartoon/caricature of this person and composite them onto this exact background image.
 
 BACKGROUND USAGE (MUST FOLLOW EXACTLY):
@@ -579,14 +682,24 @@ BACKGROUND USAGE (MUST FOLLOW EXACTLY):
 CHARACTER POSITIONING:
 3. Place the character standing at the {position.upper()} of the background, centered horizontally.
 4. The character must be full-body (head to feet), entirely inside the frame.
-5. Character height ≈ {int(scale * 75)}% of the total image height.
+5. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
 
 STYLE & IDENTITY:
 6. Preserve the person's identity (face, hair, skin tone).
 7. Use clean outlines and vibrant colors suitable for printing.
 
+COLOR PRESERVATION (CRITICAL):
+8. Preserve the EXACT colors of all clothing, outfits, and garments from the input image
+9. Keep the same color scheme, color palette, and color combinations as the original
+10. Do NOT change clothing colors, fabric colors, or accessory colors
+11. Maintain the exact same hues, shades, and tones of all clothing items
+12. If the original has a blue shirt, keep it blue in the character
+13. If the original has a red dress, keep it red in the character
+14. Preserve all color details including patterns, stripes, prints, and color accents
+15. Only transform the style (cartoon/caricature), NOT the colors
+
 RESTRICTIONS:
-8. Do NOT add text, logos, borders or extra objects.
+16. Do NOT add text, logos, borders or extra objects.
 
 CHARACTER DESCRIPTION:
 {character_prompt}
@@ -597,23 +710,106 @@ OUTPUT:
 Return a SINGLE final composited image ready for printing.
 """
 
-        response = _generate_content_image(
-            client=client,
-            model=get_gemini_image_model(),
-            contents=[full_prompt, selfie_image, background_image],
-        )
+            response = _generate_content_image(
+                client=client,
+                model=get_gemini_image_model(),
+                contents=[full_prompt, selfie_image, background_image],
+            )
 
-        img = _extract_final_image_from_response(response)
-        if img is not None:
-            # Ensure img is a valid PIL Image with size attribute
-            if not hasattr(img, 'size') or not isinstance(img, Image.Image):
-                return False, "Invalid image object returned from Gemini (missing size attribute)"
+            img = _extract_final_image_from_response(response)
+            if img is not None:
+                if not hasattr(img, 'size') or not isinstance(img, Image.Image):
+                    return False, "Invalid image object returned from Gemini (missing size attribute)"
+                
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                img.save(output_path)
+                return True, "Gemini composited character successfully"
+
+            return False, "No composited image generated by Gemini"
+        else:
+            temp_char_path = output_path.replace(".png", "_temp_char.png")
+            success, message = generate_character_with_identity(
+                selfie_path=selfie_path,
+                character_prompt=character_prompt,
+                output_path=temp_char_path,
+                white_background=False,
+                position=position,
+                scale=scale,
+                background_dimensions=None,
+                canvas_size=None,
+                dpi=dpi,
+                character_only=True,
+            )
             
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            img.save(output_path)
-            return True, "Gemini composited character successfully"
-
-        return False, "No composited image generated by Gemini"
+            if not success:
+                return False, f"Character generation failed: {message}"
+            
+            try:
+                char_image = Image.open(temp_char_path).convert("RGBA")
+                
+                data = char_image.getdata()
+                new_data = [(r, g, b, 0) if r > 240 and g > 240 and b > 240 else (r, g, b, a) 
+                           for r, g, b, a in data]
+                char_image.putdata(new_data)
+                
+                # Apply canvas size to background if specified
+                if canvas_size:
+                    size_map = {
+                        "8x10": (8, 10),
+                        "11x14": (11, 14),
+                        "16x20": (16, 20),
+                    }
+                    if canvas_size in size_map:
+                        target_w, target_h = size_map[canvas_size]
+                        target_width = int(target_w * dpi)
+                        target_height = int(target_h * dpi)
+                        bg_aspect = bg_w / bg_h
+                        target_aspect = target_width / target_height
+                        
+                        if bg_aspect > target_aspect:
+                            new_h = target_height
+                            new_w = int(new_h * bg_aspect)
+                        else:
+                            new_w = target_width
+                            new_h = int(new_w / bg_aspect)
+                        
+                        background_image = background_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                        final_bg = Image.new("RGB", (target_width, target_height), (255, 255, 255))
+                        paste_x = (target_width - new_w) // 2
+                        paste_y = (target_height - new_h) // 2
+                        final_bg.paste(background_image, (paste_x, paste_y))
+                        background_image = final_bg
+                        bg_w, bg_h = background_image.size
+                
+                target_char_height = int(bg_h * scale * 0.95)
+                
+                char_w, char_h = char_image.size
+                scale_factor = target_char_height / char_h if char_h > 0 else 1.0
+                new_char_w = int(char_w * scale_factor)
+                new_char_h = int(char_h * scale_factor)
+                
+                if new_char_w > bg_w or new_char_h > bg_h:
+                    fit_scale = min(bg_w / new_char_w, bg_h / new_char_h)
+                    new_char_w = int(new_char_w * fit_scale)
+                    new_char_h = int(new_char_h * fit_scale)
+                
+                char_image = char_image.resize((new_char_w, new_char_h), Image.Resampling.LANCZOS)
+                
+                y_pos = bg_h - new_char_h - int(bg_h * 0.05) if position == "bottom" else (bg_h - new_char_h) // 2
+                x_pos = (bg_w - new_char_w) // 2
+                
+                composite = background_image.copy().convert("RGBA")
+                composite.paste(char_image, (x_pos, y_pos), char_image)
+                composite = composite.convert("RGB")
+                
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                composite.save(output_path, "PNG", dpi=(dpi, dpi))
+                cleanup_file(temp_char_path)
+                
+                return True, "Character generated and composited locally"
+            except Exception as e:
+                cleanup_file(temp_char_path)
+                return False, f"Local compositing failed: {str(e)}"
     except Exception as e:
         print(f"generate_character_composited_with_background error: {e}")
         return False, str(e)

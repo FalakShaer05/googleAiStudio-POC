@@ -252,6 +252,7 @@ def generate_character_web():
         scale = float(request.form.get("scale", "1.0"))
         canvas_size = request.form.get("canvas_size", "").strip() or None
         dpi = int(request.form.get("dpi", "300"))
+        use_gemini_compositing = request.form.get("use_gemini_compositing", "true").lower() == "true"
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
@@ -308,6 +309,7 @@ def generate_character_web():
                 scale=scale,
                 canvas_size=canvas_size,
                 dpi=dpi,
+                use_gemini_compositing=use_gemini_compositing,
             )
         else:
             success, message = generate_character_with_identity(

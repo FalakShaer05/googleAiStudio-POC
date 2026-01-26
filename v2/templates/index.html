@@ -333,6 +333,31 @@
             </div>
           </div>
 
+          <!-- Compositing Mode Toggle (only shown when background is provided) -->
+          <div class="mb-3" id="compositingToggleContainer" style="display: none;">
+            <div class="p-3" style="background: #f8f9ff; border-radius: 10px; border: 2px solid #e9ecef;">
+              <div class="form-check form-switch d-flex align-items-center">
+                <input
+                  class="form-check-input me-2"
+                  type="checkbox"
+                  id="useGeminiCompositing"
+                  name="use_gemini_compositing"
+                  checked
+                  style="width: 3rem; height: 1.5rem; cursor: pointer;"
+                />
+                <div>
+                  <label class="form-check-label fw-bold" for="useGeminiCompositing" style="cursor: pointer;">
+                    Use Gemini Compositing
+                  </label>
+                  <small class="d-block text-muted">
+                    <span id="compositingModeDesc">ON: Gemini composites character and background together</span>
+                    <span id="compositingModeDescOff" style="display: none;">OFF: Generate character first, then composite locally</span>
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Prompt & style -->
           <div class="mb-3">
             <label class="form-label fw-bold">Character Prompt</label>
@@ -697,6 +722,34 @@
       selfieUploadArea.style.display = "block";
     });
 
+    // Compositing toggle elements
+    const compositingToggleContainer = document.getElementById("compositingToggleContainer");
+    const useGeminiCompositing = document.getElementById("useGeminiCompositing");
+    const compositingModeDesc = document.getElementById("compositingModeDesc");
+    const compositingModeDescOff = document.getElementById("compositingModeDescOff");
+    const backgroundUrl = document.getElementById("backgroundUrl");
+
+    function updateCompositingToggleVisibility() {
+      const hasBackground = bgFileInput.files.length > 0 || backgroundUrl.value.trim() !== "";
+      compositingToggleContainer.style.display = hasBackground ? "block" : "none";
+    }
+
+    function updateCompositingModeDesc() {
+      if (useGeminiCompositing.checked) {
+        compositingModeDesc.style.display = "inline";
+        compositingModeDescOff.style.display = "none";
+      } else {
+        compositingModeDesc.style.display = "none";
+        compositingModeDescOff.style.display = "inline";
+      }
+    }
+
+    useGeminiCompositing.addEventListener("change", updateCompositingModeDesc);
+    
+    // Initialize toggle visibility and description
+    updateCompositingToggleVisibility();
+    updateCompositingModeDesc();
+    
     bgUploadArea.addEventListener("click", () => bgFileInput.click());
     bgFileInput.addEventListener("change", () => {
       const file = bgFileInput.files[0];
@@ -704,14 +757,17 @@
         bgFileName.textContent = file.name;
         bgFileInfo.style.display = "block";
         bgUploadArea.style.display = "none";
-        document.getElementById("backgroundUrl").value = "";
+        backgroundUrl.value = "";
       }
+      updateCompositingToggleVisibility();
     });
     clearBgBtn.addEventListener("click", () => {
       bgFileInput.value = "";
       bgFileInfo.style.display = "none";
       bgUploadArea.style.display = "block";
+      updateCompositingToggleVisibility();
     });
+    backgroundUrl.addEventListener("input", updateCompositingToggleVisibility);
 
     charScale.addEventListener("input", (e) => {
       charScaleValue.textContent = Math.round(e.target.value * 100) + "%";
@@ -745,6 +801,7 @@
       const formData = new FormData(characterForm);
       formData.set("position", document.getElementById("charPosition").value);
       formData.set("scale", document.getElementById("charScale").value);
+      formData.set("use_gemini_compositing", useGeminiCompositing.checked ? "true" : "false");
 
       const bgFile = bgFileInput.files[0];
       const bgUrlInput = document.getElementById("backgroundUrl");
