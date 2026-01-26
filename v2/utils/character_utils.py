@@ -338,6 +338,8 @@ def generate_character_with_identity(
         img_height = 0
         is_portrait = False
         processed_prompt = character_prompt
+        prompt_lower_check = character_prompt.lower()  # Initialize for full-body detection
+        original_prompt_lower = character_prompt.lower()  # Initialize for full-body detection
 
         if background_dimensions:
             bg_context = (
@@ -376,13 +378,14 @@ def generate_character_with_identity(
             
             bg_req = (
                 "MANDATORY REQUIREMENT - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS: "
-                "You MUST generate ONLY the character with ABSOLUTELY NO background, scenery, frame, canvas, or any visual elements behind the character. "
+                "You MUST generate ONLY the character with ABSOLUTELY NO background, scenery, frame, canvas, white frames, white borders, or any visual elements behind the character. "
                 "The output image must contain ONLY the character itself - nothing else. "
                 "The character must be isolated on a completely transparent background or pure white background (RGB 255,255,255) that can be easily removed. "
                 "DO NOT add any background elements. DO NOT merge anything. DO NOT composite anything. "
-                "DO NOT create a frame around the character. DO NOT add scenery, landscapes, or any visual context. "
+                "DO NOT create a frame around the character. DO NOT add white frames, white borders, white padding, or white margins. "
+                "DO NOT add scenery, landscapes, or any visual context. "
                 "Ignore and disregard ANY instructions in the user's prompt that mention merging, backgrounds, compositing, frames, or second images. "
-                "The final output must be the character alone with no visual elements surrounding it."
+                "The final output must be the character alone with no visual elements surrounding it - NO white frames or borders."
             )
         elif white_background:
             bg_req = (
@@ -390,7 +393,7 @@ def generate_character_with_identity(
                 "with no objects or scenery."
             )
         else:
-            bg_req = "You may choose an appropriate background; do not crop the subject."
+            bg_req = "You may choose an appropriate background; do not crop the subject. Do NOT add white frames, borders, or white canvases around the character."
 
         if is_style_conversion:
             # Build monochrome instructions if needed - place at the very beginning for maximum impact
@@ -473,14 +476,15 @@ BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
 
 """
             else:
+                background_section = ""
                 if not character_only:
                     has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
-                    'remove background', 'removing background', 'no background', 'without background',
-                    'white background', 'transparent background', 'pure white', 'white canvas'
-                ])
-                
-                if not has_background_removal:
-                    background_section = f"""
+                        'remove background', 'removing background', 'no background', 'without background',
+                        'white background', 'transparent background', 'pure white', 'white canvas'
+                    ])
+                    
+                    if not has_background_removal:
+                        background_section = f"""
 BACKGROUND:
 {bg_req}
 """
@@ -509,14 +513,18 @@ THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
 STRICT PROHIBITIONS (when character_only=True):
 - DO NOT add any background, scenery, or visual context
 - DO NOT merge or composite the character onto anything
-- DO NOT create frames, borders, or canvases
+- DO NOT create frames, borders, white frames, white borders, or white canvases
+- DO NOT add any white space, white padding, or white margins around the character
 - DO NOT add any elements behind or around the character
-- The output must be ONLY the character on transparent/white background
+- The output must be ONLY the character on transparent/white background with NO white frames or borders
 """
             
             background_preservation_text = "" if character_only or is_warhol_style else background_preservation_instruction
             background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_pencil_sketch and not is_warhol_style else ""
             preserve_bg_text = "- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch and not character_only and not is_warhol_style else ""
+            
+            # Check if user explicitly requests full-body in style conversion
+            has_explicit_full_body_style = re.search(r'\bfull[\s-]?body\b', prompt_lower_check) or re.search(r'\bfull[\s-]?body\b', original_prompt_lower)
             
             if is_warhol_style:
                 composition_instructions = """COMPOSITION:
@@ -524,13 +532,29 @@ STRICT PROHIBITIONS (when character_only=True):
 - Apply the requested layout and framing as specified in the prompt
 """
             else:
-                composition_instructions = f"""CRITICAL REQUIREMENTS:
+                if has_explicit_full_body_style:
+                    composition_instructions = f"""CRITICAL REQUIREMENTS:
+- The user's prompt explicitly requests "full-body" - you MUST show the complete character from head to feet
+- Preserve the EXACT same framing, crop, and composition as the input image
+- Keep the same pose, position, and body parts visible
+- Follow any pose instructions in the user's prompt (e.g., "standing in playful pose")
+- Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
+- Do NOT rotate, flip, or change the orientation of the image
+- Do NOT cut off or hide body parts (hands, feet, arms, legs) - show the complete full body
+- Do NOT change the subject's position or pose unless the prompt explicitly requests a different pose
+- Show complete body parts (hands, feet, arms, legs) - the character must be full-body as requested
+- Apply the style transformation to the EXISTING image composition
+"""
+                else:
+                    composition_instructions = f"""CRITICAL REQUIREMENTS:
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
+- Follow any pose instructions in the user's prompt (e.g., "standing in playful pose")
 - Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
 - Do NOT rotate, flip, or change the orientation of the image
 - Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
-- Do NOT change the subject's position or pose
+- Do NOT change the subject's position or pose unless the prompt explicitly requests a different pose
+- Show complete body parts (hands, feet, arms, legs) unless the prompt explicitly requests otherwise
 - Apply the style transformation to the EXISTING image composition
 """
             
@@ -569,21 +593,43 @@ OUTPUT:
         else:
             prompt_to_use = cleaned_character_prompt if character_only else character_prompt
             
-            # Check if user explicitly requests NOT to make it full-body
-            # Check BOTH the processed prompt AND the original full prompt (to catch negative prompts)
+            # Update prompt_lower_check with the processed prompt
             prompt_lower_check = prompt_to_use.lower()
-            original_prompt_lower = character_prompt.lower()  # Check original to catch negative section
-            no_full_body_keywords = [
-                "not full body", "no full body", "do not full body", "avoid full body",
-                "not whole body", "no whole body", "do not whole body", "avoid whole body",
-                "whole body",  # Also check for just "whole body" in negative section
-                "not head to toe", "no head to toe", "do not head to toe",
-                "close-up", "close up", "portrait only", "face only", "upper body only",
-                "no feet", "without feet", "exclude feet", "no legs", "without legs"
+            
+            # Check if user explicitly requests NOT to make it full-body
+            # Only disable full-body if user EXPLICITLY says not to (not just mentions keywords)
+            
+            # Only match explicit negative phrases (removed generic keywords that might be in style descriptions)
+            explicit_no_full_body_patterns = [
+                r"not\s+full\s+body", r"no\s+full\s+body", r"do\s+not\s+full\s+body", r"avoid\s+full\s+body",
+                r"not\s+whole\s+body", r"no\s+whole\s+body", r"do\s+not\s+whole\s+body", r"avoid\s+whole\s+body",
+                r"not\s+head\s+to\s+toe", r"no\s+head\s+to\s+toe", r"do\s+not\s+head\s+to\s+toe",
+                r"no\s+feet", r"without\s+feet", r"exclude\s+feet", r"no\s+legs", r"without\s+legs"
             ]
-            # Check both processed prompt and original prompt (which includes negative section)
-            user_wants_full_body = not any(keyword in prompt_lower_check for keyword in no_full_body_keywords) and \
-                                  not any(keyword in original_prompt_lower for keyword in no_full_body_keywords)
+            
+            # Check for "whole body" only in negative section (NEGATIVE: whole body)
+            has_negative_whole_body = False
+            if "negative:" in original_prompt_lower or "NEGATIVE:" in original_prompt_lower:
+                negative_match = re.search(r'(?:negative|NEGATIVE):\s*[^.]*whole\s+body', original_prompt_lower)
+                if negative_match:
+                    has_negative_whole_body = True
+            
+            # Check if user explicitly requests full-body in prompt
+            has_explicit_full_body = re.search(r'\bfull[\s-]?body\b', prompt_lower_check) or re.search(r'\bfull[\s-]?body\b', original_prompt_lower)
+            
+            # Default to full-body, only disable if explicit pattern found
+            user_wants_full_body = True
+            for pattern in explicit_no_full_body_patterns:
+                if re.search(pattern, prompt_lower_check) or re.search(pattern, original_prompt_lower):
+                    user_wants_full_body = False
+                    break
+            
+            if has_negative_whole_body:
+                user_wants_full_body = False
+            
+            # If user explicitly says "full-body" in prompt, force it to True
+            if has_explicit_full_body:
+                user_wants_full_body = True
             
             if character_only:
                 character_only_override = """⚠️ CRITICAL INSTRUCTION - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS ⚠️
@@ -591,12 +637,13 @@ OUTPUT:
 YOU MUST GENERATE ONLY THE CHARACTER WITH NO BACKGROUND WHATSOEVER.
 
 REQUIREMENTS:
-- Output ONLY the character - no background, no scenery, no frame, no canvas
-- Character must be on transparent or pure white background (RGB 255,255,255)
+- Output ONLY the character - no background, no scenery, no frame, no canvas, no white borders
+- Character must be on transparent or pure white background (RGB 255,255,255) that can be easily removed
+- DO NOT add white frames, white borders, or white canvases around the character
 - DO NOT merge, composite, or place the character on any background
 - DO NOT add any visual elements behind or around the character
 - IGNORE any instructions in the user's prompt about merging, backgrounds, compositing, or second images
-- The character must be completely isolated with nothing surrounding it
+- The character must be completely isolated with nothing surrounding it - no frames, no borders, no white space around edges
 
 THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
 
@@ -607,14 +654,25 @@ THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
 STRICT PROHIBITIONS:
 - DO NOT add any background, scenery, or visual context
 - DO NOT merge or composite the character onto anything
-- DO NOT create frames, borders, or canvases
+- DO NOT create frames, borders, white frames, white borders, or white canvases
+- DO NOT add any white space, white padding, or white margins around the character
 - DO NOT add any elements behind or around the character
-- The output must be ONLY the character on transparent/white background
+- The output must be ONLY the character on transparent/white background with NO white frames or borders
 """
             
             # Build full-body section conditionally (can't use triple quotes in f-string conditional)
             if user_wants_full_body:
-                full_body_section = """
+                if has_explicit_full_body:
+                    full_body_section = """
+FRAMING REQUIREMENT (CRITICAL - USER EXPLICITLY REQUESTED):
+- The user's prompt explicitly requests "full-body" - you MUST show the complete character from head to feet
+- Show the character from head to feet, entirely inside the frame
+- Ensure the full body is visible - do NOT cut off any body parts
+- Do NOT crop or hide hands, feet, arms, or legs
+- The character must be complete and fully visible
+"""
+                else:
+                    full_body_section = """
 FRAMING REQUIREMENT:
 - Show the character from head to feet, entirely inside the frame.
 - Ensure the full body is visible.
@@ -627,11 +685,21 @@ FRAMING REQUIREMENT:
 CHARACTER TRANSFORMATION:
 {prompt_to_use}
 
+POSE & BODY PRESERVATION (CRITICAL):
+- Follow the user's specific pose instructions from the prompt (e.g., "standing in playful pose", "sitting", etc.)
+- Do NOT change the pose described in the prompt
+- Show the complete character with all body parts visible unless the prompt explicitly requests otherwise
+- Do NOT cut off or hide body parts (hands, feet, arms, legs) unless explicitly requested
+- Maintain natural body proportions and positioning as described in the prompt
+- If the prompt says "standing", show the character standing
+- If the prompt says "playful pose", show a playful pose, not a different pose
+
 COLOR PRESERVATION (CRITICAL):
 - Preserve the EXACT colors of all clothing, outfits, and garments from the input image
 - Keep the same color scheme, color palette, and color combinations as the original
 - Do NOT change clothing colors, fabric colors, or accessory colors
 - Maintain the exact same hues, shades, and tones of all clothing items
+- Preserve white colors in the character (white clothing, white eyes, etc.) - do NOT make them transparent
 - If the original has a blue shirt, keep it blue in the character
 - If the original has a red dress, keep it red in the character
 - Preserve all color details including patterns, stripes, prints, and color accents
@@ -718,24 +786,58 @@ def generate_character_composited_with_background(
         if use_gemini_compositing:
             if canvas_size:
                 canvas_context = (
-                f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                f"the provided background ({bg_w}x{bg_h})."
-            )
+                    f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
+                    f"the provided background ({bg_w}x{bg_h})."
+                )
 
             # Check if user explicitly requests NOT to make it full-body
+            # Only disable full-body if user EXPLICITLY says not to (not just mentions keywords)
             prompt_lower_composite = character_prompt.lower()
-            no_full_body_keywords_composite = [
-                "not full body", "no full body", "do not full body", "avoid full body",
-                "not whole body", "no whole body", "do not whole body", "avoid whole body",
-                "not head to toe", "no head to toe", "do not head to toe",
-                "close-up", "close up", "portrait only", "face only", "upper body only",
-                "no feet", "without feet", "exclude feet", "no legs", "without legs"
+            
+            # Only match explicit negative phrases (removed generic keywords that might be in style descriptions)
+            explicit_no_full_body_patterns_composite = [
+                r"not\s+full\s+body", r"no\s+full\s+body", r"do\s+not\s+full\s+body", r"avoid\s+full\s+body",
+                r"not\s+whole\s+body", r"no\s+whole\s+body", r"do\s+not\s+whole\s+body", r"avoid\s+whole\s+body",
+                r"not\s+head\s+to\s+toe", r"no\s+head\s+to\s+toe", r"do\s+not\s+head\s+to\s+toe",
+                r"no\s+feet", r"without\s+feet", r"exclude\s+feet", r"no\s+legs", r"without\s+legs"
             ]
-            user_wants_full_body_composite = not any(keyword in prompt_lower_composite for keyword in no_full_body_keywords_composite)
+            
+            # Check for "whole body" only in negative section (NEGATIVE: whole body)
+            has_negative_whole_body_composite = False
+            if "negative:" in prompt_lower_composite or "NEGATIVE:" in prompt_lower_composite:
+                negative_match = re.search(r'(?:negative|NEGATIVE):\s*[^.]*whole\s+body', prompt_lower_composite)
+                if negative_match:
+                    has_negative_whole_body_composite = True
+            
+            # Check if user explicitly requests full-body in prompt
+            has_explicit_full_body_composite = re.search(r'\bfull[\s-]?body\b', prompt_lower_composite)
+            
+            # Default to full-body, only disable if explicit pattern found
+            user_wants_full_body_composite = True
+            for pattern in explicit_no_full_body_patterns_composite:
+                if re.search(pattern, prompt_lower_composite):
+                    user_wants_full_body_composite = False
+                    break
+            
+            if has_negative_whole_body_composite:
+                user_wants_full_body_composite = False
+            
+            # If user explicitly says "full-body" in prompt, force it to True
+            if has_explicit_full_body_composite:
+                user_wants_full_body_composite = True
             
             full_body_instruction = ""
             if user_wants_full_body_composite:
-                full_body_instruction = f"""CHARACTER POSITIONING:
+                if has_explicit_full_body_composite:
+                    full_body_instruction = f"""CHARACTER POSITIONING (CRITICAL - USER EXPLICITLY REQUESTED):
+3. The user's prompt explicitly requests "full-body" - you MUST show the complete character from head to feet
+4. Place the character standing at the {position.upper()} of the background, centered horizontally.
+5. The character must be full-body (head to feet), entirely inside the frame - do NOT cut off any body parts
+6. Do NOT crop or hide hands, feet, arms, or legs
+7. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
+"""
+                else:
+                    full_body_instruction = f"""CHARACTER POSITIONING:
 3. Place the character standing at the {position.upper()} of the background, centered horizontally.
 4. The character must be full-body (head to feet), entirely inside the frame.
 5. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
@@ -747,14 +849,24 @@ def generate_character_composited_with_background(
 5. Character height should be appropriate to the framing requested in the prompt.
 """
 
-        full_prompt = f"""TASK:
+            full_prompt = f"""TASK:
 Create a {"full-body " if user_wants_full_body_composite else ""}cartoon/caricature of this person and composite them onto this exact background image.
 
 BACKGROUND USAGE (MUST FOLLOW EXACTLY):
 1. Use the provided background image AS-IS (no crop, no stretch, no extra elements).
 2. Keep the same aspect ratio as the background ({bg_w}x{bg_h}).
+3. Do NOT add white frames, borders, or white canvases around the character.
 
 {full_body_instruction}
+
+POSE & BODY PRESERVATION (CRITICAL):
+- Follow the user's specific pose instructions from the prompt (e.g., "standing in playful pose", "sitting", etc.)
+- Do NOT change the pose described in the prompt
+- Show the complete character with all body parts visible unless the prompt explicitly requests otherwise
+- Do NOT cut off or hide body parts (hands, feet, arms, legs) unless explicitly requested
+- Maintain natural body proportions and positioning as described in the prompt
+- If the prompt says "standing", show the character standing
+- If the prompt says "playful pose", show a playful pose, not a different pose
 
 STYLE & IDENTITY:
 6. Preserve the person's identity (face, hair, skin tone).
@@ -765,13 +877,15 @@ COLOR PRESERVATION (CRITICAL):
 9. Keep the same color scheme, color palette, and color combinations as the original
 10. Do NOT change clothing colors, fabric colors, or accessory colors
 11. Maintain the exact same hues, shades, and tones of all clothing items
-12. If the original has a blue shirt, keep it blue in the character
-13. If the original has a red dress, keep it red in the character
-14. Preserve all color details including patterns, stripes, prints, and color accents
-15. Only transform the style (cartoon/caricature), NOT the colors
+12. Preserve white colors in the character (white clothing, white eyes, etc.) - do NOT make them transparent
+13. If the original has a blue shirt, keep it blue in the character
+14. If the original has a red dress, keep it red in the character
+15. Preserve all color details including patterns, stripes, prints, and color accents
+16. Only transform the style (cartoon/caricature), NOT the colors
 
 RESTRICTIONS:
-16. Do NOT add text, logos, borders or extra objects.
+17. Do NOT add text, logos, borders or extra objects.
+18. Do NOT add white frames, white borders, or white canvases.
 
 CHARACTER DESCRIPTION:
 {character_prompt}
@@ -782,20 +896,20 @@ OUTPUT:
 Return a SINGLE final composited image ready for printing.
 """
 
-        response = _generate_content_image(
-            client=client,
-            model=get_gemini_image_model(),
-            contents=[full_prompt, selfie_image, background_image],
-        )
+            response = _generate_content_image(
+                client=client,
+                model=get_gemini_image_model(),
+                contents=[full_prompt, selfie_image, background_image],
+            )
 
-        img = _extract_final_image_from_response(response)
-        if img is not None:
-            if not hasattr(img, 'size') or not isinstance(img, Image.Image):
-                return False, "Invalid image object returned from Gemini (missing size attribute)"
-            
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            img.save(output_path)
-            return True, "Gemini composited character successfully"
+            img = _extract_final_image_from_response(response)
+            if img is not None:
+                if not hasattr(img, 'size') or not isinstance(img, Image.Image):
+                    return False, "Invalid image object returned from Gemini (missing size attribute)"
+                
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                img.save(output_path)
+                return True, "Gemini composited character successfully"
 
             return False, "No composited image generated by Gemini"
         else:
@@ -819,9 +933,87 @@ Return a SINGLE final composited image ready for printing.
             try:
                 char_image = Image.open(temp_char_path).convert("RGBA")
                 
-                data = char_image.getdata()
-                new_data = [(r, g, b, 0) if r > 240 and g > 240 and b > 240 else (r, g, b, a) 
-                           for r, g, b, a in data]
+                # Remove ALL white background boxes - smart removal that preserves white in character
+                # Strategy: Flood-fill from edges to remove white backgrounds, but preserve white pixels
+                # that are surrounded by non-white pixels (indicating they're part of the character)
+                w, h = char_image.size
+                data = list(char_image.getdata())
+                
+                # Helper function to check if pixel is white/light
+                def is_white_pixel(r, g, b, threshold=235):
+                    return r > threshold and g > threshold and b > threshold
+                
+                # Helper function to check if pixel has non-white neighbors (character detection)
+                def has_character_neighbors(x, y, data, w, h):
+                    """Check if white pixel is surrounded by non-white pixels (part of character)"""
+                    non_white_count = 0
+                    total_neighbors = 0
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            if dx == 0 and dy == 0:
+                                continue
+                            nx, ny = x + dx, y + dy
+                            if 0 <= nx < w and 0 <= ny < h:
+                                total_neighbors += 1
+                                idx = ny * w + nx
+                                if idx < len(data):
+                                    r, g, b, a = data[idx]
+                                    if not is_white_pixel(r, g, b, threshold=235) and a > 0:
+                                        non_white_count += 1
+                    # If most neighbors are non-white, this white pixel is likely part of character
+                    return total_neighbors > 0 and non_white_count >= total_neighbors * 0.4
+                
+                # Create a mask for pixels to remove (white backgrounds)
+                to_remove = [False] * len(data)
+                visited = set()
+                queue = []
+                
+                # Start flood-fill from ALL edge pixels that are white/light
+                for y in range(h):
+                    for x in range(w):
+                        if x == 0 or x == w-1 or y == 0 or y == h-1:
+                            idx = y * w + x
+                            if idx < len(data):
+                                r, g, b, a = data[idx]
+                                # If edge pixel is white/light, start flood-fill from here
+                                if is_white_pixel(r, g, b, threshold=235) and a > 0:
+                                    queue.append((x, y))
+                                    visited.add((x, y))
+                
+                # Flood-fill from edges to mark all connected white background pixels
+                while queue:
+                    x, y = queue.pop(0)
+                    idx = y * w + x
+                    if idx < len(data):
+                        r, g, b, a = data[idx]
+                        
+                        # Check if this white pixel is part of character (surrounded by non-white)
+                        is_character_white = has_character_neighbors(x, y, data, w, h)
+                        
+                        if is_white_pixel(r, g, b, threshold=235) and a > 0:
+                            # Only mark for removal if it's NOT part of character
+                            if not is_character_white:
+                                to_remove[idx] = True
+                                
+                                # Continue flood-fill to neighbors
+                                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                    nx, ny = x + dx, y + dy
+                                    if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
+                                        visited.add((nx, ny))
+                                        nidx = ny * w + nx
+                                        if nidx < len(data):
+                                            nr, ng, nb, na = data[nidx]
+                                            if is_white_pixel(nr, ng, nb, threshold=235) and na > 0:
+                                                queue.append((nx, ny))
+                
+                # Apply removal - make white background pixels transparent
+                new_data = []
+                for idx, (r, g, b, a) in enumerate(data):
+                    if to_remove[idx]:
+                        new_data.append((r, g, b, 0))  # Make transparent
+                    else:
+                        new_data.append((r, g, b, a))  # Keep original
+                
                 char_image.putdata(new_data)
                 
                 # Apply canvas size to background if specified
