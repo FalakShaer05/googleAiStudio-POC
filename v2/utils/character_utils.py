@@ -303,10 +303,6 @@ def generate_character_with_identity(
         prompt_lower = character_prompt.lower()
         is_style_conversion = any(keyword in prompt_lower for keyword in artistic_medium_keywords)
         
-        # Detect if this is specifically a pencil sketch (to handle background differently)
-        pencil_sketch_keywords = ["pencil sketch", "graphite", "hand-drawn graphite"]
-        is_pencil_sketch = any(keyword in prompt_lower for keyword in pencil_sketch_keywords)
-        
         # Detect if this is a Warhol/pop art style that requires grid layout (skip composition preservation)
         warhol_keywords = ["warhol", "pop art", "four-panel", "2×2", "2x2", "grid", "four panel"]
         is_warhol_style = any(keyword in prompt_lower for keyword in warhol_keywords)
@@ -326,14 +322,11 @@ def generate_character_with_identity(
         monochrome_prefix = ""
         monochrome_suffix = ""
         negative_prompt_section = ""
-        background_preservation_instruction = ""
         background_section = ""
         prompt_to_use = character_prompt
         character_only_override = ""
         prohibitions_section = ""
-        background_preservation_text = ""
         background_removal_text = ""
-        preserve_bg_text = ""
         img_width = 0
         img_height = 0
         is_portrait = False
@@ -432,16 +425,10 @@ Before outputting, verify that the image is pure grayscale with no color tints. 
                     parts = character_prompt.split("negative prompt:", 1)
                 elif "NEGATIVE:" in character_prompt:
                     parts = character_prompt.split("NEGATIVE:", 1)
-                
                 if parts and len(parts) == 2:
                     processed_prompt = parts[0].strip()
                     negative_items = parts[1].strip().split(",")
                     negative_items = [item.strip() for item in negative_items if item.strip()]
-                    
-                    if is_pencil_sketch:
-                        background_related = ['background', 'scenery', 'room', 'landscape', 'horizon']
-                        negative_items = [item for item in negative_items 
-                                         if not any(bg_term in item.lower() for bg_term in background_related)]
                     
                     if negative_items:
                         negative_list = '\n'.join([f'- {item}' for item in negative_items])
@@ -450,48 +437,23 @@ STRICT PROHIBITIONS - DO NOT INCLUDE:
 {negative_list}
 """
             
-            # Only apply pencil sketch background removal processing if it's actually a pencil sketch
-            # Don't apply to Warhol styles which may have their own background requirements
-            if is_pencil_sketch and not is_warhol_style:
-                bg_removal_pattern = re.compile(
-                    r'[^.]*?(?:completely removing|removing|remove)\s+the\s+background[^.]*?\.|'
-                    r'[^.]*?(?:subjects|appear)\s+alone\s+on\s+a\s+pure\s+white\s+canvas[^.]*?\.|'
-                    r'[^.]*?pure\s+white\s+canvas[^.]*?\.|'
-                    r'[^.]*?white\s+canvas[^.]*?\.|'
-                    r'\b(?:no|without)\s+background\b|\bwhite\s+background\b|\bno\s+shadows\b',
-                    re.IGNORECASE
-                )
-                processed_prompt = bg_removal_pattern.sub('', processed_prompt)
-                processed_prompt = re.sub(r'\s+', ' ', processed_prompt).strip()
-            
-            if is_pencil_sketch and not is_warhol_style:
-                background_preservation_instruction = """
-BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
-- You MUST preserve the original background from the reference image exactly as it appears
-- Do NOT remove, replace, modify, or change the background in any way
-- Keep ALL background elements, colors, textures, and details from the original image
-- The background should appear in the same style (pencil sketch) but remain in its original location and composition
-- If the original has a background, it must be visible in the output
-- Do NOT create a white canvas, transparent background, or remove any background elements
-
-"""
-            else:
-                background_section = ""
-                if not character_only:
-                    has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
-                        'remove background', 'removing background', 'no background', 'without background',
-                        'white background', 'transparent background', 'pure white', 'white canvas'
-                    ])
-                    
-                    if not has_background_removal:
-                        background_section = f"""
+            # For style conversions, check if user specified background removal
+            background_section = ""
+            if not character_only:
+                has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
+                    'remove background', 'removing background', 'no background', 'without background',
+                    'white background', 'transparent background', 'pure white', 'white canvas'
+                ])
+                
+                if not has_background_removal:
+                    background_section = f"""
 BACKGROUND:
 {bg_req}
 """
             
             prompt_to_use = cleaned_character_prompt if character_only else processed_prompt
             
-            if character_only and not is_pencil_sketch:
+            if character_only:
                 character_only_override = """⚠️ CRITICAL INSTRUCTION - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS ⚠️
 
 YOU MUST GENERATE ONLY THE CHARACTER WITH NO BACKGROUND WHATSOEVER.
@@ -508,7 +470,7 @@ THIS IS THE MOST IMPORTANT REQUIREMENT - ALL OTHER INSTRUCTIONS ARE SECONDARY.
 
 """
             
-            if character_only and not is_pencil_sketch:
+            if character_only:
                 prohibitions_section = """
 STRICT PROHIBITIONS (when character_only=True):
 - DO NOT add any background, scenery, or visual context
@@ -519,9 +481,7 @@ STRICT PROHIBITIONS (when character_only=True):
 - The output must be ONLY the character on transparent/white background with NO white frames or borders
 """
             
-            background_preservation_text = "" if character_only or is_warhol_style else background_preservation_instruction
-            background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_pencil_sketch and not is_warhol_style else ""
-            preserve_bg_text = "- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch and not character_only and not is_warhol_style else ""
+            background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_warhol_style else ""
             
             # Check if user explicitly requests full-body in style conversion
             has_explicit_full_body_style = re.search(r'\bfull[\s-]?body\b', prompt_lower_check) or re.search(r'\bfull[\s-]?body\b', original_prompt_lower)
@@ -570,12 +530,10 @@ COLOR PRESERVATION (CRITICAL):
 - If the original has a blue shirt, keep it blue (or gray if monochrome is requested)
 - If the original has a red dress, keep it red (or gray if monochrome is requested)
 - Preserve all color details including patterns, stripes, prints, and color accents
-{preserve_bg_text}
 {background_removal_text}
 """
             
             full_prompt = f"""{monochrome_prefix}{character_only_override}Convert the reference image to the requested style{"" if is_warhol_style else " while preserving the EXACT composition, pose, framing, and subject matter"}.
-{background_preservation_text}
 {composition_instructions}
 {color_preservation_section}
 
@@ -782,14 +740,13 @@ def generate_character_composited_with_background(
         bg_w, bg_h = background_image.size
 
         canvas_context = ""
+        if canvas_size:
+            canvas_context = (
+                f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
+                f"the provided background ({bg_w}x{bg_h})."
+            )
 
         if use_gemini_compositing:
-            if canvas_size:
-                canvas_context = (
-                    f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                    f"the provided background ({bg_w}x{bg_h})."
-                )
-
             # Check if user explicitly requests NOT to make it full-body
             # Only disable full-body if user EXPLICITLY says not to (not just mentions keywords)
             prompt_lower_composite = character_prompt.lower()
@@ -933,20 +890,29 @@ Return a SINGLE final composited image ready for printing.
             try:
                 char_image = Image.open(temp_char_path).convert("RGBA")
                 
-                # Remove ALL white background boxes - smart removal that preserves white in character
-                # Strategy: Flood-fill from edges to remove white backgrounds, but preserve white pixels
-                # that are surrounded by non-white pixels (indicating they're part of the character)
+                # Remove ALL white and gray background boxes - smart removal that preserves white/gray in character
+                # Strategy: Flood-fill from edges to remove white/gray backgrounds, but preserve pixels
+                # that are surrounded by non-background pixels (indicating they're part of the character)
                 w, h = char_image.size
                 data = list(char_image.getdata())
                 
-                # Helper function to check if pixel is white/light
-                def is_white_pixel(r, g, b, threshold=235):
-                    return r > threshold and g > threshold and b > threshold
+                # Helper function to check if pixel is white/light/gray (background color)
+                def is_background_pixel(r, g, b, threshold=220):
+                    """Detect white, light gray, and uniform gray backgrounds"""
+                    # Check for white/very light colors
+                    if r > threshold and g > threshold and b > threshold:
+                        return True
+                    # Check for uniform gray (all RGB values similar and high)
+                    rgb_avg = (r + g + b) / 3
+                    rgb_diff = max(r, g, b) - min(r, g, b)
+                    if rgb_avg > threshold and rgb_diff < 30:  # Uniform gray
+                        return True
+                    return False
                 
-                # Helper function to check if pixel has non-white neighbors (character detection)
+                # Helper function to check if pixel has character neighbors (non-background)
                 def has_character_neighbors(x, y, data, w, h):
-                    """Check if white pixel is surrounded by non-white pixels (part of character)"""
-                    non_white_count = 0
+                    """Check if pixel is surrounded by non-background pixels (part of character)"""
+                    non_bg_count = 0
                     total_neighbors = 0
                     for dx in [-1, 0, 1]:
                         for dy in [-1, 0, 1]:
@@ -958,41 +924,41 @@ Return a SINGLE final composited image ready for printing.
                                 idx = ny * w + nx
                                 if idx < len(data):
                                     r, g, b, a = data[idx]
-                                    if not is_white_pixel(r, g, b, threshold=235) and a > 0:
-                                        non_white_count += 1
-                    # If most neighbors are non-white, this white pixel is likely part of character
-                    return total_neighbors > 0 and non_white_count >= total_neighbors * 0.4
+                                    if not is_background_pixel(r, g, b, threshold=220) and a > 0:
+                                        non_bg_count += 1
+                    # If most neighbors are non-background, this pixel is likely part of character
+                    return total_neighbors > 0 and non_bg_count >= total_neighbors * 0.4
                 
-                # Create a mask for pixels to remove (white backgrounds)
+                # Create a mask for pixels to remove (white/gray backgrounds)
                 to_remove = [False] * len(data)
                 visited = set()
                 queue = []
                 
-                # Start flood-fill from ALL edge pixels that are white/light
+                # Start flood-fill from ALL edge pixels that are white/gray/light
                 for y in range(h):
                     for x in range(w):
                         if x == 0 or x == w-1 or y == 0 or y == h-1:
                             idx = y * w + x
                             if idx < len(data):
                                 r, g, b, a = data[idx]
-                                # If edge pixel is white/light, start flood-fill from here
-                                if is_white_pixel(r, g, b, threshold=235) and a > 0:
+                                # If edge pixel is white/gray/light, start flood-fill from here
+                                if is_background_pixel(r, g, b, threshold=220) and a > 0:
                                     queue.append((x, y))
                                     visited.add((x, y))
                 
-                # Flood-fill from edges to mark all connected white background pixels
+                # Flood-fill from edges to mark all connected white/gray background pixels
                 while queue:
                     x, y = queue.pop(0)
                     idx = y * w + x
                     if idx < len(data):
                         r, g, b, a = data[idx]
                         
-                        # Check if this white pixel is part of character (surrounded by non-white)
-                        is_character_white = has_character_neighbors(x, y, data, w, h)
+                        # Check if this background pixel is part of character (surrounded by non-background)
+                        is_character_pixel = has_character_neighbors(x, y, data, w, h)
                         
-                        if is_white_pixel(r, g, b, threshold=235) and a > 0:
+                        if is_background_pixel(r, g, b, threshold=220) and a > 0:
                             # Only mark for removal if it's NOT part of character
-                            if not is_character_white:
+                            if not is_character_pixel:
                                 to_remove[idx] = True
                                 
                                 # Continue flood-fill to neighbors
@@ -1003,10 +969,10 @@ Return a SINGLE final composited image ready for printing.
                                         nidx = ny * w + nx
                                         if nidx < len(data):
                                             nr, ng, nb, na = data[nidx]
-                                            if is_white_pixel(nr, ng, nb, threshold=235) and na > 0:
+                                            if is_background_pixel(nr, ng, nb, threshold=220) and na > 0:
                                                 queue.append((nx, ny))
                 
-                # Apply removal - make white background pixels transparent
+                # Apply removal - make white/gray background pixels transparent
                 new_data = []
                 for idx, (r, g, b, a) in enumerate(data):
                     if to_remove[idx]:
