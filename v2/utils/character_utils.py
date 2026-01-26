@@ -297,7 +297,8 @@ def generate_character_with_identity(
         # Only match actual artistic medium conversions, not general style descriptions like "retro 90s style"
         artistic_medium_keywords = [
             "pencil sketch", "sketch", "drawing", "hand-drawn", "graphite",
-            "painting", "watercolor", "oil painting", "charcoal", "ink drawing"
+            "painting", "watercolor", "oil painting", "charcoal", "ink drawing",
+            "pop art", "warhol", "acrylic", "silkscreen", "portrait"
         ]
         prompt_lower = character_prompt.lower()
         is_style_conversion = any(keyword in prompt_lower for keyword in artistic_medium_keywords)
@@ -305,6 +306,10 @@ def generate_character_with_identity(
         # Detect if this is specifically a pencil sketch (to handle background differently)
         pencil_sketch_keywords = ["pencil sketch", "graphite", "hand-drawn graphite"]
         is_pencil_sketch = any(keyword in prompt_lower for keyword in pencil_sketch_keywords)
+        
+        # Detect if this is a Warhol/pop art style that requires grid layout (skip composition preservation)
+        warhol_keywords = ["warhol", "pop art", "four-panel", "2×2", "2x2", "grid", "four panel"]
+        is_warhol_style = any(keyword in prompt_lower for keyword in warhol_keywords)
 
         # Detect if this is a monochrome/grayscale request
         monochrome_keywords = [
@@ -415,13 +420,17 @@ Before outputting, verify that the image is pure grayscale with no color tints. 
             
             processed_prompt = character_prompt
             
-            if "Negative prompt:" in character_prompt or "negative prompt:" in character_prompt:
-                # Split the prompt and negative prompt
-                parts = character_prompt.split("Negative prompt:", 1)
-                if len(parts) == 1:
+            # Handle both "Negative prompt:" and "NEGATIVE:" formats
+            if "Negative prompt:" in character_prompt or "negative prompt:" in character_prompt or "NEGATIVE:" in character_prompt:
+                parts = None
+                if "Negative prompt:" in character_prompt:
+                    parts = character_prompt.split("Negative prompt:", 1)
+                elif "negative prompt:" in character_prompt:
                     parts = character_prompt.split("negative prompt:", 1)
+                elif "NEGATIVE:" in character_prompt:
+                    parts = character_prompt.split("NEGATIVE:", 1)
                 
-                if len(parts) == 2:
+                if parts and len(parts) == 2:
                     processed_prompt = parts[0].strip()
                     negative_items = parts[1].strip().split(",")
                     negative_items = [item.strip() for item in negative_items if item.strip()]
@@ -438,7 +447,9 @@ STRICT PROHIBITIONS - DO NOT INCLUDE:
 {negative_list}
 """
             
-            if is_pencil_sketch:
+            # Only apply pencil sketch background removal processing if it's actually a pencil sketch
+            # Don't apply to Warhol styles which may have their own background requirements
+            if is_pencil_sketch and not is_warhol_style:
                 bg_removal_pattern = re.compile(
                     r'[^.]*?(?:completely removing|removing|remove)\s+the\s+background[^.]*?\.|'
                     r'[^.]*?(?:subjects|appear)\s+alone\s+on\s+a\s+pure\s+white\s+canvas[^.]*?\.|'
@@ -450,7 +461,7 @@ STRICT PROHIBITIONS - DO NOT INCLUDE:
                 processed_prompt = bg_removal_pattern.sub('', processed_prompt)
                 processed_prompt = re.sub(r'\s+', ' ', processed_prompt).strip()
             
-            if is_pencil_sketch:
+            if is_pencil_sketch and not is_warhol_style:
                 background_preservation_instruction = """
 BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
 - You MUST preserve the original background from the reference image exactly as it appears
@@ -464,12 +475,12 @@ BACKGROUND PRESERVATION (CRITICAL - HIGHEST PRIORITY):
             else:
                 if not character_only:
                     has_background_removal = any(phrase in processed_prompt.lower() for phrase in [
-                        'remove background', 'removing background', 'no background', 'without background',
-                        'white background', 'transparent background', 'pure white', 'white canvas'
-                    ])
-                    
-                    if not has_background_removal:
-                        background_section = f"""
+                    'remove background', 'removing background', 'no background', 'without background',
+                    'white background', 'transparent background', 'pure white', 'white canvas'
+                ])
+                
+                if not has_background_removal:
+                    background_section = f"""
 BACKGROUND:
 {bg_req}
 """
@@ -503,13 +514,17 @@ STRICT PROHIBITIONS (when character_only=True):
 - The output must be ONLY the character on transparent/white background
 """
             
-            background_preservation_text = "" if character_only else background_preservation_instruction
-            background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_pencil_sketch else ""
-            preserve_bg_text = "- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch and not character_only else ""
+            background_preservation_text = "" if character_only or is_warhol_style else background_preservation_instruction
+            background_removal_text = "- CRITICAL: Remove and ignore the background from the input image. Output ONLY the character/subject with no background." if character_only and not is_pencil_sketch and not is_warhol_style else ""
+            preserve_bg_text = "- Preserve the original background exactly as it appears in the reference image" if is_pencil_sketch and not character_only and not is_warhol_style else ""
             
-            full_prompt = f"""{monochrome_prefix}{character_only_override}Convert the reference image to the requested style while preserving the EXACT composition, pose, framing, and subject matter.
-{background_preservation_text}
-CRITICAL REQUIREMENTS:
+            if is_warhol_style:
+                composition_instructions = """COMPOSITION:
+- Follow the user's specific composition requirements (grid layouts, panels, etc.)
+- Apply the requested layout and framing as specified in the prompt
+"""
+            else:
+                composition_instructions = f"""CRITICAL REQUIREMENTS:
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
 - Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
@@ -517,7 +532,12 @@ CRITICAL REQUIREMENTS:
 - Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
 - Do NOT change the subject's position or pose
 - Apply the style transformation to the EXISTING image composition
-
+"""
+            
+            # For Warhol styles, skip color preservation (user specifies exact color palettes)
+            color_preservation_section = ""
+            if not is_warhol_style:
+                color_preservation_section = f"""
 COLOR PRESERVATION (CRITICAL):
 - Preserve the EXACT colors of all clothing, outfits, and garments from the input image
 - Keep the same color scheme, color palette, and color combinations as the original
@@ -528,6 +548,12 @@ COLOR PRESERVATION (CRITICAL):
 - Preserve all color details including patterns, stripes, prints, and color accents
 {preserve_bg_text}
 {background_removal_text}
+"""
+            
+            full_prompt = f"""{monochrome_prefix}{character_only_override}Convert the reference image to the requested style{"" if is_warhol_style else " while preserving the EXACT composition, pose, framing, and subject matter"}.
+{background_preservation_text}
+{composition_instructions}
+{color_preservation_section}
 
 STYLE CONVERSION:
 {prompt_to_use}
@@ -538,10 +564,26 @@ STYLE CONVERSION:
 {prohibitions_section}
 
 OUTPUT:
-Return the converted image with the exact same composition and framing as the input, only with the style applied.{monochrome_suffix}
+{"Return the converted image following the user's composition requirements (grid, panels, etc.) with the style applied." if is_warhol_style else "Return the converted image with the exact same composition and framing as the input, only with the style applied."}{monochrome_suffix}
 """
         else:
             prompt_to_use = cleaned_character_prompt if character_only else character_prompt
+            
+            # Check if user explicitly requests NOT to make it full-body
+            # Check BOTH the processed prompt AND the original full prompt (to catch negative prompts)
+            prompt_lower_check = prompt_to_use.lower()
+            original_prompt_lower = character_prompt.lower()  # Check original to catch negative section
+            no_full_body_keywords = [
+                "not full body", "no full body", "do not full body", "avoid full body",
+                "not whole body", "no whole body", "do not whole body", "avoid whole body",
+                "whole body",  # Also check for just "whole body" in negative section
+                "not head to toe", "no head to toe", "do not head to toe",
+                "close-up", "close up", "portrait only", "face only", "upper body only",
+                "no feet", "without feet", "exclude feet", "no legs", "without legs"
+            ]
+            # Check both processed prompt and original prompt (which includes negative section)
+            user_wants_full_body = not any(keyword in prompt_lower_check for keyword in no_full_body_keywords) and \
+                                  not any(keyword in original_prompt_lower for keyword in no_full_body_keywords)
             
             if character_only:
                 character_only_override = """⚠️ CRITICAL INSTRUCTION - HIGHEST PRIORITY - OVERRIDES ALL OTHER INSTRUCTIONS ⚠️
@@ -570,6 +612,16 @@ STRICT PROHIBITIONS:
 - The output must be ONLY the character on transparent/white background
 """
             
+            # Build full-body section conditionally (can't use triple quotes in f-string conditional)
+            if user_wants_full_body:
+                full_body_section = """
+FRAMING REQUIREMENT:
+- Show the character from head to feet, entirely inside the frame.
+- Ensure the full body is visible.
+"""
+            else:
+                full_body_section = ""
+            
             full_prompt = f"""{character_only_override}Transform this person into a character while preserving their identity.
 
 CHARACTER TRANSFORMATION:
@@ -587,9 +639,7 @@ COLOR PRESERVATION (CRITICAL):
 
 BACKGROUND:
 {bg_req}
-
-FULL-BODY REQUIREMENT:
-Show the character from head to feet, entirely inside the frame.
+{full_body_section}
 
 {prohibitions_section}
 
@@ -668,21 +718,43 @@ def generate_character_composited_with_background(
         if use_gemini_compositing:
             if canvas_size:
                 canvas_context = (
-                    f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                    f"the provided background ({bg_w}x{bg_h})."
-                )
+                f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
+                f"the provided background ({bg_w}x{bg_h})."
+            )
 
-            full_prompt = f"""TASK:
-Create a full-body cartoon/caricature of this person and composite them onto this exact background image.
+            # Check if user explicitly requests NOT to make it full-body
+            prompt_lower_composite = character_prompt.lower()
+            no_full_body_keywords_composite = [
+                "not full body", "no full body", "do not full body", "avoid full body",
+                "not whole body", "no whole body", "do not whole body", "avoid whole body",
+                "not head to toe", "no head to toe", "do not head to toe",
+                "close-up", "close up", "portrait only", "face only", "upper body only",
+                "no feet", "without feet", "exclude feet", "no legs", "without legs"
+            ]
+            user_wants_full_body_composite = not any(keyword in prompt_lower_composite for keyword in no_full_body_keywords_composite)
+            
+            full_body_instruction = ""
+            if user_wants_full_body_composite:
+                full_body_instruction = f"""CHARACTER POSITIONING:
+3. Place the character standing at the {position.upper()} of the background, centered horizontally.
+4. The character must be full-body (head to feet), entirely inside the frame.
+5. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
+"""
+            else:
+                full_body_instruction = f"""CHARACTER POSITIONING:
+3. Place the character at the {position.upper()} of the background, centered horizontally.
+4. Follow the user's specific framing requirements from the prompt (do NOT make it full-body if the user specified otherwise).
+5. Character height should be appropriate to the framing requested in the prompt.
+"""
+
+        full_prompt = f"""TASK:
+Create a {"full-body " if user_wants_full_body_composite else ""}cartoon/caricature of this person and composite them onto this exact background image.
 
 BACKGROUND USAGE (MUST FOLLOW EXACTLY):
 1. Use the provided background image AS-IS (no crop, no stretch, no extra elements).
 2. Keep the same aspect ratio as the background ({bg_w}x{bg_h}).
 
-CHARACTER POSITIONING:
-3. Place the character standing at the {position.upper()} of the background, centered horizontally.
-4. The character must be full-body (head to feet), entirely inside the frame.
-5. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
+{full_body_instruction}
 
 STYLE & IDENTITY:
 6. Preserve the person's identity (face, hair, skin tone).
@@ -710,20 +782,20 @@ OUTPUT:
 Return a SINGLE final composited image ready for printing.
 """
 
-            response = _generate_content_image(
-                client=client,
-                model=get_gemini_image_model(),
-                contents=[full_prompt, selfie_image, background_image],
-            )
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=[full_prompt, selfie_image, background_image],
+        )
 
-            img = _extract_final_image_from_response(response)
-            if img is not None:
-                if not hasattr(img, 'size') or not isinstance(img, Image.Image):
-                    return False, "Invalid image object returned from Gemini (missing size attribute)"
-                
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                img.save(output_path)
-                return True, "Gemini composited character successfully"
+        img = _extract_final_image_from_response(response)
+        if img is not None:
+            if not hasattr(img, 'size') or not isinstance(img, Image.Image):
+                return False, "Invalid image object returned from Gemini (missing size attribute)"
+            
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            img.save(output_path)
+            return True, "Gemini composited character successfully"
 
             return False, "No composited image generated by Gemini"
         else:
