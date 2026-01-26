@@ -292,16 +292,17 @@ def generate_character_with_identity(
 
         # Detect if this is a style conversion task (pencil sketch, painting, etc.)
         # vs a character transformation task
-        style_keywords = [
+        # Only match actual artistic medium conversions, not general style descriptions like "retro 90s style"
+        artistic_medium_keywords = [
             "pencil sketch", "sketch", "drawing", "hand-drawn", "graphite",
-            "convert", "transform into", "render as", "style of", "in the style",
             "painting", "watercolor", "oil painting", "charcoal", "ink drawing"
         ]
-        is_style_conversion = any(keyword.lower() in character_prompt.lower() for keyword in style_keywords)
+        prompt_lower = character_prompt.lower()
+        is_style_conversion = any(keyword in prompt_lower for keyword in artistic_medium_keywords)
         
         # Detect if this is specifically a pencil sketch (to handle background differently)
         pencil_sketch_keywords = ["pencil sketch", "graphite", "hand-drawn graphite"]
-        is_pencil_sketch = any(keyword.lower() in character_prompt.lower() for keyword in pencil_sketch_keywords)
+        is_pencil_sketch = any(keyword in prompt_lower for keyword in pencil_sketch_keywords)
 
         # Detect if this is a monochrome/grayscale request
         monochrome_keywords = [
