@@ -7,11 +7,20 @@ import io
 import re
 import time
 import random
+import hashlib
+from collections import deque
 from typing import Optional, Tuple, Dict, Any
 
 from PIL import Image, ImageOps
 import requests
 import google.genai as genai
+
+# Try to import numpy for faster image operations
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
 
 try:
     # Newer google-genai SDKs expose GenerateContentConfig / ImageConfig here
@@ -128,17 +137,47 @@ def _extract_final_image_from_response(response) -> Optional[Image.Image]:
     return None
 
 
-def _generate_content_image(client: genai.Client, model: str, contents):
+def _generate_content_image(client: genai.Client, model: str, contents, seed: Optional[int] = None):
     """
     Call `client.models.generate_content` with an optional config to force image output.
 
     Falls back to calling without config for older SDK versions.
+    
+    Args:
+        client: Gemini client instance
+        model: Model name to use
+        contents: Content to generate (prompt + images)
+        seed: Optional seed value for deterministic results. If provided, will attempt
+              to use it in generation config. Note: Gemini API may not support seed
+              for all models/versions.
     """
     # If the SDK supports it, force image-only output for consistency.
     config = None
     if types is not None and hasattr(types, "GenerateContentConfig"):
         try:
-            config = types.GenerateContentConfig(response_modalities=["IMAGE"])
+            # Try to create config with seed if provided
+            config_kwargs = {"response_modalities": ["IMAGE"]}
+            if seed is not None:
+                # Try to add seed if the API supports it
+                try:
+                    # Check if seed parameter is supported
+                    if hasattr(types.GenerateContentConfig, '__init__'):
+                        # Try with seed parameter
+                        try:
+                            config = types.GenerateContentConfig(
+                                response_modalities=["IMAGE"],
+                                seed=seed
+                            )
+                        except (TypeError, AttributeError):
+                            # Seed not supported, use without it
+                            config = types.GenerateContentConfig(**config_kwargs)
+                    else:
+                        config = types.GenerateContentConfig(**config_kwargs)
+                except Exception:
+                    # If seed fails, try without it
+                    config = types.GenerateContentConfig(**config_kwargs)
+            else:
+                config = types.GenerateContentConfig(**config_kwargs)
         except Exception:
             config = None
 
@@ -231,6 +270,141 @@ def cleanup_file(path: Optional[str]) -> None:
             pass
 
 
+def generate_seed_from_prompt(normalized_prompt: str) -> int:
+    """
+    Generate a consistent seed value from a normalized prompt string.
+    This ensures the same prompt produces the same seed for deterministic results.
+    
+    Args:
+        normalized_prompt: Already normalized prompt text (to avoid duplicate normalization)
+        
+    Returns:
+        Integer seed value (0-2^31-1)
+    """
+    # Create hash and convert to integer seed
+    hash_obj = hashlib.md5(normalized_prompt.encode('utf-8'))
+    # Use first 4 bytes of hash as seed (0 to 2^32-1, but limit to 2^31-1 for safety)
+    seed = int(hash_obj.hexdigest()[:8], 16) % (2**31)
+    return seed
+
+
+def normalize_prompt_for_consistency(prompt: str) -> str:
+    """
+    Normalize prompts to fix conflicting instructions and improve consistency.
+    
+    Specifically handles:
+    - Conflicting framing instructions (ultra-close-up vs full face with neck/shoulders)
+    - Duplicate or contradictory requirements
+    - Ambiguous specifications
+    
+    Args:
+        prompt: Original prompt text
+        
+    Returns:
+        Normalized prompt with conflicts resolved
+    """
+    prompt_lower = prompt.lower()
+    
+    # Detect conflicting framing instructions
+    has_ultra_close = any(phrase in prompt_lower for phrase in [
+        "ultra-close-up", "ultra close up", "filling the entire frame",
+        "no neck", "no shoulders", "no borders"
+    ])
+    
+    has_full_face_neck = any(phrase in prompt_lower for phrase in [
+        "full face along with visible neck", "visible neck and shoulders",
+        "keep all full face", "neck and shoulders"
+    ])
+    
+    # If both conflicting instructions exist, prioritize the last one mentioned
+    # (as it's likely the user's final intent)
+    if has_ultra_close and has_full_face_neck:
+        # Find which comes last in the prompt
+        ultra_close_pos = max([
+            prompt_lower.rfind("ultra-close-up"),
+            prompt_lower.rfind("ultra close up"),
+            prompt_lower.rfind("filling the entire frame"),
+            prompt_lower.rfind("no neck"),
+            prompt_lower.rfind("no shoulders")
+        ])
+        
+        full_face_pos = max([
+            prompt_lower.rfind("full face along with visible neck"),
+            prompt_lower.rfind("visible neck and shoulders"),
+            prompt_lower.rfind("keep all full face"),
+            prompt_lower.rfind("neck and shoulders")
+        ])
+        
+        # Remove the earlier conflicting instruction
+        if full_face_pos > ultra_close_pos:
+            # User wants full face with neck/shoulders - remove ultra-close-up instructions
+            # Remove phrases about ultra-close-up and no neck/shoulders
+            prompt = re.sub(
+                r'(?:ultra-close-up|ultra close up)[^.]*?(?:no neck|no shoulders|no borders)[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            prompt = re.sub(
+                r'filling the entire frame[^.]*?(?:no neck|no shoulders)[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            # Remove standalone "no neck, shoulders, or borders" phrases
+            prompt = re.sub(
+                r'[^.]*?no neck[^.]*?no shoulders[^.]*?no borders[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            # Ensure the full face instruction is clear and prominent
+            if "full face along with visible neck" not in prompt_lower and "visible neck and shoulders" not in prompt_lower:
+                prompt = prompt.rstrip('. ') + ". Include the full face with visible neck and shoulders."
+        else:
+            # User wants ultra-close-up - remove full face with neck instructions
+            prompt = re.sub(
+                r'keep all full face along with visible neck and shoulders[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            prompt = re.sub(
+                r'[^.]*?visible neck and shoulders[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+            prompt = re.sub(
+                r'[^.]*?full face along with visible neck[^.]*?\.',
+                '',
+                prompt,
+                flags=re.IGNORECASE
+            )
+    
+    # Remove duplicate instructions
+    # Split into sentences and remove exact duplicates
+    sentences = [s.strip() for s in re.split(r'[.!?]+', prompt) if s.strip()]
+    seen = set()
+    unique_sentences = []
+    for sentence in sentences:
+        sentence_lower = sentence.lower().strip()
+        # Normalize whitespace for comparison
+        sentence_normalized = re.sub(r'\s+', ' ', sentence_lower)
+        if sentence_normalized not in seen:
+            seen.add(sentence_normalized)
+            unique_sentences.append(sentence)
+    
+    prompt = '. '.join(unique_sentences)
+    if prompt and not prompt.endswith(('.', '!', '?')):
+        prompt += '.'
+    
+    # Clean up multiple spaces
+    prompt = re.sub(r'\s+', ' ', prompt).strip()
+    
+    return prompt
+
+
 def apply_exif_orientation(img: Image.Image) -> Image.Image:
     """
     Apply EXIF orientation data to image if present.
@@ -287,6 +461,9 @@ def generate_character_with_identity(
         client = get_gemini_client()
         if not os.path.exists(selfie_path):
             return False, f"Selfie not found: {selfie_path}"
+
+        # Normalize the prompt early to fix conflicts and improve consistency
+        character_prompt = normalize_prompt_for_consistency(character_prompt)
 
         # Load image and apply EXIF orientation to preserve correct orientation
         selfie_image = Image.open(selfie_path)
@@ -676,10 +853,15 @@ BACKGROUND:
         if full_prompt is None:
             return False, "Internal error: full_prompt not defined"
         
+        # Normalize prompt and generate seed for consistency
+        normalized_prompt = normalize_prompt_for_consistency(full_prompt)
+        seed = generate_seed_from_prompt(normalized_prompt)  # Pass already normalized prompt
+        
         response = _generate_content_image(
             client=client,
             model=get_gemini_image_model(),
-            contents=[full_prompt, selfie_image],
+            contents=[normalized_prompt, selfie_image],
+            seed=seed,
         )
 
         img = _extract_final_image_from_response(response)
@@ -687,19 +869,29 @@ BACKGROUND:
             if not hasattr(img, 'size') or not isinstance(img, Image.Image):
                 return False, "Invalid image object returned from Gemini (missing size attribute)"
             
+            # Optimize: Only check orientation if needed
             original_width, original_height = selfie_image.size
             output_width, output_height = img.size
-            original_is_portrait = original_height > original_width
-            output_is_portrait = output_height > output_width
-            
-            if original_is_portrait != output_is_portrait:
+            if original_height > original_width != output_height > output_width:
                 img = img.rotate(-90, expand=True)
             
-            if is_monochrome and img.mode != 'L':
-                img = img.convert('L').convert('RGB')
+            # Optimize: Convert mode only if necessary
+            if is_monochrome:
+                if img.mode != 'L':
+                    img = img.convert('L')
+                if img.mode != 'RGB':  # Ensure RGB for saving
+                    img = img.convert('RGB')
+            elif img.mode not in ('RGB', 'RGBA'):
+                # Only convert if not already in a compatible format
+                img = img.convert('RGB')
             
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            img.save(output_path)
+            # Optimize: Create directory only once
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            
+            # Optimize: Use optimized PNG saving
+            img.save(output_path, optimize=True)
             return True, "Character generated successfully"
 
         return False, "No image generated by Gemini"
@@ -731,6 +923,9 @@ def generate_character_composited_with_background(
             return False, f"Selfie not found: {selfie_path}"
         if not os.path.exists(background_path):
             return False, f"Background not found: {background_path}"
+
+        # Normalize the prompt early to fix conflicts and improve consistency
+        character_prompt = normalize_prompt_for_consistency(character_prompt)
 
         # Load images and apply EXIF orientation to preserve correct orientation
         selfie_image = Image.open(selfie_path)
@@ -853,10 +1048,15 @@ OUTPUT:
 Return a SINGLE final composited image ready for printing.
 """
 
+            # Normalize prompt and generate seed for consistency
+            normalized_prompt = normalize_prompt_for_consistency(full_prompt)
+            seed = generate_seed_from_prompt(normalized_prompt)  # Pass already normalized prompt
+            
             response = _generate_content_image(
                 client=client,
                 model=get_gemini_image_model(),
-                contents=[full_prompt, selfie_image, background_image],
+                contents=[normalized_prompt, selfie_image, background_image],
+                seed=seed,
             )
 
             img = _extract_final_image_from_response(response)
@@ -890,97 +1090,142 @@ Return a SINGLE final composited image ready for printing.
             try:
                 char_image = Image.open(temp_char_path).convert("RGBA")
                 
-                # Remove ALL white and gray background boxes - smart removal that preserves white/gray in character
-                # Strategy: Flood-fill from edges to remove white/gray backgrounds, but preserve pixels
-                # that are surrounded by non-background pixels (indicating they're part of the character)
+                # Optimized background removal using numpy if available, otherwise optimized PIL
                 w, h = char_image.size
-                data = list(char_image.getdata())
+                threshold = 220
                 
-                # Helper function to check if pixel is white/light/gray (background color)
-                def is_background_pixel(r, g, b, threshold=220):
-                    """Detect white, light gray, and uniform gray backgrounds"""
-                    # Check for white/very light colors
-                    if r > threshold and g > threshold and b > threshold:
-                        return True
-                    # Check for uniform gray (all RGB values similar and high)
+                if NUMPY_AVAILABLE:
+                    # Fast numpy-based background removal
+                    img_array = np.array(char_image)
+                    r, g, b, a = img_array[:, :, 0], img_array[:, :, 1], img_array[:, :, 2], img_array[:, :, 3]
+                    
+                    # Create background mask: white/light colors OR uniform gray
+                    is_light = (r > threshold) & (g > threshold) & (b > threshold)
                     rgb_avg = (r + g + b) / 3
-                    rgb_diff = max(r, g, b) - min(r, g, b)
-                    if rgb_avg > threshold and rgb_diff < 30:  # Uniform gray
-                        return True
-                    return False
-                
-                # Helper function to check if pixel has character neighbors (non-background)
-                def has_character_neighbors(x, y, data, w, h):
-                    """Check if pixel is surrounded by non-background pixels (part of character)"""
-                    non_bg_count = 0
-                    total_neighbors = 0
-                    for dx in [-1, 0, 1]:
-                        for dy in [-1, 0, 1]:
-                            if dx == 0 and dy == 0:
-                                continue
-                            nx, ny = x + dx, y + dy
-                            if 0 <= nx < w and 0 <= ny < h:
-                                total_neighbors += 1
-                                idx = ny * w + nx
-                                if idx < len(data):
-                                    r, g, b, a = data[idx]
-                                    if not is_background_pixel(r, g, b, threshold=220) and a > 0:
-                                        non_bg_count += 1
-                    # If most neighbors are non-background, this pixel is likely part of character
-                    return total_neighbors > 0 and non_bg_count >= total_neighbors * 0.4
-                
-                # Create a mask for pixels to remove (white/gray backgrounds)
-                to_remove = [False] * len(data)
-                visited = set()
-                queue = []
-                
-                # Start flood-fill from ALL edge pixels that are white/gray/light
-                for y in range(h):
-                    for x in range(w):
-                        if x == 0 or x == w-1 or y == 0 or y == h-1:
-                            idx = y * w + x
-                            if idx < len(data):
-                                r, g, b, a = data[idx]
-                                # If edge pixel is white/gray/light, start flood-fill from here
-                                if is_background_pixel(r, g, b, threshold=220) and a > 0:
-                                    queue.append((x, y))
-                                    visited.add((x, y))
-                
-                # Flood-fill from edges to mark all connected white/gray background pixels
-                while queue:
-                    x, y = queue.pop(0)
-                    idx = y * w + x
-                    if idx < len(data):
-                        r, g, b, a = data[idx]
+                    rgb_diff = np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])
+                    is_uniform_gray = (rgb_avg > threshold) & (rgb_diff < 30)
+                    background_mask = (is_light | is_uniform_gray) & (a > 0)
+                    
+                    # Flood-fill from edges using scipy or manual implementation
+                    # Mark edge pixels as background candidates
+                    edge_mask = np.zeros_like(background_mask, dtype=bool)
+                    edge_mask[0, :] = True  # top edge
+                    edge_mask[-1, :] = True  # bottom edge
+                    edge_mask[:, 0] = True  # left edge
+                    edge_mask[:, -1] = True  # right edge
+                    
+                    # Start flood-fill from edge background pixels
+                    to_remove = np.zeros_like(background_mask, dtype=bool)
+                    queue = deque()
+                    visited = np.zeros_like(background_mask, dtype=bool)
+                    
+                    # Initialize queue with edge background pixels
+                    edge_bg = edge_mask & background_mask
+                    edge_coords = np.argwhere(edge_bg)
+                    for y, x in edge_coords:
+                        queue.append((x, y))
+                        visited[y, x] = True
+                    
+                    # Optimized flood-fill with deque (O(1) operations)
+                    while queue:
+                        x, y = queue.popleft()  # O(1) instead of O(n) with list.pop(0)
                         
-                        # Check if this background pixel is part of character (surrounded by non-background)
-                        is_character_pixel = has_character_neighbors(x, y, data, w, h)
-                        
-                        if is_background_pixel(r, g, b, threshold=220) and a > 0:
-                            # Only mark for removal if it's NOT part of character
-                            if not is_character_pixel:
-                                to_remove[idx] = True
+                        if background_mask[y, x]:
+                            # Quick neighbor check: if surrounded by non-bg, likely part of character
+                            y_min, y_max = max(0, y-1), min(h, y+2)
+                            x_min, x_max = max(0, x-1), min(w, x+2)
+                            neighbors = background_mask[y_min:y_max, x_min:x_max]
+                            non_bg_ratio = 1.0 - np.sum(neighbors) / neighbors.size
+                            
+                            # Only remove if not surrounded by non-background (likely edge/background)
+                            if non_bg_ratio < 0.4:  # Less than 40% non-background neighbors
+                                to_remove[y, x] = True
                                 
-                                # Continue flood-fill to neighbors
+                                # Add neighbors to queue
                                 for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                                     nx, ny = x + dx, y + dy
-                                    if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
-                                        visited.add((nx, ny))
-                                        nidx = ny * w + nx
-                                        if nidx < len(data):
-                                            nr, ng, nb, na = data[nidx]
-                                            if is_background_pixel(nr, ng, nb, threshold=220) and na > 0:
-                                                queue.append((nx, ny))
-                
-                # Apply removal - make white/gray background pixels transparent
-                new_data = []
-                for idx, (r, g, b, a) in enumerate(data):
-                    if to_remove[idx]:
-                        new_data.append((r, g, b, 0))  # Make transparent
-                    else:
-                        new_data.append((r, g, b, a))  # Keep original
-                
-                char_image.putdata(new_data)
+                                    if 0 <= nx < w and 0 <= ny < h and not visited[ny, nx]:
+                                        visited[ny, nx] = True
+                                        if background_mask[ny, nx]:
+                                            queue.append((nx, ny))
+                    
+                    # Apply removal - make background pixels transparent
+                    img_array[:, :, 3] = np.where(to_remove, 0, img_array[:, :, 3])
+                    char_image = Image.fromarray(img_array, 'RGBA')
+                else:
+                    # Optimized PIL-based background removal (fallback)
+                    data = list(char_image.getdata())
+                    data_len = len(data)
+                    
+                    # Pre-compute background pixels for faster lookup
+                    is_bg = [False] * data_len
+                    for idx in range(data_len):
+                        r, g, b, a = data[idx]
+                        if a > 0:
+                            if r > threshold and g > threshold and b > threshold:
+                                is_bg[idx] = True
+                            else:
+                                rgb_avg = (r + g + b) / 3
+                                rgb_diff = max(r, g, b) - min(r, g, b)
+                                if rgb_avg > threshold and rgb_diff < 30:
+                                    is_bg[idx] = True
+                    
+                    # Use deque for O(1) queue operations
+                    to_remove = [False] * data_len
+                    visited = set()
+                    queue = deque()
+                    
+                    # Start flood-fill from edge background pixels
+                    for y in range(h):
+                        for x in range(w):
+                            if x == 0 or x == w-1 or y == 0 or y == h-1:
+                                idx = y * w + x
+                                if idx < data_len and is_bg[idx]:
+                                    queue.append((x, y))
+                                    visited.add((x, y))
+                    
+                    # Optimized flood-fill
+                    while queue:
+                        x, y = queue.popleft()  # O(1) operation
+                        idx = y * w + x
+                        
+                        if idx < data_len and is_bg[idx]:
+                            # Quick neighbor check
+                            non_bg_neighbors = 0
+                            total_neighbors = 0
+                            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                nx, ny = x + dx, y + dy
+                                if 0 <= nx < w and 0 <= ny < h:
+                                    nidx = ny * w + nx
+                                    if nidx < data_len:
+                                        total_neighbors += 1
+                                        if not is_bg[nidx] and data[nidx][3] > 0:
+                                            non_bg_neighbors += 1
+                            
+                            # Only remove if not surrounded by non-background
+                            if total_neighbors == 0 or non_bg_neighbors < total_neighbors * 0.4:
+                                to_remove[idx] = True
+                                
+                                # Add neighbors
+                                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                    nx, ny = x + dx, y + dy
+                                    if 0 <= nx < w and 0 <= ny < h:
+                                        coord = (nx, ny)
+                                        if coord not in visited:
+                                            visited.add(coord)
+                                            nidx = ny * w + nx
+                                            if nidx < data_len and is_bg[nidx]:
+                                                queue.append(coord)
+                    
+                    # Apply removal
+                    new_data = []
+                    for idx, (r, g, b, a) in enumerate(data):
+                        if to_remove[idx]:
+                            new_data.append((r, g, b, 0))
+                        else:
+                            new_data.append((r, g, b, a))
+                    
+                    char_image.putdata(new_data)
                 
                 # Apply canvas size to background if specified
                 if canvas_size:
@@ -1028,12 +1273,24 @@ Return a SINGLE final composited image ready for printing.
                 y_pos = bg_h - new_char_h - int(bg_h * 0.05) if position == "bottom" else (bg_h - new_char_h) // 2
                 x_pos = (bg_w - new_char_w) // 2
                 
-                composite = background_image.copy().convert("RGBA")
+                # Optimize: Only convert background if needed
+                if background_image.mode != "RGBA":
+                    composite = background_image.convert("RGBA")
+                else:
+                    composite = background_image.copy()
                 composite.paste(char_image, (x_pos, y_pos), char_image)
-                composite = composite.convert("RGB")
                 
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                composite.save(output_path, "PNG", dpi=(dpi, dpi))
+                # Only convert to RGB if needed (PNG supports RGBA, but RGB is smaller)
+                if composite.mode != "RGB":
+                    composite = composite.convert("RGB")
+                
+                # Optimize: Create directory only once
+                output_dir = os.path.dirname(output_path)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+                
+                # Optimize: Use optimized PNG saving
+                composite.save(output_path, "PNG", optimize=True, dpi=(dpi, dpi))
                 cleanup_file(temp_char_path)
                 
                 return True, "Character generated and composited locally"

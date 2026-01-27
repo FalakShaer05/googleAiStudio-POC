@@ -1,7 +1,7 @@
 import os
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from flasgger import Swagger, swag_from
@@ -28,10 +28,12 @@ from utils.character_utils import (
     cleanup_file,
     get_image_info,
     generate_character_with_identity,
+    normalize_prompt_for_consistency,
+    generate_seed_from_prompt,
     generate_character_composited_with_background,
 )
 from utils.bg_remover import remove_background_with_freepik_api
-from utils.s3_utils import upload_image_to_s3
+from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT
 
@@ -479,14 +481,48 @@ def generate_characters_batch_web():
         success_count = sum(1 for r in results if r.get("success", False))
         failure_count = len(results) - success_count
 
-        return jsonify({
+        # Create zip archive of successful results if requested
+        zip_url = None
+        zip_filename = None
+        create_zip = request.form.get("create_zip", "false").lower() == "true"
+        
+        if create_zip and success_count > 0:
+            try:
+                # Get paths of successful results
+                successful_paths = []
+                for result in results:
+                    if result.get("success") and result.get("output_filename"):
+                        file_path = os.path.join(OUTPUT_FOLDER, secure_filename(result["output_filename"]))
+                        if os.path.exists(file_path):
+                            successful_paths.append(file_path)
+                
+                if successful_paths:
+                    # Create zip archive
+                    zip_path = create_zip_archive(successful_paths)
+                    zip_filename = os.path.basename(zip_path)
+                    
+                    # Upload to S3 if configured
+                    zip_url = upload_zip_to_s3(zip_path)
+            except Exception as e:
+                print(f"⚠️ Failed to create zip archive: {e}")
+
+        response_data = {
             "success": True,
             "message": f"Batch processing completed: {success_count} succeeded, {failure_count} failed",
             "total": len(results),
             "succeeded": success_count,
             "failed": failure_count,
             "results": results
-        })
+        }
+        
+        # Add zip info if created
+        if zip_filename:
+            response_data["zip_filename"] = zip_filename
+            response_data["zip_local_path"] = f"/download/{zip_filename}"
+            if zip_url:
+                response_data["zip_url"] = zip_url
+
+        return jsonify(response_data)
 
     except Exception as e:
         import traceback
@@ -607,6 +643,8 @@ def composite_characters_on_background():
                 get_gemini_image_model,
                 _extract_final_image_from_response,
                 _generate_content_image,
+                normalize_prompt_for_consistency,
+                generate_seed_from_prompt,
             )
             import io
             
@@ -648,12 +686,16 @@ The background must be identical to the input background.
 Each character must appear exactly as they do in their original image, with no extra objects added."""
 
             # Prepare contents for Gemini (background + all characters)
-            contents = [full_prompt, background_image] + character_images
+            # Normalize prompt and generate seed for consistency
+            normalized_prompt = normalize_prompt_for_consistency(full_prompt)
+            seed = generate_seed_from_prompt(normalized_prompt)  # Pass already normalized prompt
+            contents = [normalized_prompt, background_image] + character_images
 
             response = _generate_content_image(
                 client=client,
                 model=get_gemini_image_model(),
                 contents=contents,
+                seed=seed,
             )
 
             composite = _extract_final_image_from_response(response)
@@ -917,12 +959,78 @@ def api_generate_characters_batch():
 
 @app.route("/download/<filename>")
 def download_file(filename):
-    return send_from_directory(OUTPUT_FOLDER, secure_filename(filename), as_attachment=True)
+    """Download a file from the outputs folder or temp directory (for zip files)"""
+    filename_secure = secure_filename(filename)
+    file_path = os.path.join(OUTPUT_FOLDER, filename_secure)
+    
+    # If it's a zip file, check temp directory too
+    if not os.path.exists(file_path) and filename_secure.endswith('.zip'):
+        import tempfile
+        temp_path = os.path.join(tempfile.gettempdir(), filename_secure)
+        if os.path.exists(temp_path):
+            return send_file(temp_path, as_attachment=True, download_name=filename_secure)
+    
+    return send_from_directory(OUTPUT_FOLDER, filename_secure, as_attachment=True)
 
 
 @app.route("/outputs/<filename>")
 def serve_output(filename):
     return send_from_directory(OUTPUT_FOLDER, secure_filename(filename))
+
+
+@app.route("/download-batch-zip", methods=["POST"])
+def download_batch_zip():
+    """
+    Create and download a zip archive of multiple generated images.
+    Accepts a list of filenames in the request.
+    """
+    try:
+        if request.is_json:
+            data = request.get_json()
+            filenames = data.get("filenames", [])
+        else:
+            filenames_json = request.form.get("filenames", "[]")
+            filenames = json.loads(filenames_json) if filenames_json else []
+        
+        if not filenames or len(filenames) == 0:
+            return jsonify({"error": "No filenames provided"}), 400
+        
+        # Build full paths for all files
+        file_paths = []
+        for filename in filenames:
+            file_path = os.path.join(OUTPUT_FOLDER, secure_filename(filename))
+            if os.path.exists(file_path):
+                file_paths.append(file_path)
+        
+        if not file_paths:
+            return jsonify({"error": "None of the specified files exist"}), 404
+        
+        # Create zip archive
+        zip_path = create_zip_archive(file_paths)
+        
+        # Upload to S3 if configured, otherwise serve locally
+        zip_url = upload_zip_to_s3(zip_path)
+        
+        zip_filename = os.path.basename(zip_path)
+        
+        response_data = {
+            "success": True,
+            "message": f"Created zip archive with {len(file_paths)} files",
+            "zip_filename": zip_filename,
+            "local_path": f"/download/{zip_filename}",
+            "file_count": len(file_paths)
+        }
+        
+        if zip_url:
+            response_data["zip_url"] = zip_url
+        
+        return jsonify(response_data)
+        
+    except Exception as e:
+        import traceback
+        print("Error in download-batch-zip:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": f"Error: {str(e)}"}), 500
 
 
 @app.route("/uploads/<filename>")
