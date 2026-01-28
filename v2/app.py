@@ -730,6 +730,11 @@ Each character must appear exactly as they do in their original image, with no e
         output_filename = generate_unique_filename(f"composited_batch_{num_characters}chars.png", "output")
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
 
+        # Detect style and add appropriate signature overlay
+        # For batch compositing, use "others" style as default (can be enhanced with prompt analysis)
+        from utils.character_utils import add_signature_image_overlay
+        composite = add_signature_image_overlay(composite, "others")
+        
         # Save the composited result
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         composite.save(output_path, "PNG", dpi=(dpi, dpi))

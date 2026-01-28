@@ -11,7 +11,7 @@ import hashlib
 from collections import deque
 from typing import Optional, Tuple, Dict, Any
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 import requests
 import google.genai as genai
 
@@ -403,6 +403,170 @@ def normalize_prompt_for_consistency(prompt: str) -> str:
     prompt = re.sub(r'\s+', ' ', prompt).strip()
     
     return prompt
+
+
+def extract_positive_prompt(prompt: str) -> str:
+    """
+    Extract the positive prompt, excluding negative prompt sections.
+    
+    Args:
+        prompt: Full prompt that may contain negative sections
+        
+    Returns:
+        Only the positive prompt part (without negative sections)
+    """
+    prompt_lower = prompt.lower()
+    
+    # Check for negative prompt markers (various formats)
+    # Try to find negative section markers
+    negative_patterns = [
+        r'negative\s+prompt\s*:',  # "negative prompt:" or "NEGATIVE PROMPT:"
+        r'negative\s*:',  # "negative:" or "NEGATIVE:"
+        r'NEGATIVE\s+PROMPT',  # "NEGATIVE PROMPT" (all caps, no colon)
+    ]
+    
+    for pattern in negative_patterns:
+        match = re.search(pattern, prompt, flags=re.IGNORECASE)
+        if match:
+            # Return only the part before the negative marker
+            return prompt[:match.start()].strip()
+    
+    # No negative prompt found, return original
+    return prompt.strip()
+
+
+def get_signature_image_path(style: str = "others") -> Optional[str]:
+    """
+    Get the path to the signature image based on style.
+    
+    Args:
+        style: Style type - "pencil-sketch", "cartoon", or "others"
+    
+    Returns:
+        Path to signature image if exists, None otherwise
+    """
+    # Try multiple possible locations
+    base_dir = os.path.dirname(os.path.dirname(__file__))  # Go up from utils/ to v2/
+    
+    # Define file names based on style
+    style_files = {
+        "pencil-sketch": ["pencil-sketch.png", "pencil-sketch.jpg", "pencil_sketch.png", "pencil_sketch.jpg"],
+        "cartoon": ["cartoon.png", "cartoon.jpg"],
+        "others": ["others.png", "others.jpg"]
+    }
+    
+    # Get possible filenames for this style
+    filenames = style_files.get(style, style_files["others"])
+    
+    # Build possible paths
+    possible_paths = []
+    for filename in filenames:
+        possible_paths.append(os.path.join(base_dir, "constants", filename))
+        possible_paths.append(os.path.join(os.path.dirname(__file__), "..", "constants", filename))
+    
+    print(f"🔍 Looking for signature image (style: {style}). Base dir: {base_dir}")
+    for path in possible_paths:
+        abs_path = os.path.abspath(path)
+        exists = os.path.exists(abs_path)
+        print(f"   Checking: {abs_path} - {'✅ EXISTS' if exists else '❌ NOT FOUND'}")
+        if exists:
+            print(f"✅ Found signature image at: {abs_path}")
+            return abs_path
+    
+    print(f"❌ Signature image not found for style '{style}'")
+    print(f"   Please place '{filenames[0]}' in: {os.path.abspath(os.path.join(base_dir, 'constants'))}")
+    return None
+
+
+def add_signature_image_overlay(img: Image.Image, style: str = "others") -> Image.Image:
+    """
+    Add the signature image overlay to the bottom right of an image.
+    The signature will be 20% width and 20% height of the generated image.
+    
+    Args:
+        img: PIL Image object
+        style: Style type - "pencil-sketch", "cartoon", or "others"
+        
+    Returns:
+        PIL Image with signature overlay added
+    """
+    # Ensure image is in RGB or RGBA mode
+    if img.mode not in ('RGB', 'RGBA'):
+        img = img.convert('RGB')
+    
+    # Get signature image path based on style
+    signature_path = get_signature_image_path(style)
+    if not signature_path:
+        print(f"⚠️ Signature image not found for style '{style}'. Skipping signature overlay.")
+        return img
+    
+    print(f"✅ Found signature image at: {signature_path}")
+    
+    try:
+        # Load signature image
+        signature_img = Image.open(signature_path)
+        
+        # Convert signature to RGBA if needed for transparency support
+        if signature_img.mode != 'RGBA':
+            signature_img = signature_img.convert('RGBA')
+        
+        # Get dimensions
+        img_width, img_height = img.size
+        
+        # Calculate signature size: 15% of image dimensions
+        sig_width = int(img_width * 0.20)
+        sig_height = int(img_height * 0.20)
+        
+        # Resize signature maintaining aspect ratio
+        sig_aspect = signature_img.width / signature_img.height
+        target_aspect = sig_width / sig_height
+        
+        if sig_aspect > target_aspect:
+            # Signature is wider, fit to width
+            new_sig_width = sig_width
+            new_sig_height = int(sig_width / sig_aspect)
+        else:
+            # Signature is taller, fit to height
+            new_sig_height = sig_height
+            new_sig_width = int(sig_height * sig_aspect)
+        
+        # Resize signature image
+        signature_resized = signature_img.resize((new_sig_width, new_sig_height), Image.Resampling.LANCZOS)
+        
+        # Create a copy of the main image
+        img_with_signature = img.copy()
+        
+        # Convert to RGBA if needed for compositing
+        if img_with_signature.mode != 'RGBA':
+            img_with_signature = img_with_signature.convert('RGBA')
+        
+        # Calculate position: top right with small padding (1% from edges)
+        padding_x = int(img_width * 0.01)
+        padding_y = int(img_height * 0.01)
+        x = img_width - new_sig_width - padding_x
+        y = padding_y  # Top position instead of bottom
+        
+        # Composite signature onto image
+        img_with_signature.paste(signature_resized, (x, y), signature_resized)
+        
+        print(f"✅ Signature overlay added successfully!")
+        print(f"   Position: ({x}, {y}), Size: ({new_sig_width}x{new_sig_height})")
+        print(f"   Image size: ({img_width}x{img_height})")
+        
+        # Convert back to original mode if needed
+        if img.mode == 'RGB' and img_with_signature.mode == 'RGBA':
+            # Create white background and paste
+            final_img = Image.new('RGB', img_with_signature.size, (255, 255, 255))
+            final_img.paste(img_with_signature, mask=img_with_signature.split()[3] if img_with_signature.mode == 'RGBA' else None)
+            return final_img
+        
+        return img_with_signature
+        
+    except Exception as e:
+        import traceback
+        print(f"⚠️ Failed to add signature overlay: {e}")
+        print(f"   Traceback: {traceback.format_exc()}")
+        return img
 
 
 def apply_exif_orientation(img: Image.Image) -> Image.Image:
@@ -885,6 +1049,54 @@ BACKGROUND:
                 # Only convert if not already in a compatible format
                 img = img.convert('RGB')
             
+            # Detect style and add appropriate signature overlay
+            # Priority: caricature/pencil-sketch → cartoon → others
+            # Extract positive prompt only (exclude negative sections)
+            positive_prompt = extract_positive_prompt(character_prompt)
+            prompt_lower_style = positive_prompt.lower()
+            
+            # Debug: Show what was extracted
+            if positive_prompt != character_prompt:
+                print(f"📝 Negative prompt section removed. Positive part: {positive_prompt[:200]}...")
+            
+            # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+            is_caricature = "caricature" in prompt_lower_style
+            
+            # Pencil sketch keywords (excluding caricature which is checked separately)
+            is_pencil_sketch = (
+                "pencil sketch" in prompt_lower_style or
+                "pencil drawing" in prompt_lower_style or
+                "graphite" in prompt_lower_style or
+                "charcoal" in prompt_lower_style or
+                ("hand-drawn" in prompt_lower_style and "sketch" in prompt_lower_style) or
+                ("sketch" in prompt_lower_style and "pencil" in prompt_lower_style)
+            )
+            
+            # Cartoon keywords - only if NOT caricature (caricature takes priority)
+            cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+            is_cartoon = False
+            if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                is_cartoon = any(keyword in prompt_lower_style for keyword in cartoon_keywords)
+            
+            # Determine style for signature (caricature/pencil-sketch takes priority)
+            if is_caricature or is_pencil_sketch:
+                style = "pencil-sketch"
+                if is_caricature:
+                    print(f"🎨 Caricature detected! Adding signature overlay (pencil-sketch.png).")
+                else:
+                    print(f"🎨 Pencil sketch detected! Adding signature overlay.")
+            elif is_cartoon:
+                style = "cartoon"
+                matched_keywords = [k for k in cartoon_keywords if k in prompt_lower_style]
+                print(f"🎨 Cartoon style detected! Adding signature overlay.")
+                print(f"   Matched keywords: {matched_keywords}")
+            else:
+                style = "others"
+                print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay.")
+            
+            print(f"   Style: {style}, Prompt preview: {character_prompt[:150]}...")
+            img = add_signature_image_overlay(img, style)
+            
             # Optimize: Create directory only once
             output_dir = os.path.dirname(output_path)
             if output_dir:
@@ -1051,7 +1263,7 @@ Return a SINGLE final composited image ready for printing.
             # Normalize prompt and generate seed for consistency
             normalized_prompt = normalize_prompt_for_consistency(full_prompt)
             seed = generate_seed_from_prompt(normalized_prompt)  # Pass already normalized prompt
-            
+
             response = _generate_content_image(
                 client=client,
                 model=get_gemini_image_model(),
@@ -1063,6 +1275,41 @@ Return a SINGLE final composited image ready for printing.
             if img is not None:
                 if not hasattr(img, 'size') or not isinstance(img, Image.Image):
                     return False, "Invalid image object returned from Gemini (missing size attribute)"
+                
+                # Detect style and add appropriate signature overlay
+                # Extract positive prompt only (exclude negative sections)
+                positive_prompt_comp = extract_positive_prompt(character_prompt)
+                prompt_lower_comp = positive_prompt_comp.lower()
+                
+                # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                is_caricature = "caricature" in prompt_lower_comp
+                
+                # Pencil sketch keywords (excluding caricature which is checked separately)
+                is_pencil_sketch = (
+                    "pencil sketch" in prompt_lower_comp or
+                    "pencil drawing" in prompt_lower_comp or
+                    "graphite" in prompt_lower_comp or
+                    "charcoal" in prompt_lower_comp or
+                    ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
+                    ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
+                )
+                
+                # Cartoon keywords - only if NOT caricature (caricature takes priority)
+                cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+                is_cartoon = False
+                if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                    is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
+                
+                # Determine style (caricature/pencil-sketch takes priority)
+                if is_caricature or is_pencil_sketch:
+                    style = "pencil-sketch"
+                elif is_cartoon:
+                    style = "cartoon"
+                else:
+                    style = "others"
+                
+                print(f"🎨 Adding signature overlay (style: {style}) to composited image")
+                img = add_signature_image_overlay(img, style)
                 
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 img.save(output_path)
@@ -1224,8 +1471,8 @@ Return a SINGLE final composited image ready for printing.
                             new_data.append((r, g, b, 0))
                         else:
                             new_data.append((r, g, b, a))
-                    
-                    char_image.putdata(new_data)
+                
+                char_image.putdata(new_data)
                 
                 # Apply canvas size to background if specified
                 if canvas_size:
@@ -1283,6 +1530,41 @@ Return a SINGLE final composited image ready for printing.
                 # Only convert to RGB if needed (PNG supports RGBA, but RGB is smaller)
                 if composite.mode != "RGB":
                     composite = composite.convert("RGB")
+                
+                # Detect style and add appropriate signature overlay
+                # Extract positive prompt only (exclude negative sections)
+                positive_prompt_comp = extract_positive_prompt(character_prompt)
+                prompt_lower_comp = positive_prompt_comp.lower()
+                
+                # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                is_caricature = "caricature" in prompt_lower_comp
+                
+                # Pencil sketch keywords (excluding caricature which is checked separately)
+                is_pencil_sketch = (
+                    "pencil sketch" in prompt_lower_comp or
+                    "pencil drawing" in prompt_lower_comp or
+                    "graphite" in prompt_lower_comp or
+                    "charcoal" in prompt_lower_comp or
+                    ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
+                    ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
+                )
+                
+                # Cartoon keywords - only if NOT caricature (caricature takes priority)
+                cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+                is_cartoon = False
+                if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                    is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
+                
+                # Determine style (caricature/pencil-sketch takes priority)
+                if is_caricature or is_pencil_sketch:
+                    style = "pencil-sketch"
+                elif is_cartoon:
+                    style = "cartoon"
+                else:
+                    style = "others"
+                
+                print(f"🎨 Adding signature overlay (style: {style}) to composited image")
+                composite = add_signature_image_overlay(composite, style)
                 
                 # Optimize: Create directory only once
                 output_dir = os.path.dirname(output_path)
