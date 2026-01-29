@@ -629,9 +629,11 @@ def generate_character_with_identity(
         # Normalize the prompt early to fix conflicts and improve consistency
         character_prompt = normalize_prompt_for_consistency(character_prompt)
 
-        # Load image and apply EXIF orientation to preserve correct orientation
+        # Load image - DO NOT apply EXIF orientation to preserve user's intended orientation
+        # EXIF orientation can incorrectly rotate images, so we use the image as-is
         selfie_image = Image.open(selfie_path)
-        selfie_image = apply_exif_orientation(selfie_image)
+        original_width, original_height = selfie_image.size
+        is_original_portrait = original_height > original_width
 
         # Detect if this is a style conversion task (pencil sketch, painting, etc.)
         # vs a character transformation task
@@ -834,25 +836,33 @@ STRICT PROHIBITIONS (when character_only=True):
 """
             else:
                 if has_explicit_full_body_style:
-                    composition_instructions = f"""CRITICAL REQUIREMENTS:
+                    composition_instructions = f"""CRITICAL REQUIREMENTS - ORIENTATION PRESERVATION (HIGHEST PRIORITY):
+- ⚠️ CRITICAL: The input image is {"PORTRAIT" if is_portrait else "LANDSCAPE"} orientation ({img_width}x{img_height})
+- ⚠️ CRITICAL: You MUST output the image in the EXACT SAME orientation: {"PORTRAIT" if is_portrait else "LANDSCAPE"}
+- ⚠️ CRITICAL: Do NOT rotate the image - if input is tall (portrait), output must be tall (portrait)
+- ⚠️ CRITICAL: Do NOT rotate the image - if input is wide (landscape), output must be wide (landscape)
 - The user's prompt explicitly requests "full-body" - you MUST show the complete character from head to feet
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible
 - Follow any pose instructions in the user's prompt (e.g., "standing in playful pose")
-- Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
-- Do NOT rotate, flip, or change the orientation of the image
+- Maintain the same aspect ratio ({img_width}x{img_height})
+- Do NOT flip, or change the orientation of the image in ANY way
 - Do NOT cut off or hide body parts (hands, feet, arms, legs) - show the complete full body
 - Do NOT change the subject's position or pose unless the prompt explicitly requests a different pose
 - Show complete body parts (hands, feet, arms, legs) - the character must be full-body as requested
 - Apply the style transformation to the EXISTING image composition
 """
                 else:
-                    composition_instructions = f"""CRITICAL REQUIREMENTS:
+                    composition_instructions = f"""CRITICAL REQUIREMENTS - ORIENTATION PRESERVATION (HIGHEST PRIORITY):
+- ⚠️ CRITICAL: The input image is {"PORTRAIT" if is_portrait else "LANDSCAPE"} orientation ({img_width}x{img_height})
+- ⚠️ CRITICAL: You MUST output the image in the EXACT SAME orientation: {"PORTRAIT" if is_portrait else "LANDSCAPE"}
+- ⚠️ CRITICAL: Do NOT rotate the image - if input is tall (portrait), output must be tall (portrait)
+- ⚠️ CRITICAL: Do NOT rotate the image - if input is wide (landscape), output must be wide (landscape)
 - Preserve the EXACT same framing, crop, and composition as the input image
 - Keep the same pose, position, and body parts visible (if it's a half picture, keep it as a half picture)
 - Follow any pose instructions in the user's prompt (e.g., "standing in playful pose")
-- Maintain the same aspect ratio ({img_width}x{img_height}) and orientation ({"portrait" if is_portrait else "landscape"})
-- Do NOT rotate, flip, or change the orientation of the image
+- Maintain the same aspect ratio ({img_width}x{img_height})
+- Do NOT flip, or change the orientation of the image in ANY way
 - Do NOT add or remove body parts (e.g., if only upper body is shown, do NOT make it full body)
 - Do NOT change the subject's position or pose unless the prompt explicitly requests a different pose
 - Show complete body parts (hands, feet, arms, legs) unless the prompt explicitly requests otherwise
@@ -1033,11 +1043,6 @@ BACKGROUND:
             if not hasattr(img, 'size') or not isinstance(img, Image.Image):
                 return False, "Invalid image object returned from Gemini (missing size attribute)"
             
-            # Optimize: Only check orientation if needed
-            original_width, original_height = selfie_image.size
-            output_width, output_height = img.size
-            if original_height > original_width != output_height > output_width:
-                img = img.rotate(-90, expand=True)
             
             # Optimize: Convert mode only if necessary
             if is_monochrome:
@@ -1139,11 +1144,13 @@ def generate_character_composited_with_background(
         # Normalize the prompt early to fix conflicts and improve consistency
         character_prompt = normalize_prompt_for_consistency(character_prompt)
 
-        # Load images and apply EXIF orientation to preserve correct orientation
+        # Load images - DO NOT apply EXIF orientation to preserve user's intended orientation
+        # EXIF orientation can incorrectly rotate images, so we use the images as-is
         selfie_image = Image.open(selfie_path)
-        selfie_image = apply_exif_orientation(selfie_image)
+        original_selfie_width, original_selfie_height = selfie_image.size
+        is_original_selfie_portrait = original_selfie_height > original_selfie_width
+        
         background_image = Image.open(background_path)
-        background_image = apply_exif_orientation(background_image)
         bg_w, bg_h = background_image.size
 
         canvas_context = ""
