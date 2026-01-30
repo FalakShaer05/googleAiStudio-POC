@@ -358,6 +358,26 @@
             </div>
           </div>
 
+          <!-- Station Selection -->
+          <div class="mb-3">
+            <label class="form-label fw-bold">Station</label>
+            <select
+              class="form-select"
+              id="stationSelect"
+              name="station"
+              required
+            >
+              <option value="">Select a station...</option>
+              <option value="pencil-sketch">Pencil Sketch</option>
+              <option value="cartoon">Cartoon</option>
+              <option value="caricature">Caricature</option>
+              <option value="retro90">Retro 90s</option>
+              <option value="wynwood">Wynwood</option>
+              <option value="warhol">Warhol</option>
+            </select>
+            <small class="text-muted">Select the station type to determine signature and style handling</small>
+          </div>
+
           <!-- Prompt & style -->
           <div class="mb-3">
             <label class="form-label fw-bold">Character Prompt</label>
@@ -802,6 +822,10 @@
       formData.set("position", document.getElementById("charPosition").value);
       formData.set("scale", document.getElementById("charScale").value);
       formData.set("use_gemini_compositing", useGeminiCompositing.checked ? "true" : "false");
+      const stationValue = document.getElementById("stationSelect").value;
+      if (stationValue) {
+        formData.set("station", stationValue);
+      }
 
       const bgFile = bgFileInput.files[0];
       const bgUrlInput = document.getElementById("backgroundUrl");
@@ -853,6 +877,7 @@
         selfieFile: null,
         selfieUrl: "",
         characterPrompt: "",
+        station: "",
         canvasSize: "",
         dpi: 300
       };
@@ -902,6 +927,20 @@
               <input type="url" class="form-control mt-2" placeholder="Or enter selfie URL" 
                      value="${item.selfieUrl}" onchange="batchItems.find(i => i.id === ${item.id}).selfieUrl = this.value" />
               ${item.selfieFile ? `<div class="file-info mt-2" style="display: block;"><i class="fas fa-image me-2"></i>${item.selfieFile.name}</div>` : ''}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label fw-bold">Station (required)</label>
+              <select class="form-select form-select-sm mb-2" id="stationSelect_${item.id}" 
+                      onchange="batchItems.find(i => i.id === ${item.id}).station = this.value" required>
+                <option value="">Select a station...</option>
+                <option value="pencil-sketch" ${item.station === 'pencil-sketch' ? 'selected' : ''}>Pencil Sketch</option>
+                <option value="cartoon" ${item.station === 'cartoon' ? 'selected' : ''}>Cartoon</option>
+                <option value="caricature" ${item.station === 'caricature' ? 'selected' : ''}>Caricature</option>
+                <option value="wynwood" ${item.station === 'wynwood' ? 'selected' : ''}>Wynwood</option>
+                <option value="warhol" ${item.station === 'warhol' ? 'selected' : ''}>Warhol</option>
+              </select>
+              <small class="text-muted">Select the station type to determine signature and style handling</small>
             </div>
 
             <div class="mb-3">
@@ -1102,12 +1141,17 @@ STRICT RULES:
           showBatchStatus(`Item ${batchItems.indexOf(item) + 1}: Character prompt is required`, true);
           return;
         }
+        if (!item.station || !item.station.trim()) {
+          showBatchStatus(`Item ${batchItems.indexOf(item) + 1}: Station is required`, true);
+          return;
+        }
       }
 
       // Prepare items for API (no background fields)
       const itemsToSend = batchItems.map(item => ({
         selfie_url: item.selfieUrl || undefined,
         character_prompt: item.characterPrompt,
+        station: item.station,
         canvas_size: item.canvasSize || undefined,
         dpi: item.dpi
       }));

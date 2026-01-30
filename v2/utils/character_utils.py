@@ -612,6 +612,7 @@ def generate_character_with_identity(
     canvas_size: Optional[str] = None,
     dpi: int = 300,
     character_only: bool = False,
+    station: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
@@ -635,20 +636,38 @@ def generate_character_with_identity(
         original_width, original_height = selfie_image.size
         is_original_portrait = original_height > original_width
 
-        # Detect if this is a style conversion task (pencil sketch, painting, etc.)
-        # vs a character transformation task
-        # Only match actual artistic medium conversions, not general style descriptions like "retro 90s style"
-        artistic_medium_keywords = [
-            "pencil sketch", "sketch", "drawing", "hand-drawn", "graphite",
-            "painting", "watercolor", "oil painting", "charcoal", "ink drawing",
-            "pop art", "warhol", "acrylic", "silkscreen", "portrait"
-        ]
-        prompt_lower = character_prompt.lower()
-        is_style_conversion = any(keyword in prompt_lower for keyword in artistic_medium_keywords)
+        # Station-based style detection (if station is provided, use it; otherwise fall back to keyword detection)
+        # Valid stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+        station_lower = station.lower() if station else None
         
-        # Detect if this is a Warhol/pop art style that requires grid layout (skip composition preservation)
-        warhol_keywords = ["warhol", "pop art", "four-panel", "2×2", "2x2", "grid", "four panel"]
-        is_warhol_style = any(keyword in prompt_lower for keyword in warhol_keywords)
+        # Determine style based on station
+        if station_lower:
+            is_pencil_sketch_station = station_lower == "pencil-sketch"
+            is_caricature_station = station_lower == "caricature"
+            is_cartoon_station = station_lower == "cartoon" or station_lower == "retro90"
+            is_wynwood_station = station_lower == "wynwood"
+            is_warhol_style = station_lower == "wynwood" or station_lower == "warhol"  # Wynwood and Warhol use warhol-style handling
+            # All stations are style conversions
+            is_style_conversion = True
+            # Initialize prompt_lower for later use
+            prompt_lower = character_prompt.lower()
+        else:
+            # Fallback to keyword detection if station not provided
+            artistic_medium_keywords = [
+                "pencil sketch", "sketch", "drawing", "hand-drawn", "graphite",
+                "painting", "watercolor", "oil painting", "charcoal", "ink drawing",
+                "pop art", "warhol", "acrylic", "silkscreen", "portrait"
+            ]
+            prompt_lower = character_prompt.lower()
+            is_style_conversion = any(keyword in prompt_lower for keyword in artistic_medium_keywords)
+            
+            # Detect if this is a Warhol/pop art style that requires grid layout (skip composition preservation)
+            warhol_keywords = ["warhol", "pop art", "four-panel", "2×2", "2x2", "grid", "four panel"]
+            is_warhol_style = any(keyword in prompt_lower for keyword in warhol_keywords)
+            is_pencil_sketch_station = False
+            is_caricature_station = False
+            is_cartoon_station = False
+            is_wynwood_station = False
 
         # Detect if this is a monochrome/grayscale request
         monochrome_keywords = [
@@ -1054,50 +1073,65 @@ BACKGROUND:
                 # Only convert if not already in a compatible format
                 img = img.convert('RGB')
             
-            # Detect style and add appropriate signature overlay
-            # Priority: caricature/pencil-sketch → cartoon → others
-            # Extract positive prompt only (exclude negative sections)
-            positive_prompt = extract_positive_prompt(character_prompt)
-            prompt_lower_style = positive_prompt.lower()
-            
-            # Debug: Show what was extracted
-            if positive_prompt != character_prompt:
-                print(f"📝 Negative prompt section removed. Positive part: {positive_prompt[:200]}...")
-            
-            # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
-            is_caricature = "caricature" in prompt_lower_style
-            
-            # Pencil sketch keywords (excluding caricature which is checked separately)
-            is_pencil_sketch = (
-                "pencil sketch" in prompt_lower_style or
-                "pencil drawing" in prompt_lower_style or
-                "graphite" in prompt_lower_style or
-                "charcoal" in prompt_lower_style or
-                ("hand-drawn" in prompt_lower_style and "sketch" in prompt_lower_style) or
-                ("sketch" in prompt_lower_style and "pencil" in prompt_lower_style)
-            )
-            
-            # Cartoon keywords - only if NOT caricature (caricature takes priority)
-            cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
-            is_cartoon = False
-            if not is_caricature:  # Only check cartoon if it's NOT a caricature
-                is_cartoon = any(keyword in prompt_lower_style for keyword in cartoon_keywords)
-            
-            # Determine style for signature (caricature/pencil-sketch takes priority)
-            if is_caricature or is_pencil_sketch:
-                style = "pencil-sketch"
-                if is_caricature:
-                    print(f"🎨 Caricature detected! Adding signature overlay (pencil-sketch.png).")
+            # Determine style for signature based on station
+            # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+            if station_lower:
+                # Use station to determine signature style
+                if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
+                    style = "pencil-sketch"
+                    print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
+                elif station_lower == "cartoon" or station_lower == "retro90":
+                    style = "cartoon"
+                    print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
+                elif station_lower == "warhol":
+                    style = "others"
+                    print(f"🎨 Station: {station_lower} → Using signature: others.png")
                 else:
-                    print(f"🎨 Pencil sketch detected! Adding signature overlay.")
-            elif is_cartoon:
-                style = "cartoon"
-                matched_keywords = [k for k in cartoon_keywords if k in prompt_lower_style]
-                print(f"🎨 Cartoon style detected! Adding signature overlay.")
-                print(f"   Matched keywords: {matched_keywords}")
+                    style = "others"
+                    print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
             else:
-                style = "others"
-                print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay.")
+                # Fallback to keyword detection if station not provided
+                positive_prompt = extract_positive_prompt(character_prompt)
+                prompt_lower_style = positive_prompt.lower()
+                
+                # Debug: Show what was extracted
+                if positive_prompt != character_prompt:
+                    print(f"📝 Negative prompt section removed. Positive part: {positive_prompt[:200]}...")
+                
+                # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                is_caricature = "caricature" in prompt_lower_style
+                
+                # Pencil sketch keywords (excluding caricature which is checked separately)
+                is_pencil_sketch = (
+                    "pencil sketch" in prompt_lower_style or
+                    "pencil drawing" in prompt_lower_style or
+                    "graphite" in prompt_lower_style or
+                    "charcoal" in prompt_lower_style or
+                    ("hand-drawn" in prompt_lower_style and "sketch" in prompt_lower_style) or
+                    ("sketch" in prompt_lower_style and "pencil" in prompt_lower_style)
+                )
+                
+                # Cartoon keywords - only if NOT caricature (caricature takes priority)
+                cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+                is_cartoon = False
+                if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                    is_cartoon = any(keyword in prompt_lower_style for keyword in cartoon_keywords)
+                
+                # Determine style for signature (caricature/pencil-sketch takes priority)
+                if is_caricature or is_pencil_sketch:
+                    style = "pencil-sketch"
+                    if is_caricature:
+                        print(f"🎨 Caricature detected! Adding signature overlay (pencil-sketch.png).")
+                    else:
+                        print(f"🎨 Pencil sketch detected! Adding signature overlay.")
+                elif is_cartoon:
+                    style = "cartoon"
+                    matched_keywords = [k for k in cartoon_keywords if k in prompt_lower_style]
+                    print(f"🎨 Cartoon style detected! Adding signature overlay.")
+                    print(f"   Matched keywords: {matched_keywords}")
+                else:
+                    style = "others"
+                    print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay.")
             
             print(f"   Style: {style}, Prompt preview: {character_prompt[:150]}...")
             img = add_signature_image_overlay(img, style)
@@ -1127,6 +1161,7 @@ def generate_character_composited_with_background(
     canvas_size: Optional[str] = None,
     dpi: int = 300,
     use_gemini_compositing: bool = True,
+    station: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate character and composite onto background.
@@ -1143,6 +1178,9 @@ def generate_character_composited_with_background(
 
         # Normalize the prompt early to fix conflicts and improve consistency
         character_prompt = normalize_prompt_for_consistency(character_prompt)
+        
+        # Station-based style detection (if station is provided, use it)
+        station_lower = station.lower() if station else None
 
         # Load images - DO NOT apply EXIF orientation to preserve user's intended orientation
         # EXIF orientation can incorrectly rotate images, so we use the images as-is
@@ -1283,37 +1321,53 @@ Return a SINGLE final composited image ready for printing.
                 if not hasattr(img, 'size') or not isinstance(img, Image.Image):
                     return False, "Invalid image object returned from Gemini (missing size attribute)"
                 
-                # Detect style and add appropriate signature overlay
-                # Extract positive prompt only (exclude negative sections)
-                positive_prompt_comp = extract_positive_prompt(character_prompt)
-                prompt_lower_comp = positive_prompt_comp.lower()
-                
-                # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
-                is_caricature = "caricature" in prompt_lower_comp
-                
-                # Pencil sketch keywords (excluding caricature which is checked separately)
-                is_pencil_sketch = (
-                    "pencil sketch" in prompt_lower_comp or
-                    "pencil drawing" in prompt_lower_comp or
-                    "graphite" in prompt_lower_comp or
-                    "charcoal" in prompt_lower_comp or
-                    ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
-                    ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
-                )
-                
-                # Cartoon keywords - only if NOT caricature (caricature takes priority)
-                cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
-                is_cartoon = False
-                if not is_caricature:  # Only check cartoon if it's NOT a caricature
-                    is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
-                
-                # Determine style (caricature/pencil-sketch takes priority)
-                if is_caricature or is_pencil_sketch:
-                    style = "pencil-sketch"
-                elif is_cartoon:
-                    style = "cartoon"
+                # Determine style for signature based on station
+                # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+                if station_lower:
+                    # Use station to determine signature style
+                    if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
+                        style = "pencil-sketch"
+                        print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
+                    elif station_lower == "cartoon" or station_lower == "retro90":
+                        style = "cartoon"
+                        print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
+                    elif station_lower == "warhol":
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} → Using signature: others.png")
+                    else:
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
                 else:
-                    style = "others"
+                    # Fallback to keyword detection if station not provided
+                    positive_prompt_comp = extract_positive_prompt(character_prompt)
+                    prompt_lower_comp = positive_prompt_comp.lower()
+                    
+                    # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                    is_caricature = "caricature" in prompt_lower_comp
+                    
+                    # Pencil sketch keywords (excluding caricature which is checked separately)
+                    is_pencil_sketch = (
+                        "pencil sketch" in prompt_lower_comp or
+                        "pencil drawing" in prompt_lower_comp or
+                        "graphite" in prompt_lower_comp or
+                        "charcoal" in prompt_lower_comp or
+                        ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
+                        ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
+                    )
+                    
+                    # Cartoon keywords - only if NOT caricature (caricature takes priority)
+                    cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+                    is_cartoon = False
+                    if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                        is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
+                    
+                    # Determine style (caricature/pencil-sketch takes priority)
+                    if is_caricature or is_pencil_sketch:
+                        style = "pencil-sketch"
+                    elif is_cartoon:
+                        style = "cartoon"
+                    else:
+                        style = "others"
                 
                 print(f"🎨 Adding signature overlay (style: {style}) to composited image")
                 img = add_signature_image_overlay(img, style)
@@ -1336,6 +1390,7 @@ Return a SINGLE final composited image ready for printing.
                 canvas_size=None,
                 dpi=dpi,
                 character_only=True,
+                station=station,
             )
             
             if not success:
@@ -1538,37 +1593,53 @@ Return a SINGLE final composited image ready for printing.
                 if composite.mode != "RGB":
                     composite = composite.convert("RGB")
                 
-                # Detect style and add appropriate signature overlay
-                # Extract positive prompt only (exclude negative sections)
-                positive_prompt_comp = extract_positive_prompt(character_prompt)
-                prompt_lower_comp = positive_prompt_comp.lower()
-                
-                # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
-                is_caricature = "caricature" in prompt_lower_comp
-                
-                # Pencil sketch keywords (excluding caricature which is checked separately)
-                is_pencil_sketch = (
-                    "pencil sketch" in prompt_lower_comp or
-                    "pencil drawing" in prompt_lower_comp or
-                    "graphite" in prompt_lower_comp or
-                    "charcoal" in prompt_lower_comp or
-                    ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
-                    ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
-                )
-                
-                # Cartoon keywords - only if NOT caricature (caricature takes priority)
-                cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
-                is_cartoon = False
-                if not is_caricature:  # Only check cartoon if it's NOT a caricature
-                    is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
-                
-                # Determine style (caricature/pencil-sketch takes priority)
-                if is_caricature or is_pencil_sketch:
-                    style = "pencil-sketch"
-                elif is_cartoon:
-                    style = "cartoon"
+                # Determine style for signature based on station
+                # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+                if station_lower:
+                    # Use station to determine signature style
+                    if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
+                        style = "pencil-sketch"
+                        print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
+                    elif station_lower == "cartoon" or station_lower == "retro90":
+                        style = "cartoon"
+                        print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
+                    elif station_lower == "warhol":
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} → Using signature: others.png")
+                    else:
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
                 else:
-                    style = "others"
+                    # Fallback to keyword detection if station not provided
+                    positive_prompt_comp = extract_positive_prompt(character_prompt)
+                    prompt_lower_comp = positive_prompt_comp.lower()
+                    
+                    # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                    is_caricature = "caricature" in prompt_lower_comp
+                    
+                    # Pencil sketch keywords (excluding caricature which is checked separately)
+                    is_pencil_sketch = (
+                        "pencil sketch" in prompt_lower_comp or
+                        "pencil drawing" in prompt_lower_comp or
+                        "graphite" in prompt_lower_comp or
+                        "charcoal" in prompt_lower_comp or
+                        ("hand-drawn" in prompt_lower_comp and "sketch" in prompt_lower_comp) or
+                        ("sketch" in prompt_lower_comp and "pencil" in prompt_lower_comp)
+                    )
+                    
+                    # Cartoon keywords - only if NOT caricature (caricature takes priority)
+                    cartoon_keywords = ["cartoon", "comic", "animated", "cartoon-style", "anime"]
+                    is_cartoon = False
+                    if not is_caricature:  # Only check cartoon if it's NOT a caricature
+                        is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
+                    
+                    # Determine style (caricature/pencil-sketch takes priority)
+                    if is_caricature or is_pencil_sketch:
+                        style = "pencil-sketch"
+                    elif is_cartoon:
+                        style = "cartoon"
+                    else:
+                        style = "others"
                 
                 print(f"🎨 Adding signature overlay (style: {style}) to composited image")
                 composite = add_signature_image_overlay(composite, style)

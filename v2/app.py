@@ -108,6 +108,7 @@ def process_single_character(item_data, index):
         selfie_file = item_data.get("selfie_file")
         selfie_url = item_data.get("selfie_url", "").strip()
         character_prompt = item_data.get("character_prompt", "").strip()
+        station = item_data.get("station", "").strip() or None
         canvas_size = item_data.get("canvas_size") or None
         dpi = int(item_data.get("dpi", "300"))
 
@@ -170,6 +171,7 @@ def process_single_character(item_data, index):
             background_dimensions=None,
             canvas_size=canvas_size,
             dpi=dpi,
+            station=station,
         )
 
         if not success:
@@ -255,6 +257,7 @@ def generate_character_web():
         canvas_size = request.form.get("canvas_size", "").strip() or None
         dpi = int(request.form.get("dpi", "300"))
         use_gemini_compositing = request.form.get("use_gemini_compositing", "true").lower() == "true"
+        station = request.form.get("station", "").strip() or None  # Station: pencil-sketch, cartoon, caricature, retro90, wynwood
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
@@ -312,6 +315,7 @@ def generate_character_web():
                 canvas_size=canvas_size,
                 dpi=dpi,
                 use_gemini_compositing=use_gemini_compositing,
+                station=station,
             )
         else:
             success, message = generate_character_with_identity(
@@ -324,6 +328,7 @@ def generate_character_web():
                 background_dimensions=None,
                 canvas_size=canvas_size,
                 dpi=dpi,
+                station=station,
             )
 
         if not success:
@@ -447,6 +452,7 @@ def generate_characters_batch_web():
                 "selfie_file": selfie_file,
                 "selfie_url": item.get("selfie_url", "").strip(),
                 "character_prompt": item.get("character_prompt", "").strip(),
+                "station": item.get("station", "").strip() or None,
                 "canvas_size": item.get("canvas_size") or None,
                 "dpi": int(item.get("dpi", "300")),
             }
