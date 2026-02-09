@@ -1074,21 +1074,16 @@ BACKGROUND:
                 img = img.convert('RGB')
             
             # Determine style for signature based on station
-            # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+            # All stations use cartoon.png except warhol (famous painting) which uses others.png
             if station_lower:
                 # Use station to determine signature style
-                if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
-                    style = "pencil-sketch"
-                    print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
-                elif station_lower == "cartoon" or station_lower == "retro90":
+                if station_lower == "warhol":
+                    style = "others"
+                    print(f"🎨 Station: {station_lower} (famous painting) → Using signature: others.png")
+                else:
+                    # All other stations (pencil-sketch, cartoon, caricature, retro90, wynwood) use cartoon.png
                     style = "cartoon"
                     print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
-                elif station_lower == "warhol":
-                    style = "others"
-                    print(f"🎨 Station: {station_lower} → Using signature: others.png")
-                else:
-                    style = "others"
-                    print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
             else:
                 # Fallback to keyword detection if station not provided
                 positive_prompt = extract_positive_prompt(character_prompt)
@@ -1117,21 +1112,23 @@ BACKGROUND:
                 if not is_caricature:  # Only check cartoon if it's NOT a caricature
                     is_cartoon = any(keyword in prompt_lower_style for keyword in cartoon_keywords)
                 
-                # Determine style for signature (caricature/pencil-sketch takes priority)
+                # Determine style for signature (fallback to keyword detection)
+                # Note: When station is provided, it takes priority. This is only for fallback.
+                # All styles now default to cartoon.png (only warhol uses others.png)
                 if is_caricature or is_pencil_sketch:
-                    style = "pencil-sketch"
+                    style = "cartoon"  # Changed: all stations use cartoon.png
                     if is_caricature:
-                        print(f"🎨 Caricature detected! Adding signature overlay (pencil-sketch.png).")
+                        print(f"🎨 Caricature detected! Adding signature overlay (cartoon.png).")
                     else:
-                        print(f"🎨 Pencil sketch detected! Adding signature overlay.")
+                        print(f"🎨 Pencil sketch detected! Adding signature overlay (cartoon.png).")
                 elif is_cartoon:
                     style = "cartoon"
                     matched_keywords = [k for k in cartoon_keywords if k in prompt_lower_style]
                     print(f"🎨 Cartoon style detected! Adding signature overlay.")
                     print(f"   Matched keywords: {matched_keywords}")
                 else:
-                    style = "others"
-                    print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay.")
+                    style = "cartoon"  # Changed: default to cartoon.png
+                    print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay (cartoon.png).")
             
             print(f"   Style: {style}, Prompt preview: {character_prompt[:150]}...")
             img = add_signature_image_overlay(img, style)
@@ -1322,27 +1319,22 @@ Return a SINGLE final composited image ready for printing.
                     return False, "Invalid image object returned from Gemini (missing size attribute)"
                 
                 # Determine style for signature based on station
-                # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+                # All stations use cartoon.png except warhol (famous painting) which uses others.png
                 if station_lower:
                     # Use station to determine signature style
-                    if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
-                        style = "pencil-sketch"
-                        print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
-                    elif station_lower == "cartoon" or station_lower == "retro90":
+                    if station_lower == "warhol":
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} (famous painting) → Using signature: others.png")
+                    else:
+                        # All other stations (pencil-sketch, cartoon, caricature, retro90, wynwood) use cartoon.png
                         style = "cartoon"
                         print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
-                    elif station_lower == "warhol":
-                        style = "others"
-                        print(f"🎨 Station: {station_lower} → Using signature: others.png")
-                    else:
-                        style = "others"
-                        print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
                 else:
                     # Fallback to keyword detection if station not provided
                     positive_prompt_comp = extract_positive_prompt(character_prompt)
                     prompt_lower_comp = positive_prompt_comp.lower()
                     
-                    # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                    # Check for caricature FIRST (highest priority)
                     is_caricature = "caricature" in prompt_lower_comp
                     
                     # Pencil sketch keywords (excluding caricature which is checked separately)
@@ -1361,13 +1353,13 @@ Return a SINGLE final composited image ready for printing.
                     if not is_caricature:  # Only check cartoon if it's NOT a caricature
                         is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
                     
-                    # Determine style (caricature/pencil-sketch takes priority)
+                    # Determine style (all default to cartoon.png, only warhol uses others.png)
                     if is_caricature or is_pencil_sketch:
-                        style = "pencil-sketch"
+                        style = "cartoon"  # Changed: all stations use cartoon.png
                     elif is_cartoon:
                         style = "cartoon"
                     else:
-                        style = "others"
+                        style = "cartoon"  # Changed: default to cartoon.png
                 
                 print(f"🎨 Adding signature overlay (style: {style}) to composited image")
                 img = add_signature_image_overlay(img, style)
@@ -1594,27 +1586,22 @@ Return a SINGLE final composited image ready for printing.
                     composite = composite.convert("RGB")
                 
                 # Determine style for signature based on station
-                # Stations: pencil-sketch, cartoon, caricature, retro90, wynwood, warhol
+                # All stations use cartoon.png except warhol (famous painting) which uses others.png
                 if station_lower:
                     # Use station to determine signature style
-                    if station_lower == "pencil-sketch" or station_lower == "caricature" or station_lower == "wynwood":
-                        style = "pencil-sketch"
-                        print(f"🎨 Station: {station_lower} → Using signature: pencil-sketch.png")
-                    elif station_lower == "cartoon" or station_lower == "retro90":
+                    if station_lower == "warhol":
+                        style = "others"
+                        print(f"🎨 Station: {station_lower} (famous painting) → Using signature: others.png")
+                    else:
+                        # All other stations (pencil-sketch, cartoon, caricature, retro90, wynwood) use cartoon.png
                         style = "cartoon"
                         print(f"🎨 Station: {station_lower} → Using signature: cartoon.png")
-                    elif station_lower == "warhol":
-                        style = "others"
-                        print(f"🎨 Station: {station_lower} → Using signature: others.png")
-                    else:
-                        style = "others"
-                        print(f"🎨 Station: {station_lower} → Using signature: others.png (default)")
                 else:
                     # Fallback to keyword detection if station not provided
                     positive_prompt_comp = extract_positive_prompt(character_prompt)
                     prompt_lower_comp = positive_prompt_comp.lower()
                     
-                    # Check for caricature FIRST (highest priority - caricature uses pencil-sketch.png)
+                    # Check for caricature FIRST (highest priority)
                     is_caricature = "caricature" in prompt_lower_comp
                     
                     # Pencil sketch keywords (excluding caricature which is checked separately)
@@ -1633,13 +1620,13 @@ Return a SINGLE final composited image ready for printing.
                     if not is_caricature:  # Only check cartoon if it's NOT a caricature
                         is_cartoon = any(keyword in prompt_lower_comp for keyword in cartoon_keywords)
                     
-                    # Determine style (caricature/pencil-sketch takes priority)
+                    # Determine style (all default to cartoon.png, only warhol uses others.png)
                     if is_caricature or is_pencil_sketch:
-                        style = "pencil-sketch"
+                        style = "cartoon"  # Changed: all stations use cartoon.png
                     elif is_cartoon:
                         style = "cartoon"
                     else:
-                        style = "others"
+                        style = "cartoon"  # Changed: default to cartoon.png
                 
                 print(f"🎨 Adding signature overlay (style: {style}) to composited image")
                 composite = add_signature_image_overlay(composite, style)
