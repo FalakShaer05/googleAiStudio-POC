@@ -471,6 +471,7 @@ def get_signature_image_path(style: str = "others") -> Optional[str]:
         print(f"   Checking: {abs_path} - {'✅ EXISTS' if exists else '❌ NOT FOUND'}")
         if exists:
             print(f"✅ Found signature image at: {abs_path}")
+            print(f"   Path for warhol: {path}")
             return abs_path
     
     print(f"❌ Signature image not found for style '{style}'")
@@ -478,7 +479,7 @@ def get_signature_image_path(style: str = "others") -> Optional[str]:
     return None
 
 
-def add_signature_image_overlay(img: Image.Image, style: str = "others") -> Image.Image:
+def add_signature_image_overlay(img: Image.Image, style: str = "others",is_warhol_style: bool = False) -> Image.Image:
     """
     Add the signature image overlay to the bottom right of an image.
     The signature will be 20% width and 20% height of the generated image.
@@ -510,6 +511,18 @@ def add_signature_image_overlay(img: Image.Image, style: str = "others") -> Imag
         if signature_img.mode != 'RGBA':
             signature_img = signature_img.convert('RGBA')
         
+        
+        if is_warhol_style is True:
+        # Trim fully transparent padding so the visible art can sit flush to the bottom
+            try:
+                alpha = signature_img.split()[3]
+                bbox = alpha.getbbox()
+                if bbox:
+                    signature_img = signature_img.crop(bbox)
+            except Exception:
+                # If anything goes wrong, fall back to original image
+                pass
+        
         # Get dimensions
         img_width, img_height = img.size
         
@@ -532,6 +545,17 @@ def add_signature_image_overlay(img: Image.Image, style: str = "others") -> Imag
         
         # Resize signature image
         signature_resized = signature_img.resize((new_sig_width, new_sig_height), Image.Resampling.LANCZOS)
+
+        # If this is Warhol style, reduce opacity so the signature is more subtle
+        if is_warhol_style is True:
+            try:
+                r, g, b, a = signature_resized.split()
+                # Scale alpha channel (e.g., 0.6 = 60% opacity)
+                a = a.point(lambda p: int(p * 0.6))
+                signature_resized = Image.merge("RGBA", (r, g, b, a))
+            except Exception:
+                # If anything fails, keep original opacity
+                pass
         
         # Create a copy of the main image
         img_with_signature = img.copy()
@@ -540,11 +564,16 @@ def add_signature_image_overlay(img: Image.Image, style: str = "others") -> Imag
         if img_with_signature.mode != 'RGBA':
             img_with_signature = img_with_signature.convert('RGBA')
         
-        # Calculate position: top right with small padding (1% from edges)
-        padding_x = int(img_width * 0.01)
-        padding_y = int(img_height * 0.01)
-        x = img_width - new_sig_width - padding_x
-        y = padding_y  # Top position instead of bottom
+        if is_warhol_style is True:
+            # For Warhol: place signature at bottom center, flush with bottom edge
+            x = (img_width - new_sig_width) // 2
+            y = img_height - new_sig_height
+        else:
+            # Default: top-right with small padding (1% from edges)
+            padding_x = int(img_width * 0.01)
+            padding_y = int(img_height * 0.01)
+            x = img_width - new_sig_width - padding_x
+            y = padding_y
         
         # Composite signature onto image
         img_with_signature.paste(signature_resized, (x, y), signature_resized)
@@ -1131,7 +1160,8 @@ BACKGROUND:
                     print(f"🎨 Other style detected (Warhol, Wynwood, etc.)! Adding signature overlay (cartoon.png).")
             
             print(f"   Style: {style}, Prompt preview: {character_prompt[:150]}...")
-            img = add_signature_image_overlay(img, style)
+            print(f"   Is Warhol style: {is_warhol_style}")
+            img = add_signature_image_overlay(img, style,is_warhol_style)
             
             # Optimize: Create directory only once
             output_dir = os.path.dirname(output_path)
