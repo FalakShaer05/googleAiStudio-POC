@@ -1,0 +1,42 @@
+version: 0.2
+# Ensure the following environment variables are added in the CodeBuild environment:
+# 1. $REPOSITORY_HOST - The ECR host URI (e.g., 511995080904.dkr.ecr.us-east-2.amazonaws.com)
+# 2. $REPOSITORY_URI - The full ECR URI for the Docker repository (e.g., 511995080904.dkr.ecr.us-east-2.amazonaws.com/${repo-name}) 
+# 3. $DOCKER_USERNAME - The username for Docker login
+# 4. $DOCKER_PASSWORD - The password for Docker login
+
+phases:
+  install:
+    commands:
+      - cat /etc/image-id
+      - sudo dnf install -y amazon-ecr-credential-helper
+      - mkdir -p /root/.docker
+      - >
+        echo '{ "credHelpers": { "public.ecr.aws": "ecr-login", "'$REPOSITORY_HOST'": "ecr-login" } }' > /root/.docker/config.json
+      - cat /root/.docker/config.json
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws --version
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - cat /root/.docker/config.json
+  build:
+    commands:
+      - docker login --username $DOCKER_USERNAME --password $DOCKER_PASSWORD
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $REPOSITORY_URI:latest .
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo Writing image definitions file...
+      - printf '[{"name":"google-ai-microservice","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+      - echo Printing ecr log
+      - cat /root/.ecr/log/*
+artifacts:
+  files: imagedefinitions.json
