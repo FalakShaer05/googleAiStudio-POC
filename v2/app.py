@@ -392,7 +392,7 @@ def upload_batch_background():
         if background_file and background_url:
             return jsonify({"error": "Provide either background file or background_url, not both"}), 400
 
-        # Handle background
+        # Handle background (always save locally first, then upload to S3 for a public URL)
         if background_file:
             if not background_file.filename or not allowed_file(background_file.filename):
                 return jsonify({"error": "Invalid background file type"}), 400
@@ -405,11 +405,15 @@ def upload_batch_background():
                 return jsonify({"error": "Failed to download background from URL"}), 400
             bg_filename = os.path.basename(background_path)
 
+        # Upload background to S3 to get a CloudFront URL
+        bg_cloudfront_url = upload_image_to_s3(background_path)
+
         return jsonify({
             "success": True,
             "message": "Background uploaded successfully",
             "background_filename": bg_filename,
-            "local_path": f"/uploads/{bg_filename}"
+            "local_path": f"/uploads/{bg_filename}",
+            "background_url": bg_cloudfront_url,
         })
 
     except Exception as e:
@@ -546,24 +550,25 @@ def composite_characters_on_background():
     try:
         from PIL import Image, ImageDraw
         import math
+        import requests
+        from io import BytesIO
         
-        # Get character filenames (output from batch generation)
+        # --- Characters: prefer S3/CloudFront URLs; filenames only as fallback ---
         character_filenames_json = request.form.get("character_filenames", "[]")
         character_filenames = json.loads(character_filenames_json) if character_filenames_json else []
         
-        if not character_filenames or len(character_filenames) == 0:
-            return jsonify({"error": "At least one character filename is required"}), 400
-
-        # Get background filename (uploaded at start)
-        background_filename = request.form.get("background_filename", "").strip()
+        character_urls_json = request.form.get("character_urls", "")
+        character_urls = json.loads(character_urls_json) if character_urls_json else []
         
-        if not background_filename:
-            return jsonify({"error": "Background filename is required"}), 400
-
-        # Load background from uploads folder (where it was saved initially)
-        background_path = os.path.join(UPLOAD_FOLDER, secure_filename(background_filename))
-        if not os.path.exists(background_path):
-            return jsonify({"error": "Background file not found"}), 400
+        if not character_urls and not character_filenames:
+            return jsonify({"error": "At least one character image is required (provide character_urls or character_filenames)."}), 400
+        
+        # --- Background: prefer S3/CloudFront URL; filename only as fallback ---
+        background_filename = request.form.get("background_filename", "").strip()
+        background_url = request.form.get("background_url", "").strip()
+        
+        if not background_url and not background_filename:
+            return jsonify({"error": "Background image is required (provide background_url or background_filename)."}), 400
 
         position = request.form.get("position", "bottom").strip()
         scale = float(request.form.get("scale", "1.0"))
@@ -572,9 +577,25 @@ def composite_characters_on_background():
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
-
-        # Load background image (this will be used AS-IS, no modification)
-        background_image = Image.open(background_path).convert("RGB")
+        
+        # Load background image (in-memory; S3/URL preferred)
+        if background_url:
+            try:
+                resp = requests.get(background_url, timeout=30)
+                resp.raise_for_status()
+            except Exception as e:
+                return jsonify({"error": f"Failed to load background from URL: {str(e)}"}), 400
+            try:
+                background_image = Image.open(BytesIO(resp.content)).convert("RGB")
+            except Exception as e:
+                return jsonify({"error": f"Failed to decode background image from URL: {str(e)}"}), 400
+        else:
+            # Fallback: load from local uploads folder (legacy behavior)
+            background_path = os.path.join(UPLOAD_FOLDER, secure_filename(background_filename))
+            if not os.path.exists(background_path):
+                return jsonify({"error": "Background file not found"}), 400
+            background_image = Image.open(background_path).convert("RGB")
+        
         bg_w, bg_h = background_image.size
 
         # Apply canvas size if specified
@@ -612,17 +633,33 @@ def composite_characters_on_background():
                 background_image = final_bg
                 bg_w, bg_h = background_image.size
 
-        # Load all character images
+        # Load all character images (in-memory; URLs preferred)
         character_images = []
-        for filename in character_filenames:
-            char_path = os.path.join(OUTPUT_FOLDER, secure_filename(filename))
-            if not os.path.exists(char_path):
-                return jsonify({"error": f"Character file not found: {filename}"}), 400
-            try:
-                char_img = Image.open(char_path).convert("RGBA")
-                character_images.append(char_img)
-            except Exception as e:
-                return jsonify({"error": f"Failed to load character image {filename}: {str(e)}"}), 400
+        
+        if character_urls:
+            for url in character_urls:
+                try:
+                    resp = requests.get(url, timeout=30)
+                    resp.raise_for_status()
+                except Exception as e:
+                    return jsonify({"error": f"Failed to load character image from URL '{url}': {str(e)}"}), 400
+                
+                try:
+                    char_img = Image.open(BytesIO(resp.content)).convert("RGBA")
+                    character_images.append(char_img)
+                except Exception as e:
+                    return jsonify({"error": f"Failed to decode character image from URL '{url}': {str(e)}"}), 400
+        else:
+            # Fallback: use local filenames (existing behavior)
+            for filename in character_filenames:
+                char_path = os.path.join(OUTPUT_FOLDER, secure_filename(filename))
+                if not os.path.exists(char_path):
+                    return jsonify({"error": f"Character file not found: {filename}"}), 400
+                try:
+                    char_img = Image.open(char_path).convert("RGBA")
+                    character_images.append(char_img)
+                except Exception as e:
+                    return jsonify({"error": f"Failed to load character image {filename}: {str(e)}"}), 400
 
         # Calculate character sizes and positions
         num_characters = len(character_images)
@@ -735,21 +772,16 @@ Each character must appear exactly as they do in their original image, with no e
         # Generate output filename
         output_filename = generate_unique_filename(f"composited_batch_{num_characters}chars.png", "output")
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-
-        # Detect style and add appropriate signature overlay
-        # For batch compositing, use "others" style as default (can be enhanced with prompt analysis)
-        from utils.character_utils import add_signature_image_overlay
-        composite = add_signature_image_overlay(composite, "others")
         
         # Save the composited result
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         composite.save(output_path, "PNG", dpi=(dpi, dpi))
-
+        
         # Upload to S3
         cloudfront_url = upload_image_to_s3(output_path)
-
+        
         info = get_image_info(output_path)
-
+        
         response_data = {
             "success": True,
             "message": f"Successfully composited {num_characters} character(s) onto background",
@@ -762,12 +794,12 @@ Each character must appear exactly as they do in their original image, with no e
                 "scale": scale,
             },
         }
-
+        
         if cloudfront_url:
             response_data["image_url"] = cloudfront_url
-
+        
         return jsonify(response_data)
-
+        
     except Exception as e:
         import traceback
         print("Error in composite-characters-on-background:", e)
