@@ -31,6 +31,7 @@ from utils.character_utils import (
     normalize_prompt_for_consistency,
     generate_seed_from_prompt,
     generate_character_composited_with_background,
+    add_signature_image_overlay,
 )
 from utils.bg_remover import remove_background_with_freepik_api
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -768,6 +769,14 @@ Each character must appear exactly as they do in their original image, with no e
                 temp_bg.paste(char_img, (int(x_offset), y_pos), char_img)
                 composite = Image.alpha_composite(composite.convert("RGBA"), temp_bg).convert("RGB")
                 x_offset += char_w + spacing
+
+        # Always add the station/signature overlay to the final composite
+        try:
+            # For multi-character composites we default to the cartoon-style signature
+            composite = add_signature_image_overlay(composite, style="cartoon")
+        except Exception as _e:
+            # Non-fatal: if signature fails, continue without blocking the composite
+            print(f"⚠️ Failed to add signature overlay to composite: {_e}")
 
         # Generate output filename
         output_filename = generate_unique_filename(f"composited_batch_{num_characters}chars.png", "output")
