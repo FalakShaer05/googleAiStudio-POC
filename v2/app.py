@@ -727,7 +727,7 @@ IMPORTANT REMINDERS:
 OUTPUT:
 Return a SINGLE final composited image with all characters naturally placed on the EXACT background, ready for printing.
 The background must be identical to the input background.
-Each character must appear exactly as they do in their original image, with no extra objects added."""
+Each character must appear exactly as they do in their original image, with no extra objects added. And all of the characters must match the  {num_characters}"""
 
             # Prepare contents for Gemini (background + all characters)
             # Normalize prompt and generate seed for consistency
