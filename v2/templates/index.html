@@ -1019,6 +1019,7 @@
     let batchBackgroundFile = null;
     let batchBackgroundUrl = "";
     let generatedCharacterFilenames = [];
+    let generatedCharacterUrls = [];
 
     function handleBatchBackgroundFile(input) {
       const file = input.files[0];
@@ -1077,9 +1078,10 @@
         }
 
         batchBackgroundFilename = data.background_filename;
+        batchBackgroundUrl = data.background_url || "";
         showBatchBgStatus("Background uploaded successfully!", false);
         // Only show composite section if characters have been generated
-        if (generatedCharacterFilenames.length > 0) {
+        if (generatedCharacterUrls.length > 0) {
           document.getElementById("compositeSection").style.display = "block";
           // Preload default compositing prompt
           const defaultPrompt = `Use the attached background exactly as it is — same colors, shapes, and watercolor effect.
@@ -1189,8 +1191,13 @@ STRICT RULES:
         // Show compositing section if there are successful results and background was uploaded
         const successfulResults = data.results.filter(r => r.success);
         if (successfulResults.length > 0) {
+          // Prefer S3/CloudFront URLs; fall back to local paths if needed
+          generatedCharacterUrls = successfulResults
+            .map(r => r.image_url || (r.local_path ? `${r.local_path}` : null))
+            .filter(u => !!u);
           generatedCharacterFilenames = successfulResults.map(r => r.output_filename);
-          if (batchBackgroundFilename) {
+
+          if (generatedCharacterUrls.length > 0 && (batchBackgroundUrl || batchBackgroundFilename)) {
             document.getElementById("compositeSection").style.display = "block";
             // Preload default compositing prompt
             const defaultPrompt = `Use the attached background exactly as it is — same colors, shapes, and watercolor effect.
@@ -1280,19 +1287,25 @@ STRICT RULES:
 
     // Composite button handler
     document.getElementById("compositeBtn").addEventListener("click", async () => {
-      if (generatedCharacterFilenames.length === 0) {
+      if (generatedCharacterUrls.length === 0) {
         showCompositeStatus("No characters to composite. Please generate characters first.", true);
         return;
       }
 
-      if (!batchBackgroundFilename) {
+      if (!batchBackgroundUrl && !batchBackgroundFilename) {
         showCompositeStatus("Please upload a background first in Step 1", true);
         return;
       }
 
       const formData = new FormData();
-      formData.append("character_filenames", JSON.stringify(generatedCharacterFilenames));
-      formData.append("background_filename", batchBackgroundFilename);
+      // Prefer URL-based compositing (S3/CloudFront)
+      formData.append("character_urls", JSON.stringify(generatedCharacterUrls));
+      if (batchBackgroundUrl) {
+        formData.append("background_url", batchBackgroundUrl);
+      } else if (batchBackgroundFilename) {
+        // Legacy fallback if no S3 URL is available
+        formData.append("background_filename", batchBackgroundFilename);
+      }
       formData.append("position", document.getElementById("compositePosition").value);
       formData.append("scale", document.getElementById("compositeScale").value);
       formData.append("canvas_size", document.getElementById("compositeCanvasSize").value);
