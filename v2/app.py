@@ -32,6 +32,7 @@ from utils.character_utils import (
     generate_seed_from_prompt,
     generate_character_composited_with_background,
     add_signature_image_overlay,
+    generate_image_in_reference_style,
 )
 from utils.bg_remover import remove_background_with_freepik_api
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -50,7 +51,7 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff"}
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}
 
 # Swagger configuration
 swagger_config = {
@@ -422,6 +423,70 @@ def upload_batch_background():
         print("Error in upload-batch-background:", e)
         print(traceback.format_exc())
         return jsonify({"error": f"Error: {str(e)}"}), 500
+
+
+@app.route("/generate-reference-style-web", methods=["POST"])
+def generate_reference_style_web():
+    """
+    Reference-style generation: one reference image (style source) and one image to convert.
+    Returns a single output image with 100% accurate reference style applied.
+    Temperature (0–2) controls how strongly the reference style is applied.
+    """
+    try:
+        reference_file = request.files.get("reference")
+        if not reference_file or not reference_file.filename:
+            return jsonify({"error": "Reference image is required"}), 400
+        if not allowed_file(reference_file.filename):
+            return jsonify({"error": "Invalid reference file type"}), 400
+
+        source_file = request.files.get("source")
+        if not source_file or not source_file.filename:
+            return jsonify({"error": "One image to convert is required"}), 400
+        if not allowed_file(source_file.filename):
+            return jsonify({"error": "Invalid source image file type"}), 400
+
+        temperature = float(request.form.get("temperature", "1.0"))
+        temperature = max(0.0, min(2.0, temperature))
+
+        ref_filename = generate_unique_filename(reference_file.filename, "reference")
+        ref_path = os.path.join(UPLOAD_FOLDER, ref_filename)
+        reference_file.save(ref_path)
+
+        src_filename = generate_unique_filename(source_file.filename, "ref_source")
+        src_path = os.path.join(UPLOAD_FOLDER, src_filename)
+        source_file.save(src_path)
+
+        out_filename = generate_unique_filename(f"reference_style_{src_filename}.png", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = generate_image_in_reference_style(
+            reference_path=ref_path,
+            source_path=src_path,
+            output_path=out_path,
+            temperature=temperature,
+        )
+
+        cleanup_file(src_path)
+        cleanup_file(ref_path)
+
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        cloudfront_url = upload_image_to_s3(out_path)
+        response_data = {
+            "success": True,
+            "message": "Style applied successfully",
+            "output_filename": out_filename,
+            "local_path": f"/outputs/{out_filename}",
+        }
+        if cloudfront_url:
+            response_data["image_url"] = cloudfront_url
+        return jsonify(response_data)
+    except Exception as e:
+        import traceback
+        print("Error in generate-reference-style-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/generate-characters-batch-web", methods=["POST"])

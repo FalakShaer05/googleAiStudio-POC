@@ -137,7 +137,13 @@ def _extract_final_image_from_response(response) -> Optional[Image.Image]:
     return None
 
 
-def _generate_content_image(client: genai.Client, model: str, contents, seed: Optional[int] = None):
+def _generate_content_image(
+    client: genai.Client,
+    model: str,
+    contents,
+    seed: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
     """
     Call `client.models.generate_content` with an optional config to force image output.
 
@@ -150,36 +156,25 @@ def _generate_content_image(client: genai.Client, model: str, contents, seed: Op
         seed: Optional seed value for deterministic results. If provided, will attempt
               to use it in generation config. Note: Gemini API may not support seed
               for all models/versions.
+        temperature: Optional temperature (e.g. 0–2) for style/creativity control, passed like Google Imagen.
     """
     # If the SDK supports it, force image-only output for consistency.
     config = None
     if types is not None and hasattr(types, "GenerateContentConfig"):
+        config_kwargs = {"response_modalities": ["IMAGE"]}
+        if temperature is not None and 0 <= temperature <= 2:
+            config_kwargs["temperature"] = float(temperature)
+        if seed is not None:
+            config_kwargs["seed"] = seed
         try:
-            # Try to create config with seed if provided
-            config_kwargs = {"response_modalities": ["IMAGE"]}
-            if seed is not None:
-                # Try to add seed if the API supports it
-                try:
-                    # Check if seed parameter is supported
-                    if hasattr(types.GenerateContentConfig, '__init__'):
-                        # Try with seed parameter
-                        try:
-                            config = types.GenerateContentConfig(
-                                response_modalities=["IMAGE"],
-                                seed=seed
-                            )
-                        except (TypeError, AttributeError):
-                            # Seed not supported, use without it
-                            config = types.GenerateContentConfig(**config_kwargs)
-                    else:
-                        config = types.GenerateContentConfig(**config_kwargs)
-                except Exception:
-                    # If seed fails, try without it
-                    config = types.GenerateContentConfig(**config_kwargs)
-            else:
+            config = types.GenerateContentConfig(**config_kwargs)
+        except (TypeError, AttributeError):
+            config_kwargs.pop("temperature", None)
+            config_kwargs.pop("seed", None)
+            try:
                 config = types.GenerateContentConfig(**config_kwargs)
-        except Exception:
-            config = None
+            except Exception:
+                config = None
 
     def _call(selected_model: str):
         try:
@@ -628,6 +623,92 @@ def get_image_info(path: str) -> Dict[str, Any]:
     except Exception as e:
         print(f"get_image_info error: {e}")
         return {}
+
+
+def generate_image_in_reference_style(
+    reference_path: str,
+    source_path: str,
+    output_path: str,
+    temperature: float = 1.0,
+) -> Tuple[bool, str]:
+    """
+    Generate an image that applies the visual style of the reference image to the source image.
+    The reference image defines style (colors, brushwork, medium, mood); the source image
+    is the content to transform. Temperature controls how strongly the reference style is applied.
+    """
+    try:
+        client = get_gemini_client()
+        if not os.path.exists(reference_path):
+            return False, f"Reference image not found: {reference_path}"
+        if not os.path.exists(source_path):
+            return False, f"Source image not found: {source_path}"
+
+        # Load and normalize both to RGB so mixed formats (JPG ref + PNG source or vice versa) work like PNG+PNG.
+        # Ensures same color mode and no alpha/format mismatch for the API.
+        def to_rgb(img: Image.Image) -> Image.Image:
+            img = img.copy()
+            if img.mode == "RGBA":
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                return background
+            if img.mode != "RGB":
+                return img.convert("RGB")
+            return img
+
+        reference_image = to_rgb(Image.open(reference_path))
+        source_image = to_rgb(Image.open(source_path))
+
+        # Use alternating text + image so the model never confuses which is reference vs source.
+        # Each image is immediately preceded by a label that says what it is.
+        ref_label = (
+            "REFERENCE STYLE (the next image only): "
+            "This image defines the STYLE to copy—colors, palette, brushwork, medium, texture, lighting, mood. "
+            "Use ONLY its style. Do NOT use its subject or composition. The next image is the reference style."
+        )
+        source_label = (
+            "SOURCE CONTENT (the next image only): "
+            "This image defines the SUBJECT and COMPOSITION to keep. "
+            "Your output must show this same subject and composition. The next image is the source content."
+        )
+        task_instruction = (
+            "TASK: Generate exactly ONE image. "
+            "SUBJECT and COMPOSITION must come from the SOURCE image (the one labeled SOURCE CONTENT above). "
+            "STYLE must come from the REFERENCE image (the one labeled REFERENCE STYLE above). "
+            "Do not swap them: reference = style only, source = content only. "
+            "Output only the generated image, no text or captions."
+        )
+
+        contents = [
+            ref_label,
+            reference_image,
+            source_label,
+            source_image,
+            task_instruction,
+        ]
+
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=contents,
+            seed=None,
+            temperature=float(temperature),
+        )
+
+        img = _extract_final_image_from_response(response)
+        if img is not None:
+            if not hasattr(img, "size") or not isinstance(img, Image.Image):
+                return False, "Invalid image object returned from Gemini"
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            img.save(output_path, optimize=True)
+            return True, "Style transfer completed successfully"
+        return False, "No image generated by Gemini"
+    except Exception as e:
+        print(f"generate_image_in_reference_style error: {e}")
+        return False, str(e)
 
 
 def generate_character_with_identity(
