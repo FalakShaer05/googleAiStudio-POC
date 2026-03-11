@@ -629,14 +629,21 @@ def generate_image_in_reference_style(
     reference_path: str,
     source_path: str,
     output_path: str,
-    background_path: Optional[str] = None,
-    style_preset: Optional[str] = None,
     temperature: float = 1.0,
+    user_prompt: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate an image that applies the visual style of the reference image to the source image.
-    The reference image defines style (colors, brushwork, medium, mood); the source image
-    is the content to transform. Temperature controls how strongly the reference style is applied.
+
+    The frontend now owns the textual instructions. Whatever prompt the user types in the UI
+    (including all Image 1 / Image 2 rules) is passed through via `user_prompt` and sent
+    directly to Gemini alongside the two images.
+
+    - `source_path`  -> Image 1 (source person/content)
+    - `reference_path` -> Image 2 (style reference)
+    - `user_prompt` -> Free-form instruction text from the UI
+
+    Temperature controls how strongly the reference style is applied.
     """
     try:
         client = get_gemini_client()
@@ -644,8 +651,6 @@ def generate_image_in_reference_style(
             return False, f"Reference image not found: {reference_path}"
         if not os.path.exists(source_path):
             return False, f"Source image not found: {source_path}"
-        if background_path and not os.path.exists(background_path):
-            return False, f"Background image not found: {background_path}"
 
         # Load and normalize both to RGB so mixed formats (JPG ref + PNG source or vice versa) work like PNG+PNG.
         # Ensures same color mode and no alpha/format mismatch for the API.
@@ -666,7 +671,6 @@ def generate_image_in_reference_style(
         # contents list we will pass `source_image` first and `reference_image` second.
         reference_image = to_rgb(Image.open(reference_path))
         source_image = to_rgb(Image.open(source_path))
-        background_image = to_rgb(Image.open(background_path)) if background_path else None
 
         # Use alternating text + image so the model never confuses which is reference vs source/background.
         # Each image is immediately preceded by a label that says what it is.
@@ -687,162 +691,31 @@ def generate_image_in_reference_style(
             "Use ONLY its style. Do NOT copy its face or identity, and do NOT replace the source person's anatomy. "
             "The next image is the reference style."
         )
-        if background_image is not None:
-            background_label = (
-                "BACKGROUND REFERENCE (the next image only): "
-                "Use this image's BACKGROUND exactly as-is for the final result: same scenery, layout, perspective and lighting context. "
-                "You may adjust only minimally if absolutely required for coherence with the subject, but do NOT invent a new background."
+
+        # Use the free-form prompt provided by the caller.
+        # If none was supplied, fall back to a minimal, safe default so the API call
+        # still works (but the UI should normally always send a prompt).
+        if user_prompt is None or not str(user_prompt).strip():
+            task_instruction = (
+                "Image 1 is the source person. Image 2 is the reference style.\n"
+                "Apply ONLY the visual style from Image 2 (colors, rendering, lighting, background design) "
+                "to the person and composition from Image 1, preserving the original identity and anatomy."
             )
-
-        # Unified, identity-locked reference style prompt used for all presets.
-        unified_reference_prompt = """
-Image 1 = Source Person (SOURCE CONTENT image above)
-Image 2 = Reference Style / Pop-Art Reference (REFERENCE STYLE image above)
-
-TASK
-Transform the person from Image 1 into the artistic language of Image 2.
-The result must look like the same person from Image 1, rendered inside the exact visual world and style of Image 2.
-
-IDENTITY LOCK (HIGHEST PRIORITY)
-Preserve exactly from Image 1:
-- Eye shape and spacing
-- Nose structure
-- Lip shape
-- Jawline
-- Facial proportions
-- Cheekbone placement
-- Forehead structure
-- Overall recognizable identity and gender traits
-
-Do NOT copy or blend the face from Image 2.
-Do NOT change or beautify bone structure.
-The face must remain clearly, instantly recognizable as Image 1.
-
-EXPRESSION & EMOTION LOCK
-Transfer only the expression from Image 2, not the anatomy.
-From Image 2, match:
-- Same mouth emotion and openness
-- Same eye emotion / gaze attitude
-- Same eyebrow attitude (relaxed, raised, furrowed, etc.)
-Keep the facial structure of Image 1; only adjust muscles for expression.
-If Image 2 has a relaxed parted-lip pose, you may slightly adjust the mouth of Image 1 to match that pose while preserving lip shape.
-
-LIP COLOR & COSMETICS (GENDER AWARE)
-Match the lip color, gloss, and shading style from Image 2, applied to the lip shape of Image 1.
-- Preserve lip proportions and outline from Image 1.
-- Apply the lip color, gloss/finish, and highlight style from Image 2.
-- For pop-art / comic styles: lipstick on a female subject should be bright, glossy, high-impact, reflective, often vivid red.
-
-If the person in Image 1 is FEMALE:
-- Match Image 2’s eye makeup style, eye shadow color placement, lip gloss intensity, and blush placement/color.
-
-If the person in Image 1 is MALE:
-- Do NOT feminize the face.
-- Do NOT add heavy eye makeup or dramatic eye shadow.
-- Do NOT apply glossy lipstick.
-- Keep lips natural in form and presentation, but still consistent with the overall color system and stylization of Image 2.
-
-HAIR SOURCE RULE
-Hair structure must come from Image 1:
-- Hairstyle
-- Hair length
-- Hair silhouette and direction
-- Hair color and parting
-Do NOT copy the haircut or hairline from Image 2.
-Render this hair using the same stylized rendering, texture language, and lighting style as Image 2 (pop-art, neon, halftone, or digital illustration).
-Hair must remain stylized, not realistic.
-
-HAIR DECORATION & HALO RULE
-Keep Image 1’s hair structure, but you may add decorations inspired by Image 2:
-- Crowns, jewelry, ornaments integrated into the hair
-- Gold halo or similar head halo motif (if present in Image 2)
-Match Image 2’s style, placement, and motif language, adapted to the shape and volume of Image 1’s hair.
-Gems and ornaments must be treated as flat, stylized, mosaic-like elements, not realistic 3D jewels.
-
-FRAMING, ANGLE & COMPOSITION
-Recreate Image 2 exactly in:
-- Framing and crop (for example, head and upper neck only if that is how Image 2 is framed)
-- Head angle and tilt
-- Face scale and placement in the frame
-- Canvas ratio and composition
-- Camera distance and centered alignment
-Even if Image 1 is wider or full-body, render only the portion needed to match Image 2’s head-and-neck framing and composition.
-
-STYLE & RENDERING LANGUAGE (IMAGE 2 IS STYLE MASTER)
-Use Image 2 as the master reference for style.
-Match Image 2 in:
-- Overall color palette and color temperature
-- Lighting direction and contrast
-- Skin rendering style and finish
-- Background design, shapes, decorative elements, and density
-- Texture smoothness or flatness
-- Saturation level and vibrancy
-- Overall surreal pop-art / comic / digital illustration quality
-
-If Image 2 is bold pop-art / comic:
-- Match color palette, halftone density, line weight, cel-shading depth, and background intensity.
-- Rendering must be bold and high-contrast: deep dramatic shadows, sharp bright highlights, highly saturated colors.
-- Do NOT reduce saturation, soften shadows, flatten contrast, or mute the background.
-- No realism, no soft gradients, no visible skin texture; shading should be bold cel-shaded blocks.
-
-If Image 2 uses neon gradients / smooth hyper-saturated digital look:
-- Match its neon gradient palette (for example cyan, magenta, orange, yellow, deep blue).
-- Use smooth airbrushed, hyper-saturated gradients on skin and background.
-- Keep very high vibrancy and surreal glow.
-- Do NOT mute colors, add photographic realism, or change palette temperature.
-
-FACIAL STYLE FOCUS (CRITICAL)
-The artistic style of Image 2 must be applied directly to the face and hair of Image 1, not just the background.
-- Apply Image 2’s skin color system, shading style, shadow shapes, and highlight types to Image 1’s face.
-- Completely repaint the face into the reference style; do NOT leave realistic or photographic skin patches.
-- The face must look fully integrated into Image 2’s world, not like a realistic face pasted on a stylized background.
-
-SKIN COLOR & RENDERING SYSTEM
-- Use Image 2’s skin tone palette and shading logic on the facial anatomy of Image 1.
-- Keep bone structure from Image 1 untouched.
-- Use stylized, illustrative rendering (either cel-shaded or smooth neon gradients as in Image 2) with no realistic pores or texture.
-
-FINAL CONTROL
-The final result must satisfy all of the following:
-- It is clearly the same person as Image 1 (identity preserved).
-- Facial expression and emotional tone are taken from Image 2.
-- Hair structure is from Image 1, rendered in Image 2’s style with optional decorations.
-- Framing, head angle, composition, and overall style match Image 2.
-- Colors are bold, saturated, and high-impact; contrast is strong; there is no unintended realism or desaturation.
-The image should look like the person from Image 1 recreated inside the exact visual world and pop-art / illustrative style of Image 2 — a vibrant, high-impact poster-like artwork, not a softened or realistic illustration.
-"""
-
-        # Base task instruction shared across presets
-        base_task_instruction = (
-            "TASK: Generate exactly ONE image.\n"
-            "SUBJECT and COMPOSITION must come from the SOURCE image (the one labeled SOURCE CONTENT above).\n"
-            "Facial style must come from the REFERENCE image (the one labeled REFERENCE STYLE above).\n"
-            "Do not swap them: reference = facial style only, source = content only, background reference = background only.\n"
-            "Output only the generated image, no text or captions."
-        )
-
-        # Always use the unified reference-style prompt, regardless of style_preset.
-        task_instruction = unified_reference_prompt + "\n\n" + base_task_instruction
+        else:
+            task_instruction = str(user_prompt).strip()
 
         # Order of contents is critical. The unified prompt below talks about:
         #   Image 1 = Source Person
         #   Image 2 = Reference Style
         # So we MUST pass the source image first, then the reference image.
         contents = [
-            source_label,
+            # source_label,
             source_image,
-            ref_label,
+            # ref_label,
             reference_image,
         ]
-        if background_image is not None:
-            contents.extend(
-                [
-                    background_label,
-                    background_image,
-                ]
-            )
         contents.append(task_instruction)
-
+        print(contents)
         response = _generate_content_image(
             client=client,
             model=get_gemini_image_model(),

@@ -448,6 +448,10 @@ def generate_reference_style_web():
         temperature = float(request.form.get("temperature", "1.0"))
         temperature = max(0.0, min(2.0, temperature))
 
+        # Free-form prompt from the frontend textarea; may be empty, in which case
+        # the backend uses a minimal default instruction.
+        reference_prompt = request.form.get("reference_prompt", "").strip()
+
         ref_filename = generate_unique_filename(reference_file.filename, "reference")
         ref_path = os.path.join(UPLOAD_FOLDER, ref_filename)
         reference_file.save(ref_path)
@@ -464,6 +468,7 @@ def generate_reference_style_web():
             source_path=src_path,
             output_path=out_path,
             temperature=temperature,
+            user_prompt=reference_prompt or None,
         )
 
         cleanup_file(src_path)
