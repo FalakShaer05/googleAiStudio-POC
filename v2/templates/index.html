@@ -1620,24 +1620,44 @@ STRICT RULES:
       }
     });
 
-    document.getElementById("referenceDownloadBtn").addEventListener("click", () => {
-      // Always prefer the backend download endpoint so the response has proper
-      // Content-Disposition headers and forces a file download (works in all browsers,
-      // including those that ignore the download attribute for cross-origin URLs).
-      const urlToDownload = referenceOutputFilename
-        ? ("/download/" + referenceOutputFilename)
-        : (referenceOutputUrl || null);
+    document.getElementById("referenceDownloadBtn").addEventListener("click", async () => {
+      // Prefer the CDN URL as the *source* of the content, but force an actual
+      // file download by streaming it via JS (browsers ignore `download` for
+      // cross-origin URLs).
+      if (referenceOutputUrl) {
+        try {
+          const response = await fetch(referenceOutputUrl);
+          if (!response.ok) {
+            throw new Error("CDN download failed with status " + response.status);
+          }
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
 
-      if (!urlToDownload) {
-        return;
+          const link = document.createElement("a");
+          link.href = blobUrl;
+          link.download = referenceOutputFilename || "image.png";
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          // Clean up the temporary object URL
+          URL.revokeObjectURL(blobUrl);
+          return;
+        } catch (e) {
+          // Fall through to local download endpoint if CDN fetch fails
+          console.error("Error downloading from CDN:", e);
+        }
       }
 
-      const link = document.createElement("a");
-      link.href = urlToDownload;
-      link.download = referenceOutputFilename || "image.png";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      // Fallback: use the local /download endpoint (same as single/batch)
+      if (referenceOutputFilename) {
+        const link = document.createElement("a");
+        link.href = "/download/" + referenceOutputFilename;
+        link.download = referenceOutputFilename || "image.png";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
     });
 
     // Initialize batch with one item
