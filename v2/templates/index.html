@@ -1621,15 +1621,19 @@ STRICT RULES:
     });
 
     document.getElementById("referenceDownloadBtn").addEventListener("click", () => {
-      // Prefer downloading directly from CDN URL, but trigger a file download instead of navigation.
-      const urlToDownload = referenceOutputUrl || (referenceOutputFilename ? ("/download/" + referenceOutputFilename) : null);
+      // Always prefer the backend download endpoint so the response has proper
+      // Content-Disposition headers and forces a file download (works in all browsers,
+      // including those that ignore the download attribute for cross-origin URLs).
+      const urlToDownload = referenceOutputFilename
+        ? ("/download/" + referenceOutputFilename)
+        : (referenceOutputUrl || null);
+
       if (!urlToDownload) {
         return;
       }
 
       const link = document.createElement("a");
       link.href = urlToDownload;
-      // Hint the browser to download instead of opening, when possible.
       link.download = referenceOutputFilename || "image.png";
       document.body.appendChild(link);
       link.click();
