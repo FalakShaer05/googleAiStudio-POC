@@ -819,6 +819,7 @@
     }
 
     let currentFilename = null;
+    let currentImageUrl = null; // CDN URL when available
 
     const selfieUploadArea = document.getElementById("selfieUploadArea");
     const selfieInput = document.getElementById("selfieInput");
@@ -979,7 +980,8 @@
           return;
         }
         currentFilename = data.output_filename;
-        const url = `/download/${currentFilename}`;
+        currentImageUrl = data.image_url || null;
+        const url = data.image_url || `/download/${currentFilename}`;
         charPreviewImage.src = url;
         charResult.style.display = "block";
         showStatus("Character generated successfully!", false);
@@ -990,9 +992,14 @@
     });
 
     charDownloadBtn.addEventListener("click", () => {
-      if (currentFilename) {
-        window.open(`/download/${currentFilename}`, "_blank");
-      }
+      const urlToDownload = currentImageUrl || (currentFilename ? `/download/${currentFilename}` : null);
+      if (!urlToDownload) return;
+      const link = document.createElement("a");
+      link.href = urlToDownload;
+      link.download = currentFilename || "character.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
 
     // Batch Processing JavaScript
@@ -1402,7 +1409,7 @@ STRICT RULES:
                 <img src="${result.local_path}" class="batch-result-image" alt="Generated character" />
               ` : ''}
               <div class="mt-1">
-                <a href="/download/${result.output_filename}" class="btn btn-sm download-btn" download>
+                <a href="${result.image_url || ('/download/' + result.output_filename)}" class="btn btn-sm download-btn" download="${result.output_filename}">
                   <i class="fas fa-download me-2"></i>Download
                 </a>
               </div>
@@ -1470,8 +1477,9 @@ STRICT RULES:
         document.getElementById("compositeResult").style.display = "block";
         showCompositeStatus("Characters composited successfully!", false);
         
-        // Store filename for download
+        // Store info for download
         window.compositeFilename = data.output_filename;
+        window.compositeUrl = data.image_url || null;
       } catch (err) {
         hideCompositeProgress();
         showCompositeStatus("Network error: " + err.message, true);
@@ -1479,9 +1487,14 @@ STRICT RULES:
     });
 
     document.getElementById("compositeDownloadBtn").addEventListener("click", () => {
-      if (window.compositeFilename) {
-        window.open(`/download/${window.compositeFilename}`, "_blank");
-      }
+      const urlToDownload = window.compositeUrl || (window.compositeFilename ? `/download/${window.compositeFilename}` : null);
+      if (!urlToDownload) return;
+      const link = document.createElement("a");
+      link.href = urlToDownload;
+      link.download = window.compositeFilename || "composite.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
 
     function showCompositeProgress() {
@@ -1608,11 +1621,19 @@ STRICT RULES:
     });
 
     document.getElementById("referenceDownloadBtn").addEventListener("click", () => {
-      if (referenceOutputUrl) {
-        window.open(referenceOutputUrl, "_blank");
-      } else if (referenceOutputFilename) {
-        window.open("/download/" + referenceOutputFilename, "_blank");
+      // Prefer downloading directly from CDN URL, but trigger a file download instead of navigation.
+      const urlToDownload = referenceOutputUrl || (referenceOutputFilename ? ("/download/" + referenceOutputFilename) : null);
+      if (!urlToDownload) {
+        return;
       }
+
+      const link = document.createElement("a");
+      link.href = urlToDownload;
+      // Hint the browser to download instead of opening, when possible.
+      link.download = referenceOutputFilename || "image.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
 
     // Initialize batch with one item
