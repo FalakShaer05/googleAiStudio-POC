@@ -794,9 +794,15 @@
             </div>
             <div class="col-md-6 text-center">
               <p class="mb-2" id="referenceResultMessage">Style applied successfully!</p>
-              <button type="button" class="download-btn mt-1" id="referenceDownloadBtn">
+              <!-- Anchor tag download, same behavior as batch results -->
+              <a
+                href="#"
+                class="download-btn mt-1 btn"
+                id="referenceDownloadLink"
+                download
+              >
                 <i class="fas fa-download me-2"></i>Download Result
-              </button>
+              </a>
             </div>
           </div>
         </div>
@@ -1524,7 +1530,6 @@ STRICT RULES:
     let referenceImageFile = null;
     let referenceSourceFile = null;
     let referenceOutputFilename = null;
-    let referenceOutputUrl = null;  // CDN (CloudFront) URL when available
 
     document.getElementById("referenceTemperature").addEventListener("input", (e) => {
       document.getElementById("referenceTemperatureValue").textContent = e.target.value;
@@ -1602,9 +1607,15 @@ STRICT RULES:
         }
 
         referenceOutputFilename = data.output_filename;
-        referenceOutputUrl = data.image_url || null;
         const url = data.image_url || data.local_path || "/download/" + data.output_filename;
         document.getElementById("referencePreviewImage").src = url;
+
+        // Configure download link to always hit the local download
+        // endpoint so the browser receives a proper attachment
+        // response instead of navigating directly to the CDN URL.
+        const downloadLink = document.getElementById("referenceDownloadLink");
+        downloadLink.href = "/download/" + data.output_filename;
+        downloadLink.download = data.output_filename || "image.png";
         document.getElementById("referenceResultMessage").textContent = data.message || "Style applied successfully!";
         document.getElementById("referenceResult").style.display = "block";
         const el = document.getElementById("referenceStatus");
@@ -1617,46 +1628,6 @@ STRICT RULES:
         el.className = "status-message status-error";
         el.textContent = "Network error: " + err.message;
         el.style.display = "block";
-      }
-    });
-
-    document.getElementById("referenceDownloadBtn").addEventListener("click", async () => {
-      // Prefer the CDN URL as the *source* of the content, but force an actual
-      // file download by streaming it via JS (browsers ignore `download` for
-      // cross-origin URLs).
-      if (referenceOutputUrl) {
-        try {
-          const response = await fetch(referenceOutputUrl);
-          if (!response.ok) {
-            throw new Error("CDN download failed with status " + response.status);
-          }
-          const blob = await response.blob();
-          const blobUrl = URL.createObjectURL(blob);
-
-          const link = document.createElement("a");
-          link.href = blobUrl;
-          link.download = referenceOutputFilename || "image.png";
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-
-          // Clean up the temporary object URL
-          URL.revokeObjectURL(blobUrl);
-          return;
-        } catch (e) {
-          // Fall through to local download endpoint if CDN fetch fails
-          console.error("Error downloading from CDN:", e);
-        }
-      }
-
-      // Fallback: use the local /download endpoint (same as single/batch)
-      if (referenceOutputFilename) {
-        const link = document.createElement("a");
-        link.href = "/download/" + referenceOutputFilename;
-        link.download = referenceOutputFilename || "image.png";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
       }
     });
 
