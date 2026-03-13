@@ -1415,9 +1415,13 @@ STRICT RULES:
                 <img src="${result.local_path}" class="batch-result-image" alt="Generated character" />
               ` : ''}
               <div class="mt-1">
-                <a href="${result.image_url || ('/download/' + result.output_filename)}" class="btn btn-sm download-btn" download="${result.output_filename}">
+                <button
+                  type="button"
+                  class="btn btn-sm download-btn batch-download-btn"
+                  data-output-filename="${result.output_filename}"
+                >
                   <i class="fas fa-download me-2"></i>Download
-                </a>
+                </button>
               </div>
             ` : `
               <p class="text-danger mb-0 small">${result.error || 'Unknown error'}</p>
@@ -1425,6 +1429,9 @@ STRICT RULES:
           </div>
         `).join('')}
       `;
+
+      // Attach download handlers for each successful batch item
+      setupBatchDownloadHandlers();
     }
 
     // Composite button handler
@@ -1563,6 +1570,35 @@ STRICT RULES:
       document.getElementById("referenceSourceFileInfo").style.display = "none";
     });
 
+    function setupBatchDownloadHandlers() {
+      const buttons = document.querySelectorAll(".batch-download-btn");
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          const filename = btn.dataset.outputFilename;
+          if (!filename) return;
+          const link = document.createElement("a");
+          link.href = "/download/" + filename;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        });
+      });
+    }
+
+    const referenceDownloadLink = document.getElementById("referenceDownloadLink");
+    referenceDownloadLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (!referenceOutputFilename) return;
+      const link = document.createElement("a");
+      link.href = "/download/" + referenceOutputFilename;
+      link.download = referenceOutputFilename || "image.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
     document.getElementById("generateReferenceBtn").addEventListener("click", async () => {
       if (!referenceImageFile) {
         const el = document.getElementById("referenceStatus");
@@ -1610,12 +1646,6 @@ STRICT RULES:
         const url = data.image_url || data.local_path || "/download/" + data.output_filename;
         document.getElementById("referencePreviewImage").src = url;
 
-        // Configure download link to always hit the local download
-        // endpoint so the browser receives a proper attachment
-        // response instead of navigating directly to the CDN URL.
-        const downloadLink = document.getElementById("referenceDownloadLink");
-        downloadLink.href = "/download/" + data.output_filename;
-        downloadLink.download = data.output_filename || "image.png";
         document.getElementById("referenceResultMessage").textContent = data.message || "Style applied successfully!";
         document.getElementById("referenceResult").style.display = "block";
         const el = document.getElementById("referenceStatus");
