@@ -998,15 +998,25 @@
       }
     });
 
-    charDownloadBtn.addEventListener("click", () => {
-      const urlToDownload = currentImageUrl || (currentFilename ? `/download/${currentFilename}` : null);
-      if (!urlToDownload) return;
-      const link = document.createElement("a");
-      link.href = urlToDownload;
-      link.download = currentFilename || "character.png";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    charDownloadBtn.addEventListener("click", async () => {
+      const filename = currentFilename || "character.png";
+      if (!currentFilename) return;
+      const downloadUrl = `/download/${encodeURIComponent(currentFilename)}`;
+      try {
+        const response = await fetch(downloadUrl, { cache: 'no-store' });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        showStatus("Download failed: " + (err.message || "Could not download file"), true);
+      }
     });
 
     // Batch Processing JavaScript
@@ -1500,15 +1510,25 @@ STRICT RULES:
       }
     });
 
-    document.getElementById("compositeDownloadBtn").addEventListener("click", () => {
-      const urlToDownload = window.compositeUrl || (window.compositeFilename ? `/download/${window.compositeFilename}` : null);
-      if (!urlToDownload) return;
-      const link = document.createElement("a");
-      link.href = urlToDownload;
-      link.download = window.compositeFilename || "composite.png";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    document.getElementById("compositeDownloadBtn").addEventListener("click", async () => {
+      const filename = window.compositeFilename || "composite.png";
+      if (!window.compositeFilename) return;
+      const downloadUrl = `/download/${encodeURIComponent(window.compositeFilename)}`;
+      try {
+        const response = await fetch(downloadUrl, { cache: 'no-store' });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        showCompositeStatus("Download failed: " + (err.message || "Could not download file"), true);
+      }
     });
 
     function showCompositeProgress() {
@@ -1538,7 +1558,6 @@ STRICT RULES:
     let referenceImageFile = null;
     let referenceSourceFile = null;
     let referenceOutputFilename = null;
-    let referenceImageUrl = null;  // CloudFront URL when available
 
     document.getElementById("referenceTemperature").addEventListener("input", (e) => {
       document.getElementById("referenceTemperatureValue").textContent = e.target.value;
@@ -1594,35 +1613,25 @@ STRICT RULES:
       e.preventDefault();
       const filename = referenceDownloadLink.dataset.outputFilename || referenceOutputFilename;
       if (!filename) return;
-      const urlToDownload = referenceImageUrl || (filename ? "/download/" + encodeURIComponent(filename) : null);
-      if (!urlToDownload) return;
+      // Always use backend /download/ (same-origin) so download attribute works on ECS.
+      // Direct CloudFront links open in new tab due to cross-origin download restriction.
+      const downloadUrl = "/download/" + encodeURIComponent(filename);
       const btn = referenceDownloadLink;
       const originalHtml = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner me-2"></span>Downloading...';
       try {
-        // Use direct link when CloudFront URL is available (avoids 304/conditional fetch issues)
-        if (referenceImageUrl) {
-          const link = document.createElement("a");
-          link.href = referenceImageUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        } else {
-          // Fallback to backend: use cache: 'no-store' to prevent 304 Not Modified
-          const response = await fetch(urlToDownload, { cache: 'no-store' });
-          if (!response.ok) throw new Error("Download failed");
-          const blob = await response.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = blobUrl;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(blobUrl);
-        }
+        const response = await fetch(downloadUrl, { cache: 'no-store' });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
       } catch (err) {
         const statusEl = document.getElementById("referenceStatus");
         statusEl.className = "status-message status-error";
@@ -1678,7 +1687,6 @@ STRICT RULES:
         }
 
         referenceOutputFilename = data.output_filename;
-        referenceImageUrl = data.image_url || null;
         const url = data.image_url || data.local_path || "/download/" + data.output_filename;
         document.getElementById("referencePreviewImage").src = url;
 
