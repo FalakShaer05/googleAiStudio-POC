@@ -6,3 +6,4 @@ python-dotenv
 boto3
 flasgger
 flask-cors
+rembg[cpu]

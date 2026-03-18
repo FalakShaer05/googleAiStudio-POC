@@ -205,3 +205,68 @@ def remove_background_with_freepik_api(image_path: str) -> Optional[str]:
         print(f"   Traceback: {traceback.format_exc()}")
         return None
 
+
+def remove_background_with_rembg(image_path: str) -> Optional[str]:
+    """
+    Remove background using rembg + BiRefNet (MIT license, commercial OK).
+    Works with local files - no public URL required.
+    Fallback when Freepik API fails.
+
+    Args:
+        image_path: Path to the input image
+
+    Returns:
+        str: Path to the result image, or None if failed
+    """
+    try:
+        if not os.path.exists(image_path):
+            return None
+
+        from PIL import Image
+        from rembg import remove
+        from rembg.session_factory import new_session
+
+        # Try birefnet-general first (MIT, commercial OK), fallback to isnet-general-use
+        model_name = "u2net"
+        for name in ("birefnet-general", "isnet-general-use"):
+            try:
+                session = new_session(name)
+                model_name = name
+                break
+            except ValueError:
+                continue
+        else:
+            session = new_session("u2net")  # Default fallback
+
+        input_img = Image.open(image_path)
+        output_img = remove(input_img, session=session)
+
+        temp_path = image_path.replace('.', '_bg_removed.')
+        output_img.save(temp_path)
+        print(f"✅ rembg background removal successful (model: {model_name})")
+        return temp_path
+
+    except Exception as e:
+        print(f"❌ Error in rembg fallback: {e}")
+        import traceback
+        print(f"   Traceback: {traceback.format_exc()}")
+        return None
+
+
+def remove_background(image_path: str) -> Optional[str]:
+    """
+    Remove background: try Freepik API first, fall back to rembg + BiRefNet on failure.
+
+    Args:
+        image_path: Path to the input image
+
+    Returns:
+        str: Path to the result image, or None if both services failed
+    """
+    result = remove_background_with_freepik_api(image_path)
+    if result:
+        return result
+
+    print("⚠️ Freepik failed, falling back to rembg + BiRefNet...")
+    return remove_background_with_rembg(image_path)
+
