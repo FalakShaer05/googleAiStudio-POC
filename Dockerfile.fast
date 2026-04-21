@@ -9,7 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production \
-    NUMBA_CACHE_DIR=/tmp/numba-cache
+    NUMBA_CACHE_DIR=/tmp/numba-cache \
+    HOME=/app
 
 # Copy requirements first for better caching
 COPY v2/requirements.txt .
@@ -24,9 +25,9 @@ COPY v2/ .
 # Create necessary directories
 RUN mkdir -p uploads outputs
 
-# Create non-root user for security with specific UID/GID to match host
-RUN groupadd -r -g 1000 appuser && useradd -r -u 1000 -g appuser appuser
-RUN chown -R appuser:appuser /app
+# Writable home for rembg/pooch (~/.u2net model cache)
+RUN groupadd -r -g 1000 appuser && useradd -m -u 1000 -g appuser -d /home/appuser appuser
+RUN chown -R appuser:appuser /app /home/appuser
 
 # Create startup script to fix permissions
 RUN echo '#!/bin/bash\n\

@@ -226,6 +226,12 @@ def remove_background_with_rembg(image_path: str) -> Optional[str]:
         # users in Docker/ECS cannot write there. Use a writable tmp dir.
         os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba-cache")
 
+        # rembg uses Pooch to download ONNX weights under $HOME/.u2net; system users
+        # often have no usable home directory in slim images.
+        _home = os.environ.get("HOME", "")
+        if not _home or not os.path.isdir(_home) or not os.access(_home, os.W_OK):
+            os.environ["HOME"] = "/app"
+
         from PIL import Image
         from rembg import remove
         from rembg.session_factory import new_session

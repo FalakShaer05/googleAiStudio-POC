@@ -9,7 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production \
-    NUMBA_CACHE_DIR=/tmp/numba-cache
+    NUMBA_CACHE_DIR=/tmp/numba-cache \
+    HOME=/app
 
 # Install minimal system dependencies (only what's absolutely needed)
 RUN apt-get update && apt-get install -y \
@@ -31,9 +32,11 @@ COPY v2/ .
 # Create necessary directories
 RUN mkdir -p uploads outputs
 
-# Create non-root user for security with specific UID/GID to match host
-RUN groupadd -r -g 1000 appuser && useradd -r -u 1000 -g appuser appuser
-RUN chown -R appuser:appuser /app
+# Create non-root user for security with specific UID/GID to match host.
+# Real home dir: rembg/pooch downloads models to ~/.u2net; without this, /home/appuser
+# is missing and Pooch raises PermissionError.
+RUN groupadd -r -g 1000 appuser && useradd -m -u 1000 -g appuser -d /home/appuser appuser
+RUN chown -R appuser:appuser /app /home/appuser
 
 # Create startup script to fix permissions (runs as root, then switches to appuser)
 RUN echo '#!/bin/bash\n\
