@@ -208,9 +208,12 @@ def remove_background_with_freepik_api(image_path: str) -> Optional[str]:
 
 def remove_background_with_rembg(image_path: str) -> Optional[str]:
     """
-    Remove background using rembg + BiRefNet (MIT license, commercial OK).
-    Works with local files - no public URL required.
-    Fallback when Freepik API fails.
+    Remove background using rembg (ONNX models). Fallback when Freepik API fails.
+
+    Model order defaults to smallest-first (u2net → isnet-general-use →
+    birefnet-general) so constrained hosts (e.g. 2GB ECS) avoid downloading
+    ~1GB weights and OOM at load/inference. Override with REMBG_MODEL_ORDER,
+    e.g. ``birefnet-general,isnet-general-use,u2net`` for quality-first.
 
     Args:
         image_path: Path to the input image
@@ -236,17 +239,25 @@ def remove_background_with_rembg(image_path: str) -> Optional[str]:
         from rembg import remove
         from rembg.session_factory import new_session
 
-        # Try birefnet-general first (MIT, commercial OK), fallback to isnet-general-use
-        model_name = "u2net"
-        for name in ("birefnet-general", "isnet-general-use"):
+        default_order = "u2net,isnet-general-use,birefnet-general"
+        raw = (os.getenv("REMBG_MODEL_ORDER") or default_order).strip()
+        candidates = [x.strip() for x in raw.split(",") if x.strip()]
+        if not candidates:
+            candidates = ["u2net"]
+
+        session = None
+        model_name: Optional[str] = None
+        for name in candidates:
             try:
                 session = new_session(name)
                 model_name = name
                 break
             except ValueError:
                 continue
-        else:
-            session = new_session("u2net")  # Default fallback
+
+        if session is None:
+            print(f"❌ rembg: could not load any of models {candidates!r}")
+            return None
 
         input_img = Image.open(image_path)
         output_img = remove(input_img, session=session)
@@ -265,7 +276,7 @@ def remove_background_with_rembg(image_path: str) -> Optional[str]:
 
 def remove_background(image_path: str) -> Optional[str]:
     """
-    Remove background: try Freepik API first, fall back to rembg + BiRefNet on failure.
+    Remove background: try Freepik API first, fall back to rembg on failure.
 
     Args:
         image_path: Path to the input image
@@ -277,6 +288,6 @@ def remove_background(image_path: str) -> Optional[str]:
     if result:
         return result
 
-    print("⚠️ Freepik failed, falling back to rembg + BiRefNet...")
+    print("⚠️ Freepik failed, falling back to rembg...")
     return remove_background_with_rembg(image_path)
 

@@ -10,7 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
-    HOME=/app
+    HOME=/app \
+    REMBG_MODEL_ORDER=u2net,isnet-general-use,birefnet-general
 
 # Install minimal system dependencies (only what's absolutely needed)
 RUN apt-get update && apt-get install -y \
