@@ -8,7 +8,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
-    FLASK_ENV=production
+    FLASK_ENV=production \
+    NUMBA_CACHE_DIR=/tmp/numba-cache
 
 # Install minimal system dependencies (only what's absolutely needed)
 RUN apt-get update && apt-get install -y \

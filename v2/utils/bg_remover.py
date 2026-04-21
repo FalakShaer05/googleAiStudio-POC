@@ -222,6 +222,10 @@ def remove_background_with_rembg(image_path: str) -> Optional[str]:
         if not os.path.exists(image_path):
             return None
 
+        # Numba (pymatting/rembg) defaults to caching under site-packages; non-root
+        # users in Docker/ECS cannot write there. Use a writable tmp dir.
+        os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba-cache")
+
         from PIL import Image
         from rembg import remove
         from rembg.session_factory import new_session
