@@ -1091,6 +1091,58 @@ def api_generate_characters_batch():
     return generate_characters_batch_web()
 
 
+@app.route("/api/generate-reference-style", methods=["POST"])
+@require_api_key
+def api_generate_reference_style():
+    """
+    Generate one image in the style of a reference image.
+    ---
+    tags:
+      - Character Generation
+    security:
+      - ApiKeyAuth: []
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: source
+        type: file
+        required: true
+        description: Source image to transform (identity/content to keep)
+      - in: formData
+        name: reference
+        type: file
+        required: true
+        description: Reference style image
+      - in: formData
+        name: temperature
+        type: number
+        required: false
+        default: 1.0
+        description: Style application strength (0 to 2)
+      - in: formData
+        name: reference_prompt
+        type: string
+        required: false
+        description: Free-form instruction prompt sent to Gemini
+      - in: header
+        name: X-API-Key
+        type: string
+        required: true
+        description: API key for authentication
+    responses:
+      200:
+        description: Reference style image generated successfully
+      400:
+        description: Bad request (missing parameters or invalid input)
+      401:
+        description: Unauthorized (missing or invalid API key)
+      500:
+        description: Server error
+    """
+    return generate_reference_style_web()
+
+
 @app.route("/download/<filename>")
 def download_file(filename):
     """Download a file from the outputs folder or temp directory (for zip files)"""

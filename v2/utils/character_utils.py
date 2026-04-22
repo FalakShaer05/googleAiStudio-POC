@@ -737,6 +737,9 @@ def generate_image_in_reference_style(
                 return False, "Invalid image object returned from Gemini"
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
+            # Match generate-character-web behavior by adding the top-right logo overlay.
+            # Reference flow uses the same station family default logo as non-warhol outputs.
+            img = add_signature_image_overlay(img, "cartoon")
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
