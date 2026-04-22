@@ -162,8 +162,15 @@ def _generate_content_image(
     config = None
     if types is not None and hasattr(types, "GenerateContentConfig"):
         config_kwargs = {"response_modalities": ["IMAGE"]}
-        if temperature is not None and 0 <= temperature <= 2:
-            config_kwargs["temperature"] = float(temperature)
+        if temperature is not None:
+            try:
+                temp_value = float(temperature)
+                # Shared rule across all callers/platforms:
+                # do not pass temperature to Google when it's 0 or null-like.
+                if 0 < temp_value <= 2:
+                    config_kwargs["temperature"] = temp_value
+            except (TypeError, ValueError):
+                pass
         if seed is not None:
             config_kwargs["seed"] = seed
         try:
@@ -629,7 +636,7 @@ def generate_image_in_reference_style(
     reference_path: str,
     source_path: str,
     output_path: str,
-    temperature: float = 1.0,
+    temperature: Optional[float] = None,
     user_prompt: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
@@ -721,7 +728,7 @@ def generate_image_in_reference_style(
             model=get_gemini_image_model(),
             contents=contents,
             seed=None,
-            temperature=float(temperature),
+            temperature=temperature,
         )
 
         img = _extract_final_image_from_response(response)
@@ -753,6 +760,7 @@ def generate_character_with_identity(
     dpi: int = 300,
     character_only: bool = False,
     station: Optional[str] = None,
+    temperature: Optional[float] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
@@ -1195,6 +1203,7 @@ BACKGROUND:
             model=get_gemini_image_model(),
             contents=[normalized_prompt, selfie_image],
             seed=seed,
+            temperature=temperature,
         )
 
         img = _extract_final_image_from_response(response)
@@ -1300,6 +1309,7 @@ def generate_character_composited_with_background(
     dpi: int = 300,
     use_gemini_compositing: bool = True,
     station: Optional[str] = None,
+    temperature: Optional[float] = None,
 ) -> Tuple[bool, str]:
     """
     Generate character and composite onto background.
@@ -1452,6 +1462,7 @@ Return a SINGLE final composited image ready for printing.
                 model=get_gemini_image_model(),
                 contents=[normalized_prompt, selfie_image, background_image],
                 seed=seed,
+                temperature=temperature,
             )
 
             img = _extract_final_image_from_response(response)
@@ -1524,6 +1535,7 @@ Return a SINGLE final composited image ready for printing.
                 dpi=dpi,
                 character_only=True,
                 station=station,
+                temperature=temperature,
             )
             
             if not success:

@@ -256,6 +256,12 @@ def generate_character_web():
 
         position = request.form.get("position", "bottom").strip()
         scale = float(request.form.get("scale", "1.0"))
+        temperature_raw = request.form.get("temperature", "").strip()
+        temperature = None
+        if temperature_raw:
+            parsed_temperature = max(0.0, min(2.0, float(temperature_raw)))
+            if parsed_temperature > 0:
+                temperature = parsed_temperature
         canvas_size = request.form.get("canvas_size", "").strip() or None
         dpi = int(request.form.get("dpi", "300"))
         use_gemini_compositing = request.form.get("use_gemini_compositing", "true").lower() == "true"
@@ -318,6 +324,7 @@ def generate_character_web():
                 dpi=dpi,
                 use_gemini_compositing=use_gemini_compositing,
                 station=station,
+                temperature=temperature,
             )
         else:
             success, message = generate_character_with_identity(
@@ -331,6 +338,7 @@ def generate_character_web():
                 canvas_size=canvas_size,
                 dpi=dpi,
                 station=station,
+                temperature=temperature,
             )
 
         if not success:
@@ -445,8 +453,12 @@ def generate_reference_style_web():
         if not allowed_file(source_file.filename):
             return jsonify({"error": "Invalid source image file type"}), 400
 
-        temperature = float(request.form.get("temperature", "1.0"))
-        temperature = max(0.0, min(2.0, temperature))
+        temperature_raw = request.form.get("temperature", "").strip()
+        temperature = None
+        if temperature_raw:
+            parsed_temperature = max(0.0, min(2.0, float(temperature_raw)))
+            if parsed_temperature > 0:
+                temperature = parsed_temperature
 
         # Free-form prompt from the frontend textarea; may be empty, in which case
         # the backend uses a minimal default instruction.
