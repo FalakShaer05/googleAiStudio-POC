@@ -463,6 +463,26 @@
               </select>
             </div>
           </div>
+          <div class="row mb-3">
+            <div class="col-12">
+              <label class="form-label">Temperature</label>
+              <input
+                type="range"
+                class="form-range"
+                id="charTemperature"
+                name="temperature"
+                min="0"
+                max="2.0"
+                step="0.1"
+                value="0"
+              />
+              <div class="d-flex justify-content-between">
+                <small>0.0</small>
+                <small id="charTemperatureValue">0.0</small>
+                <small>2.0</small>
+              </div>
+            </div>
+          </div>
 
           <input type="hidden" name="dpi" value="300" />
           <input type="hidden" name="upload_background_to_s3" value="false" />
@@ -842,6 +862,8 @@
 
     const charScale = document.getElementById("charScale");
     const charScaleValue = document.getElementById("charScaleValue");
+    const charTemperature = document.getElementById("charTemperature");
+    const charTemperatureValue = document.getElementById("charTemperatureValue");
     const characterStyleSelect = document.getElementById("characterStyle");
     const characterForm = document.getElementById("characterForm");
     const generateCharacterBtn = document.getElementById("generateCharacterBtn");
@@ -929,6 +951,9 @@
     charScale.addEventListener("input", (e) => {
       charScaleValue.textContent = Math.round(e.target.value * 100) + "%";
     });
+    charTemperature.addEventListener("input", (e) => {
+      charTemperatureValue.textContent = Number(e.target.value).toFixed(1);
+    });
 
     function showProgress() {
       generateCharacterBtn.disabled = true;
@@ -959,6 +984,12 @@
       formData.set("position", document.getElementById("charPosition").value);
       formData.set("scale", document.getElementById("charScale").value);
       formData.set("use_gemini_compositing", useGeminiCompositing.checked ? "true" : "false");
+      const temperatureValue = parseFloat(document.getElementById("charTemperature").value || "0");
+      if (temperatureValue > 0) {
+        formData.set("temperature", temperatureValue.toString());
+      } else {
+        formData.delete("temperature");
+      }
       const stationValue = document.getElementById("stationSelect").value;
       if (stationValue) {
         formData.set("station", stationValue);
@@ -1640,7 +1671,10 @@ STRICT RULES:
       const formData = new FormData();
       formData.append("reference", referenceImageFile);
       formData.append("source", referenceSourceFile);
-      formData.append("temperature", document.getElementById("referenceTemperature").value);
+      const referenceTemperatureValue = parseFloat(document.getElementById("referenceTemperature").value || "0");
+      if (referenceTemperatureValue > 0) {
+        formData.append("temperature", referenceTemperatureValue.toString());
+      }
       const referencePromptValue = document.getElementById("referencePrompt").value.trim();
       if (referencePromptValue) {
         formData.append("reference_prompt", referencePromptValue);
