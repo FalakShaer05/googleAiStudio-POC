@@ -636,6 +636,7 @@ def generate_image_in_reference_style(
     reference_path: str,
     source_path: str,
     output_path: str,
+    background_path: Optional[str] = None,
     temperature: Optional[float] = None,
     user_prompt: Optional[str] = None,
 ) -> Tuple[bool, str]:
@@ -648,6 +649,7 @@ def generate_image_in_reference_style(
 
     - `source_path`  -> Image 1 (source person/content)
     - `reference_path` -> Image 2 (style reference)
+    - `background_path` -> Image 3 (optional background to place subject onto)
     - `user_prompt` -> Free-form instruction text from the UI
 
     Temperature controls how strongly the reference style is applied.
@@ -658,6 +660,8 @@ def generate_image_in_reference_style(
             return False, f"Reference image not found: {reference_path}"
         if not os.path.exists(source_path):
             return False, f"Source image not found: {source_path}"
+        if background_path and not os.path.exists(background_path):
+            return False, f"Background image not found: {background_path}"
 
         # Load and normalize both to RGB so mixed formats (JPG ref + PNG source or vice versa) work like PNG+PNG.
         # Ensures same color mode and no alpha/format mismatch for the API.
@@ -678,6 +682,7 @@ def generate_image_in_reference_style(
         # contents list we will pass `source_image` first and `reference_image` second.
         reference_image = to_rgb(Image.open(reference_path))
         source_image = to_rgb(Image.open(source_path))
+        background_image = to_rgb(Image.open(background_path)) if background_path else None
 
         # Use alternating text + image so the model never confuses which is reference vs source/background.
         # Each image is immediately preceded by a label that says what it is.
@@ -711,6 +716,14 @@ def generate_image_in_reference_style(
         else:
             task_instruction = str(user_prompt).strip()
 
+        if background_image is not None:
+            task_instruction = (
+                f"{task_instruction}\n\n"
+                "Image 3 is an optional background image. Keep this background composition and scene context, "
+                "and place the styled subject naturally into it. Do not alter the subject identity from Image 1 "
+                "or the style source from Image 2."
+            )
+
         # Order of contents is critical. The unified prompt below talks about:
         #   Image 1 = Source Person
         #   Image 2 = Reference Style
@@ -721,6 +734,8 @@ def generate_image_in_reference_style(
             # ref_label,
             reference_image,
         ]
+        if background_image is not None:
+            contents.append(background_image)
         contents.append(task_instruction)
         print(contents)
         response = _generate_content_image(
