@@ -437,6 +437,7 @@ def upload_batch_background():
 def generate_reference_style_web():
     """
     Reference-style generation: one reference image (style source) and one image to convert.
+    Optional background (file or URL) can be provided.
     Returns a single output image with 100% accurate reference style applied.
     Temperature (0–2) controls how strongly the reference style is applied.
     """
@@ -452,6 +453,11 @@ def generate_reference_style_web():
             return jsonify({"error": "One image to convert is required"}), 400
         if not allowed_file(source_file.filename):
             return jsonify({"error": "Invalid source image file type"}), 400
+
+        background_file = request.files.get("background")
+        background_url = request.form.get("background_url", "").strip()
+        if background_file and background_url:
+            return jsonify({"error": "Provide either background file or background_url, not both"}), 400
 
         temperature_raw = request.form.get("temperature", "").strip()
         temperature = None
@@ -472,12 +478,29 @@ def generate_reference_style_web():
         src_path = os.path.join(UPLOAD_FOLDER, src_filename)
         source_file.save(src_path)
 
+        background_path = None
+        if background_file and background_file.filename:
+            if not allowed_file(background_file.filename):
+                cleanup_file(src_path)
+                cleanup_file(ref_path)
+                return jsonify({"error": "Invalid background file type"}), 400
+            bg_filename = generate_unique_filename(background_file.filename, "ref_bg")
+            background_path = os.path.join(UPLOAD_FOLDER, bg_filename)
+            background_file.save(background_path)
+        elif background_url:
+            background_path = download_image_from_url(background_url, UPLOAD_FOLDER)
+            if not background_path:
+                cleanup_file(src_path)
+                cleanup_file(ref_path)
+                return jsonify({"error": "Failed to download background from URL"}), 400
+
         out_filename = generate_unique_filename(f"reference_style_{src_filename}.png", "output")
         out_path = os.path.join(OUTPUT_FOLDER, out_filename)
 
         success, message = generate_image_in_reference_style(
             reference_path=ref_path,
             source_path=src_path,
+            background_path=background_path,
             output_path=out_path,
             temperature=temperature,
             user_prompt=reference_prompt or None,
@@ -485,6 +508,7 @@ def generate_reference_style_web():
 
         cleanup_file(src_path)
         cleanup_file(ref_path)
+        cleanup_file(background_path)
 
         if not success:
             return jsonify({"success": False, "error": message}), 500

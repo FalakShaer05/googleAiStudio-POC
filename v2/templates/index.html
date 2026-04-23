@@ -759,6 +759,38 @@
           </div>
         </div>
 
+        <!-- Optional Background (Image 3) -->
+        <div class="mb-4">
+          <h5 class="mb-3"><i class="fas fa-mountain me-2"></i>Background (optional, Image 3)</h5>
+          <p class="text-muted small mb-3">
+            Optionally provide a background to place the styled subject onto. Leave empty to let Gemini decide the background.
+          </p>
+          <div class="upload-area" onclick="document.getElementById('referenceBackgroundInput').click()">
+            <div class="upload-icon"><i class="fas fa-image"></i></div>
+            <h5 class="mb-1">Click to choose background image</h5>
+            <p class="text-muted mb-0">Optional: preserves your intended scene context</p>
+            <input type="file" id="referenceBackgroundInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="referenceBackgroundFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="referenceBackgroundFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearReferenceBackgroundBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or background URL:</label>
+            <input
+              type="url"
+              id="referenceBackgroundUrl"
+              class="form-control form-control-sm"
+              placeholder="https://example.com/background.jpg"
+            />
+          </div>
+        </div>
+
         <!-- Temperature Slider -->
         <div class="mb-4">
           <label class="form-label fw-bold">Temperature</label>
@@ -1588,6 +1620,7 @@ STRICT RULES:
     // --- Reference tab (single output image, 100% accurate style) ---
     let referenceImageFile = null;
     let referenceSourceFile = null;
+    let referenceBackgroundFile = null;
     let referenceOutputFilename = null;
 
     document.getElementById("referenceTemperature").addEventListener("input", (e) => {
@@ -1620,6 +1653,28 @@ STRICT RULES:
       referenceSourceFile = null;
       document.getElementById("referenceSourceInput").value = "";
       document.getElementById("referenceSourceFileInfo").style.display = "none";
+    });
+
+    document.getElementById("referenceBackgroundInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        referenceBackgroundFile = file;
+        document.getElementById("referenceBackgroundFileName").textContent = file.name;
+        document.getElementById("referenceBackgroundFileInfo").style.display = "block";
+        document.getElementById("referenceBackgroundUrl").value = "";
+      }
+    });
+    document.getElementById("clearReferenceBackgroundBtn").addEventListener("click", () => {
+      referenceBackgroundFile = null;
+      document.getElementById("referenceBackgroundInput").value = "";
+      document.getElementById("referenceBackgroundFileInfo").style.display = "none";
+    });
+    document.getElementById("referenceBackgroundUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        referenceBackgroundFile = null;
+        document.getElementById("referenceBackgroundInput").value = "";
+        document.getElementById("referenceBackgroundFileInfo").style.display = "none";
+      }
     });
 
     function setupBatchDownloadHandlers() {
@@ -1693,6 +1748,16 @@ STRICT RULES:
       const formData = new FormData();
       formData.append("reference", referenceImageFile);
       formData.append("source", referenceSourceFile);
+      if (referenceBackgroundFile) {
+        formData.append("background", referenceBackgroundFile);
+      }
+      const referenceBackgroundUrlValue = document.getElementById("referenceBackgroundUrl").value.trim();
+      if (referenceBackgroundUrlValue) {
+        formData.append("background_url", referenceBackgroundUrlValue);
+      }
+      if (referenceBackgroundFile && referenceBackgroundUrlValue) {
+        formData.set("background_url", "");
+      }
       const referenceTemperatureValue = parseFloat(document.getElementById("referenceTemperature").value || "0");
       if (referenceTemperatureValue > 0) {
         formData.append("temperature", referenceTemperatureValue.toString());
