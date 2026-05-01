@@ -481,14 +481,36 @@ def get_signature_image_path(style: str = "others") -> Optional[str]:
     return None
 
 
-def add_signature_image_overlay(img: Image.Image, style: str = "others",is_warhol_style: bool = False) -> Image.Image:
+VALID_LOGO_POSITIONS = {
+    "top_left",
+    "top_center",
+    "top_right",
+    "center_left",
+    "center_center",
+    "center_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+}
+
+
+def add_signature_image_overlay(
+    img: Image.Image,
+    style: str = "others",
+    is_warhol_style: bool = False,
+    logo_position: str = "top_right",
+) -> Image.Image:
     """
-    Add the signature image overlay to the bottom right of an image.
+    Add the signature image overlay to the image.
     The signature will be 20% width and 20% height of the generated image.
     
     Args:
         img: PIL Image object
         style: Style type - "pencil-sketch", "cartoon", or "others"
+        logo_position: One of:
+            top_left, top_center, top_right,
+            center_left, center_center, center_right,
+            bottom_left, bottom_center, bottom_right
         
     Returns:
         PIL Image with signature overlay added
@@ -497,10 +519,20 @@ def add_signature_image_overlay(img: Image.Image, style: str = "others",is_warho
     if img.mode not in ('RGB', 'RGBA'):
         img = img.convert('RGB')
     
-    # Get signature image path based on style
-    signature_path = get_signature_image_path(style)
+    normalized_logo_position = (logo_position or "top_right").strip().lower()
+    if normalized_logo_position not in VALID_LOGO_POSITIONS:
+        print(f"⚠️ Invalid logo_position '{logo_position}'. Falling back to 'top_right'.")
+        normalized_logo_position = "top_right"
+
+    # Business rule:
+    # - bottom_center => use pencil-sketch logo
+    # - all other positions => use cartoon logo
+    style_to_use = "pencil-sketch" if normalized_logo_position == "bottom_center" else "cartoon"
+
+    # Get signature image path based on resolved style
+    signature_path = get_signature_image_path(style_to_use)
     if not signature_path:
-        print(f"⚠️ Signature image not found for style '{style}'. Skipping signature overlay.")
+        print(f"⚠️ Signature image not found for style '{style_to_use}'. Skipping signature overlay.")
         return img
     
     print(f"✅ Found signature image at: {signature_path}")
@@ -566,22 +598,31 @@ def add_signature_image_overlay(img: Image.Image, style: str = "others",is_warho
         if img_with_signature.mode != 'RGBA':
             img_with_signature = img_with_signature.convert('RGBA')
         
-        if is_warhol_style is True:
-            # For Warhol: place signature at bottom center, flush with bottom edge
+        # Small, consistent padding around edges.
+        padding_x = int(img_width * 0.01)
+        padding_y = int(img_height * 0.01)
+
+        vertical_part, horizontal_part = normalized_logo_position.split("_", 1)
+
+        if horizontal_part == "left":
+            x = padding_x
+        elif horizontal_part == "center":
             x = (img_width - new_sig_width) // 2
-            y = img_height - new_sig_height
         else:
-            # Default: top-right with small padding (1% from edges)
-            padding_x = int(img_width * 0.01)
-            padding_y = int(img_height * 0.01)
             x = img_width - new_sig_width - padding_x
+
+        if vertical_part == "top":
             y = padding_y
+        elif vertical_part == "center":
+            y = (img_height - new_sig_height) // 2
+        else:
+            y = img_height - new_sig_height - padding_y
         
         # Composite signature onto image
         img_with_signature.paste(signature_resized, (x, y), signature_resized)
         
         print(f"✅ Signature overlay added successfully!")
-        print(f"   Position: ({x}, {y}), Size: ({new_sig_width}x{new_sig_height})")
+        print(f"   Position: ({x}, {y}) [{normalized_logo_position}], Size: ({new_sig_width}x{new_sig_height})")
         print(f"   Image size: ({img_width}x{img_height})")
         
         # Convert back to original mode if needed
@@ -639,6 +680,7 @@ def generate_image_in_reference_style(
     background_path: Optional[str] = None,
     temperature: Optional[float] = None,
     user_prompt: Optional[str] = None,
+    logo_position: str = "top_right",
 ) -> Tuple[bool, str]:
     """
     Generate an image that applies the visual style of the reference image to the source image.
@@ -754,7 +796,7 @@ def generate_image_in_reference_style(
                 img = img.convert("RGB")
             # Match generate-character-web behavior by adding the top-right logo overlay.
             # Reference flow uses the same station family default logo as non-warhol outputs.
-            img = add_signature_image_overlay(img, "cartoon")
+            img = add_signature_image_overlay(img, "cartoon", logo_position=logo_position)
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -779,6 +821,7 @@ def generate_character_with_identity(
     character_only: bool = False,
     station: Optional[str] = None,
     temperature: Optional[float] = None,
+    logo_position: str = "top_right",
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
@@ -1299,7 +1342,12 @@ BACKGROUND:
             
             print(f"   Style: {style}, Prompt preview: {character_prompt[:150]}...")
             print(f"   Is Warhol style: {is_warhol_style}")
-            img = add_signature_image_overlay(img, style,is_warhol_style)
+            img = add_signature_image_overlay(
+                img,
+                style,
+                is_warhol_style,
+                logo_position=logo_position,
+            )
             
             # Optimize: Create directory only once
             output_dir = os.path.dirname(output_path)
