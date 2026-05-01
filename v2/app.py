@@ -52,6 +52,17 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}
+ALLOWED_LOGO_POSITIONS = {
+    "top_left",
+    "top_center",
+    "top_right",
+    "center_left",
+    "center_center",
+    "center_right",
+    "bottom_left",
+    "bottom_center",
+    "bottom_right",
+}
 
 # Swagger configuration
 swagger_config = {
@@ -111,8 +122,16 @@ def process_single_character(item_data, index):
         selfie_url = item_data.get("selfie_url", "").strip()
         character_prompt = item_data.get("character_prompt", "").strip()
         station = item_data.get("station", "").strip() or None
+        logo_position = item_data.get("logo_position", "top_right").strip().lower() or "top_right"
         canvas_size = item_data.get("canvas_size") or None
         dpi = int(item_data.get("dpi", "300"))
+
+        if logo_position not in ALLOWED_LOGO_POSITIONS:
+            return {
+                "index": index,
+                "success": False,
+                "error": f"Invalid logo_position '{logo_position}'"
+            }
 
         if not selfie_file and not selfie_url:
             return {
@@ -174,6 +193,7 @@ def process_single_character(item_data, index):
             canvas_size=canvas_size,
             dpi=dpi,
             station=station,
+            logo_position=logo_position,
         )
 
         if not success:
@@ -255,6 +275,7 @@ def generate_character_web():
             return jsonify({"error": "Provide either background file or background_url, not both"}), 400
 
         position = request.form.get("position", "bottom").strip()
+        logo_position = request.form.get("logo_position", "top_right").strip().lower() or "top_right"
         scale = float(request.form.get("scale", "1.0"))
         temperature_raw = request.form.get("temperature", "").strip()
         temperature = None
@@ -269,6 +290,8 @@ def generate_character_web():
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
+        if logo_position not in ALLOWED_LOGO_POSITIONS:
+            return jsonify({"error": f"Invalid logo_position '{logo_position}'"}), 400
 
         # Handle selfie (file or URL)
         selfie_path = None
@@ -339,6 +362,7 @@ def generate_character_web():
                 dpi=dpi,
                 station=station,
                 temperature=temperature,
+                logo_position=logo_position,
             )
 
         if not success:
@@ -366,6 +390,7 @@ def generate_character_web():
                     "character_prompt": character_prompt,
                     "position": position,
                     "scale": scale,
+                    "logo_position": logo_position,
                 },
             }
         
@@ -469,6 +494,9 @@ def generate_reference_style_web():
         # Free-form prompt from the frontend textarea; may be empty, in which case
         # the backend uses a minimal default instruction.
         reference_prompt = request.form.get("reference_prompt", "").strip()
+        logo_position = request.form.get("logo_position", "top_right").strip().lower() or "top_right"
+        if logo_position not in ALLOWED_LOGO_POSITIONS:
+            return jsonify({"error": f"Invalid logo_position '{logo_position}'"}), 400
 
         ref_filename = generate_unique_filename(reference_file.filename, "reference")
         ref_path = os.path.join(UPLOAD_FOLDER, ref_filename)
@@ -504,6 +532,7 @@ def generate_reference_style_web():
             output_path=out_path,
             temperature=temperature,
             user_prompt=reference_prompt or None,
+            logo_position=logo_position,
         )
 
         cleanup_file(src_path)
@@ -564,6 +593,7 @@ def generate_characters_batch_web():
                 "selfie_url": item.get("selfie_url", "").strip(),
                 "character_prompt": item.get("character_prompt", "").strip(),
                 "station": item.get("station", "").strip() or None,
+                "logo_position": item.get("logo_position", "top_right").strip().lower() or "top_right",
                 "canvas_size": item.get("canvas_size") or None,
                 "dpi": int(item.get("dpi", "300")),
             }
