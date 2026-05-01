@@ -525,9 +525,9 @@ def add_signature_image_overlay(
         normalized_logo_position = "top_right"
 
     # Business rule:
-    # - bottom_center => use pencil-sketch logo
+    # - bottom_center => use others logo
     # - all other positions => use cartoon logo
-    style_to_use = "pencil-sketch" if normalized_logo_position == "bottom_center" else "cartoon"
+    style_to_use = "others" if normalized_logo_position == "bottom_center" else "cartoon"
 
     # Get signature image path based on resolved style
     signature_path = get_signature_image_path(style_to_use)
