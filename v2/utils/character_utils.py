@@ -137,12 +137,61 @@ def _extract_final_image_from_response(response) -> Optional[Image.Image]:
     return None
 
 
+# Gemini image models support a fixed set of output aspect ratios.
+_GEMINI_ASPECT_RATIO_VALUES = {
+    "1:1": 1.0,
+    "2:3": 2 / 3,
+    "3:2": 3 / 2,
+    "3:4": 3 / 4,
+    "4:3": 4 / 3,
+    "4:5": 4 / 5,
+    "5:4": 5 / 4,
+    "9:16": 9 / 16,
+    "16:9": 16 / 9,
+    "21:9": 21 / 9,
+}
+
+
+def select_gemini_aspect_ratio(width: int, height: int) -> str:
+    """Map image dimensions to the closest Gemini-supported aspect ratio string."""
+    if width <= 0 or height <= 0:
+        return "1:1"
+
+    actual = width / height
+    return min(
+        _GEMINI_ASPECT_RATIO_VALUES.keys(),
+        key=lambda ratio: abs(_GEMINI_ASPECT_RATIO_VALUES[ratio] - actual),
+    )
+
+
+def build_background_orientation_prompt(bg_w: int, bg_h: int) -> str:
+    """Prompt block that forces Gemini compositing to match background orientation/size."""
+    is_portrait = bg_h > bg_w
+    is_landscape = bg_w > bg_h
+    if is_portrait:
+        orientation = "PORTRAIT"
+    elif is_landscape:
+        orientation = "LANDSCAPE"
+    else:
+        orientation = "SQUARE"
+
+    aspect_ratio = select_gemini_aspect_ratio(bg_w, bg_h)
+
+    return f"""BACKGROUND ORIENTATION & SIZE (MANDATORY - HIGHEST PRIORITY):
+- The provided background is {orientation} ({bg_w}x{bg_h} pixels).
+- You MUST output a {orientation} image matching this aspect ratio ({aspect_ratio}, {bg_w}x{bg_h}).
+- Do NOT output a square image unless the background itself is square.
+- Do NOT crop, stretch, rotate, or reframe the background.
+- Keep the full background visible at its original proportions."""
+
+
 def _generate_content_image(
     client: genai.Client,
     model: str,
     contents,
     seed: Optional[int] = None,
     temperature: Optional[float] = None,
+    aspect_ratio: Optional[str] = None,
 ):
     """
     Call `client.models.generate_content` with an optional config to force image output.
@@ -157,11 +206,17 @@ def _generate_content_image(
               to use it in generation config. Note: Gemini API may not support seed
               for all models/versions.
         temperature: Optional temperature (e.g. 0–2) for style/creativity control, passed like Google Imagen.
+        aspect_ratio: Optional Gemini aspect ratio string (e.g. "3:4", "9:16") for output dimensions.
     """
     # If the SDK supports it, force image-only output for consistency.
     config = None
     if types is not None and hasattr(types, "GenerateContentConfig"):
         config_kwargs = {"response_modalities": ["IMAGE"]}
+        if aspect_ratio and hasattr(types, "ImageConfig"):
+            try:
+                config_kwargs["image_config"] = types.ImageConfig(aspect_ratio=aspect_ratio)
+            except (TypeError, AttributeError):
+                pass
         if temperature is not None:
             try:
                 temp_value = float(temperature)
@@ -1404,6 +1459,8 @@ def generate_character_composited_with_background(
         
         background_image = Image.open(background_path)
         bg_w, bg_h = background_image.size
+        bg_aspect_ratio = select_gemini_aspect_ratio(bg_w, bg_h)
+        orientation_prompt = build_background_orientation_prompt(bg_w, bg_h)
 
         canvas_context = ""
         if canvas_size:
@@ -1475,9 +1532,11 @@ def generate_character_composited_with_background(
             full_prompt = f"""TASK:
 Create a {"full-body " if user_wants_full_body_composite else ""}cartoon/caricature of this person and composite them onto this exact background image.
 
+{orientation_prompt}
+
 BACKGROUND USAGE (MUST FOLLOW EXACTLY):
 1. Use the provided background image AS-IS (no crop, no stretch, no extra elements).
-2. Keep the same aspect ratio as the background ({bg_w}x{bg_h}).
+2. Keep the same aspect ratio as the background ({bg_w}x{bg_h}, {bg_aspect_ratio}).
 3. Do NOT add white frames, borders, or white canvases around the character.
 
 {full_body_instruction}
@@ -1529,6 +1588,7 @@ Return a SINGLE final composited image ready for printing.
                 contents=[normalized_prompt, selfie_image, background_image],
                 seed=seed,
                 temperature=temperature,
+                aspect_ratio=bg_aspect_ratio,
             )
 
             img = _extract_final_image_from_response(response)
