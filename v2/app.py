@@ -825,18 +825,22 @@ def composite_characters_on_background():
                 _generate_content_image,
                 normalize_prompt_for_consistency,
                 generate_seed_from_prompt,
+                select_gemini_aspect_ratio,
+                build_background_orientation_prompt,
             )
             import io
             
             client = get_gemini_client()
             bg_w, bg_h = background_image.size
+            bg_aspect_ratio = select_gemini_aspect_ratio(bg_w, bg_h)
+            orientation_prompt = build_background_orientation_prompt(bg_w, bg_h)
             
             num_characters = len(character_images)
             canvas_context = ""
             if canvas_size:
                 canvas_context = (
                     f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                    f"the provided background ({bg_w}x{bg_h})."
+                    f"the provided background ({bg_w}x{bg_h}, {bg_aspect_ratio})."
                 )
 
             canvas_context_str = f"\n{canvas_context}" if canvas_context else ""
@@ -846,6 +850,8 @@ def composite_characters_on_background():
             base_prompt = custom_compositing_prompt if custom_compositing_prompt else COMPOSITING_PROMPT
             
             full_prompt = f"""{base_prompt}
+
+{orientation_prompt}
 
 ADDITIONAL INSTRUCTIONS:
 - Number of characters to merge: {num_characters}
@@ -876,6 +882,7 @@ Each character must appear exactly as they do in their original image, with no e
                 model=get_gemini_image_model(),
                 contents=contents,
                 seed=seed,
+                aspect_ratio=bg_aspect_ratio,
             )
 
             composite = _extract_final_image_from_response(response)
