@@ -164,6 +164,20 @@ def select_gemini_aspect_ratio(width: int, height: int) -> str:
     )
 
 
+def build_wynwood_placement_prompt(position: str, scale: float) -> str:
+    """Prompt block for Wynwood backgrounds — feet flush to bottom, large full-body character."""
+    height_pct = int(min(98, max(75, scale * 95)))
+    return f"""WYNWOOD PLACEMENT (CRITICAL - MUST MATCH REFERENCE):
+- Center the character horizontally on the canvas.
+- The character's feet/shoes MUST touch the absolute BOTTOM edge of the image — zero gap below the feet.
+- Scale the character LARGE: full-body height should fill approximately {height_pct}% of the total canvas height.
+- The character stands IN FRONT of the WYNWOOD graffiti text — lower legs and feet overlap the letters naturally.
+- Do NOT place the character floating above the text with empty space below the feet.
+- Do NOT make the character small or leave large empty areas below the character.
+- Leave only a small margin above the head (roughly 10-15% of image height).
+- Position preference: {position.upper()}, scale factor: {scale}x."""
+
+
 def build_background_orientation_prompt(bg_w: int, bg_h: int) -> str:
     """Prompt block that forces Gemini compositing to match background orientation/size."""
     is_portrait = bg_h > bg_w
@@ -1506,6 +1520,11 @@ def generate_character_composited_with_background(
             if has_explicit_full_body_composite:
                 user_wants_full_body_composite = True
             
+            height_pct = int(min(98, max(75, scale * 95)))
+            wynwood_placement = ""
+            if station_lower == "wynwood":
+                wynwood_placement = build_wynwood_placement_prompt(position, scale)
+
             full_body_instruction = ""
             if user_wants_full_body_composite:
                 if has_explicit_full_body_composite:
@@ -1514,19 +1533,21 @@ def generate_character_composited_with_background(
 4. Place the character standing at the {position.upper()} of the background, centered horizontally.
 5. The character must be full-body (head to feet), entirely inside the frame - do NOT cut off any body parts
 6. Do NOT crop or hide hands, feet, arms, or legs
-7. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
+7. Character height should be approximately {height_pct}% of the total image height (scale: {scale}x).
+8. When position is BOTTOM: feet must touch the absolute bottom edge of the canvas with no gap below.
 """
                 else:
                     full_body_instruction = f"""CHARACTER POSITIONING:
 3. Place the character standing at the {position.upper()} of the background, centered horizontally.
 4. The character must be full-body (head to feet), entirely inside the frame.
-5. Character height should be approximately 95% of the total image height to cover the full height while maintaining proper proportions.
+5. Character height should be approximately {height_pct}% of the total image height (scale: {scale}x).
+6. When position is BOTTOM: feet must touch the absolute bottom edge of the canvas with no gap below.
 """
             else:
                 full_body_instruction = f"""CHARACTER POSITIONING:
 3. Place the character at the {position.upper()} of the background, centered horizontally.
 4. Follow the user's specific framing requirements from the prompt (do NOT make it full-body if the user specified otherwise).
-5. Character height should be appropriate to the framing requested in the prompt.
+5. Character height should be appropriate to the framing requested in the prompt (scale: {scale}x).
 """
 
             full_prompt = f"""TASK:
@@ -1540,6 +1561,8 @@ BACKGROUND USAGE (MUST FOLLOW EXACTLY):
 3. Do NOT add white frames, borders, or white canvases around the character.
 
 {full_body_instruction}
+
+{wynwood_placement}
 
 POSE & BODY PRESERVATION (CRITICAL):
 - Follow the user's specific pose instructions from the prompt (e.g., "standing in playful pose", "sitting", etc.)
@@ -1850,7 +1873,12 @@ Return a SINGLE final composited image ready for printing.
                 
                 char_image = char_image.resize((new_char_w, new_char_h), Image.Resampling.LANCZOS)
                 
-                y_pos = bg_h - new_char_h - int(bg_h * 0.05) if position == "bottom" else (bg_h - new_char_h) // 2
+                if position == "bottom":
+                    # Wynwood: feet flush to bottom edge; others: small margin
+                    bottom_margin = 0 if station_lower == "wynwood" else int(bg_h * 0.05)
+                    y_pos = bg_h - new_char_h - bottom_margin
+                else:
+                    y_pos = (bg_h - new_char_h) // 2
                 x_pos = (bg_w - new_char_w) // 2
                 
                 # Optimize: Only convert background if needed
