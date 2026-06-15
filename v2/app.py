@@ -34,7 +34,7 @@ from utils.character_utils import (
     add_signature_image_overlay,
     generate_image_in_reference_style,
 )
-from utils.bg_remover import remove_background_with_freepik_api
+from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT
@@ -1289,7 +1289,7 @@ def serve_upload(filename):
 @require_api_key
 def remove_bg():
     """
-    Remove background from an image using Freepik API.
+    Remove background from an image using Freepik, remove.bg, or Gemini cloud fallback.
     ---
     tags:
       - Background Removal
@@ -1369,17 +1369,11 @@ def remove_bg():
             if not image_path:
                 return jsonify({"error": "Failed to download image from URL"}), 400
         
-        # Remove background using Freepik
-        result_path = remove_background_with_freepik_api(image_path)
-        
+        result_path, removal_method, error_summary = remove_background(image_path)
+
         if not result_path or not os.path.exists(result_path):
             cleanup_file(image_path)
-            # Check if it's an API key issue
-            freepik_key = os.getenv('FREEPIK_API_KEY')
-            if not freepik_key:
-                error_msg = "FREEPIK_API_KEY is not set in environment variables. Please add it to your .env file."
-            else:
-                error_msg = "Background removal failed. Please check server logs for details. Common issues: invalid API key, inaccessible image URL, or rate limiting."
+            error_msg = error_summary or "Background removal failed. Please check server logs for details."
             return jsonify({"error": error_msg}), 500
         
         # Generate output filename
@@ -1404,6 +1398,7 @@ def remove_bg():
             "message": "Background removed successfully",
             "output_filename": output_filename,
             "local_path": f"/outputs/{output_filename}",
+            "removal_method": removal_method,
             "metadata": {
                 "image_info": info,
             },
