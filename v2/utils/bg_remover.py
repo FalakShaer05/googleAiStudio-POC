@@ -1,293 +1,259 @@
 """
-Background removal utilities using Freepik API.
+Background removal utilities using cloud APIs (Freepik, remove.bg, Gemini).
 """
 import os
 import time
-from typing import Optional
+from typing import Optional, Tuple
 
 import requests
+from PIL import Image
+
 from .s3_utils import build_public_image_url
+
+
+def _bg_removed_output_path(image_path: str) -> str:
+    base, _ext = os.path.splitext(image_path)
+    return f"{base}_bg_removed.png"
+
+
+def _should_skip_freepik() -> bool:
+    return os.getenv("SKIP_FREEPIK", "").lower() in ("1", "true", "yes")
+
+
+def _is_placeholder_key(value: str) -> bool:
+    normalized = value.strip().lower()
+    return not normalized or normalized.startswith("your_") or normalized.endswith("_here")
+
+
+def _save_response_image(image_path: str, content: bytes) -> str:
+    output_path = _bg_removed_output_path(image_path)
+    with open(output_path, "wb") as output_file:
+        output_file.write(content)
+    return output_path
+
+
+def _save_pil_image(image_path: str, image: Image.Image) -> str:
+    output_path = _bg_removed_output_path(image_path)
+    image.convert("RGBA").save(output_path, "PNG")
+    return output_path
+
+
+def remove_background_with_gemini_api(image_path: str) -> Optional[str]:
+    """Remove background using Gemini image editing (no local model storage)."""
+    if _is_placeholder_key(os.getenv("GEMINI_API_KEY", "")):
+        print("❌ GEMINI_API_KEY not set — cannot use Gemini fallback")
+        return None
+
+    if not os.path.exists(image_path):
+        return None
+
+    try:
+        from .character_utils import (
+            _extract_final_image_from_response,
+            _generate_content_image,
+            get_gemini_client,
+            get_gemini_image_model,
+            select_gemini_aspect_ratio,
+        )
+
+        image = Image.open(image_path).convert("RGBA")
+        width, height = image.size
+        aspect_ratio = select_gemini_aspect_ratio(width, height)
+        prompt = (
+            "Remove the background from this image completely. "
+            "Output ONLY the main subject with a fully transparent background. "
+            "Do not add a new background, floor shadow, or extra objects. "
+            "Preserve the subject exactly as shown."
+        )
+
+        print("🔧 Requesting background removal from Gemini...")
+        started = time.perf_counter()
+        client = get_gemini_client()
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=[prompt, image],
+            aspect_ratio=aspect_ratio,
+        )
+        result = _extract_final_image_from_response(response)
+        if result is None:
+            print("❌ Gemini did not return an image")
+            return None
+
+        output_path = _save_pil_image(image_path, result)
+        print(f"✅ Gemini background removal successful in {time.perf_counter() - started:.2f}s")
+        return output_path
+    except Exception as e:
+        print(f"❌ Error in Gemini background removal: {e}")
+        return None
+
+
+def remove_background_with_removebg_api(image_path: str) -> Optional[str]:
+    """
+    Remove background using remove.bg API.
+    Documentation: https://www.remove.bg/api
+    """
+    api_key = os.getenv("REMOVE_BG_API_KEY", "").strip()
+    if _is_placeholder_key(api_key):
+        print("❌ REMOVE_BG_API_KEY not set — add a valid key from https://www.remove.bg/api")
+        return None
+
+    if not os.path.exists(image_path):
+        return None
+
+    headers = {"X-Api-Key": api_key}
+    started = time.perf_counter()
+
+    try:
+        print("🔧 Requesting background removal from remove.bg (file upload)...")
+        with open(image_path, "rb") as image_file:
+            response = requests.post(
+                "https://api.remove.bg/v1.0/removebg",
+                files={"image_file": (os.path.basename(image_path), image_file, "application/octet-stream")},
+                data={"size": "auto", "format": "png"},
+                headers=headers,
+                timeout=60,
+            )
+
+        if response.status_code == 200:
+            output_path = _save_response_image(image_path, response.content)
+            print(f"✅ remove.bg background removal successful in {time.perf_counter() - started:.2f}s")
+            return output_path
+
+        print(f"❌ remove.bg file upload failed: {response.status_code}")
+        try:
+            print(f"   Error: {response.json().get('errors', response.text)}")
+        except Exception:
+            print(f"   Response: {response.text}")
+
+        if response.status_code == 403:
+            return None
+
+        public_url = build_public_image_url(image_path)
+        if not public_url:
+            return None
+
+        print("🔧 Retrying remove.bg with public image URL...")
+        response = requests.post(
+            "https://api.remove.bg/v1.0/removebg",
+            data={"image_url": public_url, "size": "auto", "format": "png"},
+            headers=headers,
+            timeout=60,
+        )
+
+        if response.status_code == 200:
+            output_path = _save_response_image(image_path, response.content)
+            print(f"✅ remove.bg background removal successful in {time.perf_counter() - started:.2f}s")
+            return output_path
+
+        print(f"❌ remove.bg URL request failed: {response.status_code}")
+        try:
+            print(f"   Error: {response.json().get('errors', response.text)}")
+        except Exception:
+            print(f"   Response: {response.text}")
+        return None
+    except Exception as e:
+        print(f"❌ Error in remove.bg background removal: {e}")
+        return None
+
+
+def remove_background(image_path: str) -> Tuple[Optional[str], str, str]:
+    """
+    Remove background using cloud providers in order:
+      1. Freepik (unless SKIP_FREEPIK=true)
+      2. remove.bg (requires valid REMOVE_BG_API_KEY)
+      3. Gemini (uses GEMINI_API_KEY)
+
+    Returns:
+        (result_path, method, error_summary)
+    """
+    errors = []
+
+    if not _should_skip_freepik():
+        result = remove_background_with_freepik_api(image_path)
+        if result:
+            return result, "freepik", ""
+        errors.append("Freepik unavailable or out of credits")
+    else:
+        print("⚡ SKIP_FREEPIK enabled — skipping Freepik")
+
+    print("⚠️ Falling back to remove.bg...")
+    if _is_placeholder_key(os.getenv("REMOVE_BG_API_KEY", "")):
+        errors.append("REMOVE_BG_API_KEY is not configured")
+    else:
+        result = remove_background_with_removebg_api(image_path)
+        if result:
+            return result, "removebg", ""
+        errors.append("remove.bg rejected the request (check REMOVE_BG_API_KEY is valid)")
+
+    print("⚠️ Falling back to Gemini...")
+    result = remove_background_with_gemini_api(image_path)
+    if result:
+        return result, "gemini", ""
+
+    errors.append("Gemini fallback did not return an image")
+    return None, "none", "; ".join(errors)
 
 
 def remove_background_with_freepik_api(image_path: str) -> Optional[str]:
     """
     Remove background using Freepik API
     Documentation: https://docs.freepik.com/api-reference/remove-background/post-beta-remove-background
-    
-    Args:
-        image_path: Path to the input image
-        
-    Returns:
-        str: Path to the result image, or None if failed
     """
     try:
-        # Get Freepik API key from environment
-        freepik_api_key = os.getenv('FREEPIK_API_KEY')
-        if not freepik_api_key:
+        freepik_api_key = os.getenv("FREEPIK_API_KEY", "").strip()
+        if _is_placeholder_key(freepik_api_key):
             print("❌ FREEPIK_API_KEY not found in environment variables")
-            print("   Please add FREEPIK_API_KEY to your .env file")
-            print("   Get your API key at: https://www.freepik.com/developers/dashboard/api-key")
             return None
-        
-        if not freepik_api_key.strip():
-            print("❌ FREEPIK_API_KEY is empty")
-            print("   Please set a valid API key in your .env file")
-            return None
-        
-        # Check if file exists
+
         if not os.path.exists(image_path):
             return None
-        
-        # Freepik API requires a publicly accessible image URL
-        # Try to get a public URL (S3 upload if configured)
+
         public_url = build_public_image_url(image_path)
-        
         if not public_url:
             print("❌ Freepik API requires a publicly accessible image URL")
-            print("   Please configure S3 upload (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET, CLOUDFRONT_URL)")
-            print("   or use a different background removal service")
             return None
-        
+
         print(f"🌐 Using public image URL for Freepik: {public_url}")
-        
-        # Verify the URL is accessible before sending to Freepik
-        # CloudFront/S3 might need a moment to propagate, so we'll retry a few times
-        print(f"🔍 Verifying image URL is accessible...")
-        url_accessible = False
-        max_retries = 3
-        wait_time = 1  # Start with 1 second wait
-        
-        for attempt in range(max_retries):
-            try:
-                # Use HEAD request first (lighter), fall back to GET if needed
-                verify_response = requests.head(public_url, timeout=10, allow_redirects=True)
-                status_code = verify_response.status_code
-                
-                if status_code == 200:
-                    # Also verify content-type is an image
-                    content_type = verify_response.headers.get('Content-Type', '').lower()
-                    if 'image' in content_type:
-                        url_accessible = True
-                        print(f"✅ Image URL verified as accessible (Content-Type: {content_type})")
-                        break
-                    else:
-                        print(f"⚠️ URL accessible but Content-Type is not an image: {content_type}")
-                        # Try GET request to verify it's actually an image
-                        get_response = requests.get(public_url, timeout=10, stream=True)
-                        if get_response.status_code == 200:
-                            # Check if response looks like an image by checking first bytes
-                            content = get_response.raw.read(4)
-                            get_response.close()
-                            # Check for common image magic bytes
-                            if content.startswith(b'\xff\xd8') or content.startswith(b'\x89PNG') or content.startswith(b'GIF8'):
-                                url_accessible = True
-                                print(f"✅ Image URL verified as accessible (detected image format)")
-                                break
-                elif status_code == 403:
-                    print(f"⚠️ URL returned 403 Forbidden (attempt {attempt + 1}/{max_retries})")
-                    print(f"   This might indicate S3 bucket permissions or CloudFront access restrictions")
-                elif status_code == 404:
-                    print(f"⚠️ URL returned 404 Not Found (attempt {attempt + 1}/{max_retries})")
-                    print(f"   File might not be uploaded yet or path is incorrect")
-                else:
-                    print(f"⚠️ URL returned status {status_code} (attempt {attempt + 1}/{max_retries})")
-                
-                if attempt < max_retries - 1:
-                    print(f"⏳ Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    wait_time *= 2  # Exponential backoff: 1s, 2s, 4s
-                    
-            except requests.exceptions.RequestException as e:
-                print(f"⚠️ Error verifying URL (attempt {attempt + 1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    print(f"⏳ Waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    wait_time *= 2
-        
-        if not url_accessible:
-            print(f"❌ Image URL is not accessible or not a valid image")
-            print(f"   URL: {public_url}")
-            print(f"   Please verify:")
-            print(f"   1. The S3 bucket allows public reads (or CloudFront is properly configured)")
-            print(f"   2. The CloudFront distribution is active and serving content")
-            print(f"   3. The URL is accessible from external networks")
-            print(f"   4. The file was successfully uploaded to S3")
-            return None
-        
-        # Additional verification: Try to actually download a small portion to ensure it works
-        # This simulates what Freepik will do
-        try:
-            print(f"🔍 Performing final verification by downloading image header...")
-            test_response = requests.get(public_url, timeout=10, stream=True, headers={
-                'User-Agent': 'Mozilla/5.0 (compatible; FreepikBot/1.0)'
-            })
-            if test_response.status_code != 200:
-                print(f"❌ Final verification failed: HTTP {test_response.status_code}")
-                return None
-            # Read first few bytes to verify it's an image
-            first_bytes = test_response.raw.read(10)
-            test_response.close()
-            if not (first_bytes.startswith(b'\xff\xd8') or first_bytes.startswith(b'\x89PNG') or 
-                    first_bytes.startswith(b'GIF8') or first_bytes.startswith(b'RIFF')):
-                print(f"❌ Final verification failed: File does not appear to be a valid image")
-                return None
-            print(f"✅ Final verification passed: Image is downloadable and valid")
-        except Exception as e:
-            print(f"⚠️ Final verification error (but continuing): {e}")
-        
-        # Freepik API endpoint
+
         api_url = "https://api.freepik.com/v1/ai/beta/remove-background"
-        
-        # Prepare headers
         headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'x-freepik-api-key': freepik_api_key
+            "Content-Type": "application/x-www-form-urlencoded",
+            "x-freepik-api-key": freepik_api_key,
         }
-        
-        # Prepare form data
-        data = {
-            'image_url': public_url
-        }
-        
-        print(f"🔧 Requesting background removal from Freepik...")
-        response = requests.post(api_url, headers=headers, data=data, timeout=60)
-        
+
+        print("🔧 Requesting background removal from Freepik...")
+        response = requests.post(
+            api_url,
+            headers=headers,
+            data={"image_url": public_url},
+            timeout=30,
+        )
+
         if response.status_code != 200:
             print(f"❌ Freepik API request failed: {response.status_code}")
             try:
                 error_data = response.json()
-                error_message = error_data.get('message', response.text)
-                print(f"   Error: {error_message}")
-                
-                # Provide specific guidance for common errors
-                if response.status_code == 401:
-                    print(f"   ⚠️ Invalid API key. Please check your FREEPIK_API_KEY in .env file")
-                    print(f"   Get your API key at: https://www.freepik.com/developers/dashboard/api-key")
-                elif response.status_code == 400:
-                    print(f"   ⚠️ Bad request. Check if the image URL is accessible and valid")
-                elif response.status_code == 429:
-                    print(f"   ⚠️ Rate limit exceeded. Please try again later")
-            except:
+                print(f"   Error: {error_data.get('message', response.text)}")
+            except Exception:
                 print(f"   Response: {response.text}")
             return None
-        
+
         result = response.json()
-        
-        # Get the high resolution URL (or fall back to url field)
-        output_url = result.get('high_resolution') or result.get('url')
-        
+        output_url = result.get("high_resolution") or result.get("url")
         if not output_url:
-            print(f"❌ No output URL in Freepik response")
-            print(f"   Response: {result}")
+            print("❌ No output URL in Freepik response")
             return None
-        
-        print(f"📥 Freepik result URL: {output_url}")
-        print(f"✅ Downloading result from Freepik...")
-        
-        # Download the result (URLs are valid for 5 minutes)
-        output_response = requests.get(output_url, timeout=60)
-        
+
+        output_response = requests.get(output_url, timeout=30)
         if output_response.status_code == 200:
-            # Save the result to a temporary file
-            temp_path = image_path.replace('.', '_bg_removed.')
-            with open(temp_path, 'wb') as result_file:
-                result_file.write(output_response.content)
-            
-            print(f"✅ Freepik background removal successful")
-            return temp_path
-        else:
-            print(f"❌ Failed to download result: {output_response.status_code}")
-            return None
-            
+            output_path = _save_response_image(image_path, output_response.content)
+            print("✅ Freepik background removal successful")
+            return output_path
+
+        print(f"❌ Failed to download Freepik result: {output_response.status_code}")
+        return None
+
     except Exception as e:
         print(f"❌ Error in Freepik background removal: {e}")
-        import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
         return None
-
-
-def remove_background_with_rembg(image_path: str) -> Optional[str]:
-    """
-    Remove background using rembg (ONNX models). Fallback when Freepik API fails.
-
-    Model order defaults to smallest-first (u2net → isnet-general-use →
-    birefnet-general) so constrained hosts (e.g. 2GB ECS) avoid downloading
-    ~1GB weights and OOM at load/inference. Override with REMBG_MODEL_ORDER,
-    e.g. ``birefnet-general,isnet-general-use,u2net`` for quality-first.
-
-    Args:
-        image_path: Path to the input image
-
-    Returns:
-        str: Path to the result image, or None if failed
-    """
-    try:
-        if not os.path.exists(image_path):
-            return None
-
-        # Numba (pymatting/rembg) defaults to caching under site-packages; non-root
-        # users in Docker/ECS cannot write there. Use a writable tmp dir.
-        os.environ.setdefault("NUMBA_CACHE_DIR", "/tmp/numba-cache")
-
-        # rembg uses Pooch to download ONNX weights under $HOME/.u2net; system users
-        # often have no usable home directory in slim images.
-        _home = os.environ.get("HOME", "")
-        if not _home or not os.path.isdir(_home) or not os.access(_home, os.W_OK):
-            os.environ["HOME"] = "/app"
-
-        from PIL import Image
-        from rembg import remove
-        from rembg.session_factory import new_session
-
-        default_order = "u2net,isnet-general-use,birefnet-general"
-        raw = (os.getenv("REMBG_MODEL_ORDER") or default_order).strip()
-        candidates = [x.strip() for x in raw.split(",") if x.strip()]
-        if not candidates:
-            candidates = ["u2net"]
-
-        session = None
-        model_name: Optional[str] = None
-        for name in candidates:
-            try:
-                session = new_session(name)
-                model_name = name
-                break
-            except ValueError:
-                continue
-
-        if session is None:
-            print(f"❌ rembg: could not load any of models {candidates!r}")
-            return None
-
-        input_img = Image.open(image_path)
-        output_img = remove(input_img, session=session)
-
-        temp_path = image_path.replace('.', '_bg_removed.')
-        output_img.save(temp_path)
-        print(f"✅ rembg background removal successful (model: {model_name})")
-        return temp_path
-
-    except Exception as e:
-        print(f"❌ Error in rembg fallback: {e}")
-        import traceback
-        print(f"   Traceback: {traceback.format_exc()}")
-        return None
-
-
-def remove_background(image_path: str) -> Optional[str]:
-    """
-    Remove background: try Freepik API first, fall back to rembg on failure.
-
-    Args:
-        image_path: Path to the input image
-
-    Returns:
-        str: Path to the result image, or None if both services failed
-    """
-    result = remove_background_with_freepik_api(image_path)
-    if result:
-        return result
-
-    print("⚠️ Freepik failed, falling back to rembg...")
-    return remove_background_with_rembg(image_path)
-

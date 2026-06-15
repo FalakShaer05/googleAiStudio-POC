@@ -1289,7 +1289,7 @@ def serve_upload(filename):
 @require_api_key
 def remove_bg():
     """
-    Remove background from an image using Freepik API.
+    Remove background from an image using Freepik, remove.bg, or Gemini cloud fallback.
     ---
     tags:
       - Background Removal
@@ -1369,16 +1369,11 @@ def remove_bg():
             if not image_path:
                 return jsonify({"error": "Failed to download image from URL"}), 400
         
-        # Remove background (Freepik first, rembg fallback on failure)
-        result_path = remove_background(image_path)
-        
+        result_path, removal_method, error_summary = remove_background(image_path)
+
         if not result_path or not os.path.exists(result_path):
             cleanup_file(image_path)
-            freepik_key = os.getenv('FREEPIK_API_KEY')
-            if not freepik_key:
-                error_msg = "FREEPIK_API_KEY is not set in environment variables. Please add it to your .env file."
-            else:
-                error_msg = "Background removal failed. Both Freepik API and rembg fallback were attempted. Check server logs for details."
+            error_msg = error_summary or "Background removal failed. Please check server logs for details."
             return jsonify({"error": error_msg}), 500
         
         # Generate output filename
@@ -1403,6 +1398,7 @@ def remove_bg():
             "message": "Background removed successfully",
             "output_filename": output_filename,
             "local_path": f"/outputs/{output_filename}",
+            "removal_method": removal_method,
             "metadata": {
                 "image_info": info,
             },
