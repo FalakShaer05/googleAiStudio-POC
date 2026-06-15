@@ -9,6 +9,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FLASK_APP=app.py \
     FLASK_ENV=production
+    SKIP_FREEPIK = false
+    REMOVE_BG_API_KEY=54357169-6764-4771-b21f-a0579307c790
 
 # Install minimal system dependencies (only what's absolutely needed)
 RUN apt-get update && apt-get install -y \
