@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
     HOME=/app \
     REMBG_MODEL_ORDER=u2net,isnet-general-use,birefnet-general
-    SKIP_FREEPIK = false
+    SKIP_FREEPIK=false
     REMOVE_BG_API_KEY=54357169-6764-4771-b21f-a0579307c790
 
 # Install minimal system dependencies (only what's absolutely needed)
