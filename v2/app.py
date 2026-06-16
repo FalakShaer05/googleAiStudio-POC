@@ -92,10 +92,12 @@ def _parse_fifa_player_form() -> Tuple[dict, bool, dict]:
 
     is_ai_stats = _parse_bool_form_value(request.form.get("is_ai_stats", "true"), default=True)
 
+    position = request.form.get("position", "").strip().upper()
     stats = {}
+    if position:
+        stats["position"] = position
     if not is_ai_stats:
-        stats = {
-            "position": request.form.get("position", "").strip(),
+        stats.update({
             "rating": request.form.get("rating", "").strip(),
             "pace": request.form.get("pace", "").strip(),
             "shooting": request.form.get("shooting", "").strip(),
@@ -103,7 +105,7 @@ def _parse_fifa_player_form() -> Tuple[dict, bool, dict]:
             "dribbling": request.form.get("dribbling", "").strip(),
             "defending": request.form.get("defending", "").strip(),
             "physical": request.form.get("physical", "").strip(),
-        }
+        })
         stats = {key: value for key, value in stats.items() if value}
 
     return profile, is_ai_stats, stats

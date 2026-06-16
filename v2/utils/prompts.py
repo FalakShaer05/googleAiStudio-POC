@@ -73,13 +73,33 @@ FIFA_TEMPLATE_STRICT_RULES = """FINAL TEMPLATE CHECKLIST:
 - Treat the template as a fixed master artwork — swap in the user photo and player text only.
 - If unsure, prefer an exact copy of the template over any creative interpretation."""
 
-FIFA_POSITIONS = [
-    "GOALKEEPER",
-    "DEFENDER",
-    "MIDFIELDER",
-    "STRIKER",
-    "WINGER",
-]
+FIFA_POSITIONS = {
+    "GK": "Goalkeeper",
+    "RB": "Right Back",
+    "LB": "Left Back",
+    "CB": "Center Back",
+    "RWB": "Right Wing Back",
+    "LWB": "Left Wing Back",
+    "CDM": "Central Defensive Midfielder",
+    "CM": "Central Midfielder",
+    "CAM": "Central Attacking Midfielder",
+    "RM": "Right Midfielder",
+    "LM": "Left Midfielder",
+    "RW": "Right Winger",
+    "LW": "Left Winger",
+    "CF": "Center Forward",
+    "ST": "Striker",
+}
+
+
+def format_fifa_position(position_code: str) -> str:
+    code = (position_code or "").strip().upper()
+    if not code:
+        return ""
+    label = FIFA_POSITIONS.get(code)
+    if label:
+        return f"{code} — {label}"
+    return code
 
 FIFA_TEAMS = [
     "Argentina",
@@ -142,15 +162,22 @@ def build_fifa_card_context(
         lines.append("PLAYER PROFILE (fill into the template's existing name/info slots only — do not change card design):")
         lines.extend(f"- {part}" for part in profile_parts)
 
+    position_code = (stats.get("position") or "").strip().upper()
+    if position_code:
+        position_text = format_fifa_position(position_code)
+        lines.append(
+            f"PLAYER POSITION: {position_text}. "
+            f'Render the position abbreviation "{position_code}" exactly on the trading card in the template\'s position slot. '
+            "Pose and kit presentation should match this role naturally."
+        )
+
     if is_ai_stats:
         lines.append(
-            "PLAYER STATS: Use AI-generated FIFA-style stats that fit the player's appearance. "
-            "Render position, overall rating, and attributes (PAC, SHO, PAS, DRI, DEF, PHY) in the template's existing stat areas only."
+            "PLAYER STATS: Use AI-generated FIFA-style stats that fit the player's appearance and position. "
+            "Render overall rating and attributes (PAC, SHO, PAS, DRI, DEF, PHY) in the template's existing stat areas only."
         )
     else:
         stat_lines = []
-        if stats.get("position"):
-            stat_lines.append(f"Position: {stats['position']}")
         if stats.get("rating"):
             stat_lines.append(f"Overall Rating: {stats['rating']}")
         for key, label in [
