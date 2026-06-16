@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from flasgger import Swagger, swag_from
 from flask_cors import CORS
+from typing import Tuple
 
 # Load environment variables from .env file
 # Try to load from parent directory (root) first, then current directory
@@ -33,6 +34,7 @@ from utils.character_utils import (
     generate_character_composited_with_background,
     add_signature_image_overlay,
     generate_image_in_reference_style,
+    generate_fifa_worldcup_card,
 )
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -63,6 +65,49 @@ ALLOWED_LOGO_POSITIONS = {
     "bottom_center",
     "bottom_right",
 }
+
+
+def _parse_bool_form_value(value: str, default: bool = False) -> bool:
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "on", "yes"}:
+        return True
+    if normalized in {"0", "false", "off", "no"}:
+        return False
+    return default
+
+
+def _parse_fifa_player_form() -> Tuple[dict, bool, dict]:
+    profile = {
+        "club_team": request.form.get("club_team", "").strip(),
+        "first_name": request.form.get("first_name", "").strip(),
+        "last_name": request.form.get("last_name", "").strip(),
+        "jersey_number": request.form.get("jersey_number", "").strip(),
+        "age": request.form.get("age", "").strip(),
+        "height_cm": request.form.get("height_cm", "").strip(),
+        "weight_kg": request.form.get("weight_kg", "").strip(),
+    }
+    profile = {key: value for key, value in profile.items() if value}
+
+    is_ai_stats = _parse_bool_form_value(request.form.get("is_ai_stats", "true"), default=True)
+
+    stats = {}
+    if not is_ai_stats:
+        stats = {
+            "position": request.form.get("position", "").strip(),
+            "rating": request.form.get("rating", "").strip(),
+            "pace": request.form.get("pace", "").strip(),
+            "shooting": request.form.get("shooting", "").strip(),
+            "passing": request.form.get("passing", "").strip(),
+            "dribbling": request.form.get("dribbling", "").strip(),
+            "defending": request.form.get("defending", "").strip(),
+            "physical": request.form.get("physical", "").strip(),
+        }
+        stats = {key: value for key, value in stats.items() if value}
+
+    return profile, is_ai_stats, stats
+
 
 # Swagger configuration
 swagger_config = {
@@ -484,6 +529,11 @@ def generate_reference_style_web():
         if background_file and background_url:
             return jsonify({"error": "Provide either background file or background_url, not both"}), 400
 
+        jersey_file = request.files.get("jersey")
+        jersey_url = request.form.get("jersey_url", "").strip()
+        if jersey_file and jersey_url:
+            return jsonify({"error": "Provide either jersey file or jersey_url, not both"}), 400
+
         temperature_raw = request.form.get("temperature", "").strip()
         temperature = None
         if temperature_raw:
@@ -522,6 +572,24 @@ def generate_reference_style_web():
                 cleanup_file(ref_path)
                 return jsonify({"error": "Failed to download background from URL"}), 400
 
+        jersey_path = None
+        if jersey_file and jersey_file.filename:
+            if not allowed_file(jersey_file.filename):
+                cleanup_file(src_path)
+                cleanup_file(ref_path)
+                cleanup_file(background_path)
+                return jsonify({"error": "Invalid jersey file type"}), 400
+            jersey_filename = generate_unique_filename(jersey_file.filename, "ref_jersey")
+            jersey_path = os.path.join(UPLOAD_FOLDER, jersey_filename)
+            jersey_file.save(jersey_path)
+        elif jersey_url:
+            jersey_path = download_image_from_url(jersey_url, UPLOAD_FOLDER)
+            if not jersey_path:
+                cleanup_file(src_path)
+                cleanup_file(ref_path)
+                cleanup_file(background_path)
+                return jsonify({"error": "Failed to download jersey from URL"}), 400
+
         out_filename = generate_unique_filename(f"reference_style_{src_filename}.png", "output")
         out_path = os.path.join(OUTPUT_FOLDER, out_filename)
 
@@ -529,6 +597,7 @@ def generate_reference_style_web():
             reference_path=ref_path,
             source_path=src_path,
             background_path=background_path,
+            jersey_path=jersey_path,
             output_path=out_path,
             temperature=temperature,
             user_prompt=reference_prompt or None,
@@ -538,6 +607,7 @@ def generate_reference_style_web():
         cleanup_file(src_path)
         cleanup_file(ref_path)
         cleanup_file(background_path)
+        cleanup_file(jersey_path)
 
         if not success:
             return jsonify({"success": False, "error": message}), 500
@@ -555,6 +625,107 @@ def generate_reference_style_web():
     except Exception as e:
         import traceback
         print("Error in generate-reference-style-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/generate-fifa-worldcup-web", methods=["POST"])
+def generate_fifa_worldcup_web():
+    """
+    FIFA World Cup 2026 trading card generation.
+    Image 1 = user photo, Image 2 = optional jersey, Image 3 = trading card template.
+    """
+    try:
+        user_photo_file = request.files.get("source")
+        if not user_photo_file or not user_photo_file.filename:
+            return jsonify({"error": "User photo is required"}), 400
+        if not allowed_file(user_photo_file.filename):
+            return jsonify({"error": "Invalid user photo file type"}), 400
+
+        template_file = request.files.get("template")
+        if not template_file or not template_file.filename:
+            return jsonify({"error": "Trading card template is required"}), 400
+        if not allowed_file(template_file.filename):
+            return jsonify({"error": "Invalid template file type"}), 400
+
+        jersey_file = request.files.get("jersey")
+        jersey_url = request.form.get("jersey_url", "").strip()
+        if jersey_file and jersey_url:
+            return jsonify({"error": "Provide either jersey file or jersey_url, not both"}), 400
+
+        temperature_raw = request.form.get("temperature", "").strip()
+        temperature = None
+        if temperature_raw:
+            parsed_temperature = max(0.0, min(2.0, float(temperature_raw)))
+            if parsed_temperature > 0:
+                temperature = parsed_temperature
+
+        fifa_prompt = request.form.get("fifa_prompt", "").strip()
+        player_profile, is_ai_stats, player_stats = _parse_fifa_player_form()
+        logo_position = request.form.get("logo_position", "top_right").strip().lower() or "top_right"
+        if logo_position not in ALLOWED_LOGO_POSITIONS:
+            return jsonify({"error": f"Invalid logo_position '{logo_position}'"}), 400
+
+        photo_filename = generate_unique_filename(user_photo_file.filename, "fifa_photo")
+        photo_path = os.path.join(UPLOAD_FOLDER, photo_filename)
+        user_photo_file.save(photo_path)
+
+        template_filename = generate_unique_filename(template_file.filename, "fifa_template")
+        template_path = os.path.join(UPLOAD_FOLDER, template_filename)
+        template_file.save(template_path)
+
+        jersey_path = None
+        if jersey_file and jersey_file.filename:
+            if not allowed_file(jersey_file.filename):
+                cleanup_file(photo_path)
+                cleanup_file(template_path)
+                return jsonify({"error": "Invalid jersey file type"}), 400
+            jersey_filename = generate_unique_filename(jersey_file.filename, "fifa_jersey")
+            jersey_path = os.path.join(UPLOAD_FOLDER, jersey_filename)
+            jersey_file.save(jersey_path)
+        elif jersey_url:
+            jersey_path = download_image_from_url(jersey_url, UPLOAD_FOLDER)
+            if not jersey_path:
+                cleanup_file(photo_path)
+                cleanup_file(template_path)
+                return jsonify({"error": "Failed to download jersey from URL"}), 400
+
+        out_filename = generate_unique_filename(f"fifa_worldcup_{photo_filename}.png", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = generate_fifa_worldcup_card(
+            user_photo_path=photo_path,
+            template_path=template_path,
+            jersey_path=jersey_path,
+            output_path=out_path,
+            temperature=temperature,
+            user_prompt=fifa_prompt or None,
+            logo_position=logo_position,
+            player_profile=player_profile or None,
+            is_ai_stats=is_ai_stats,
+            player_stats=player_stats or None,
+        )
+
+        cleanup_file(photo_path)
+        cleanup_file(template_path)
+        cleanup_file(jersey_path)
+
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        cloudfront_url = upload_image_to_s3(out_path)
+        response_data = {
+            "success": True,
+            "message": "FIFA World Cup trading card generated successfully",
+            "output_filename": out_filename,
+            "local_path": f"/outputs/{out_filename}",
+        }
+        if cloudfront_url:
+            response_data["image_url"] = cloudfront_url
+        return jsonify(response_data)
+    except Exception as e:
+        import traceback
+        print("Error in generate-fifa-worldcup-web:", e)
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
@@ -1176,6 +1347,16 @@ def api_generate_reference_style():
         required: true
         description: Reference style image
       - in: formData
+        name: jersey
+        type: file
+        required: false
+        description: Optional official team jersey reference (Image 2 when provided)
+      - in: formData
+        name: jersey_url
+        type: string
+        required: false
+        description: Optional URL for official team jersey image
+      - in: formData
         name: temperature
         type: number
         required: false
@@ -1202,6 +1383,137 @@ def api_generate_reference_style():
         description: Server error
     """
     return generate_reference_style_web()
+
+
+@app.route("/api/generate-fifa-worldcup", methods=["POST"])
+@require_api_key
+def api_generate_fifa_worldcup():
+    """
+    Generate a FIFA World Cup 2026 trading card.
+    ---
+    tags:
+      - Character Generation
+    security:
+      - ApiKeyAuth: []
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: source
+        type: file
+        required: true
+        description: User photo (identity reference, Image 1)
+      - in: formData
+        name: template
+        type: file
+        required: true
+        description: FIFA World Cup 2026 trading card template (Image 3)
+      - in: formData
+        name: jersey
+        type: file
+        required: false
+        description: Official team jersey reference (Image 2)
+      - in: formData
+        name: jersey_url
+        type: string
+        required: false
+        description: Optional URL for official team jersey image (Image 2)
+      - in: formData
+        name: temperature
+        type: number
+        required: false
+        default: 1.0
+        description: Generation strength (0 to 2)
+      - in: formData
+        name: fifa_prompt
+        type: string
+        required: false
+        description: Optional custom prompt override
+      - in: formData
+        name: is_ai_stats
+        type: string
+        required: false
+        default: "true"
+        description: When true, AI generates stats. When false, use manual stat fields.
+      - in: formData
+        name: club_team
+        type: string
+        required: false
+        description: Player club or national team
+      - in: formData
+        name: first_name
+        type: string
+        required: false
+      - in: formData
+        name: last_name
+        type: string
+        required: false
+      - in: formData
+        name: jersey_number
+        type: string
+        required: false
+      - in: formData
+        name: age
+        type: string
+        required: false
+      - in: formData
+        name: height_cm
+        type: string
+        required: false
+      - in: formData
+        name: weight_kg
+        type: string
+        required: false
+      - in: formData
+        name: position
+        type: string
+        required: false
+        description: Manual position when is_ai_stats is false
+      - in: formData
+        name: rating
+        type: string
+        required: false
+        description: Manual overall rating when is_ai_stats is false
+      - in: formData
+        name: pace
+        type: string
+        required: false
+      - in: formData
+        name: shooting
+        type: string
+        required: false
+      - in: formData
+        name: passing
+        type: string
+        required: false
+      - in: formData
+        name: dribbling
+        type: string
+        required: false
+      - in: formData
+        name: defending
+        type: string
+        required: false
+      - in: formData
+        name: physical
+        type: string
+        required: false
+      - in: header
+        name: X-API-Key
+        type: string
+        required: true
+        description: API key for authentication
+    responses:
+      200:
+        description: FIFA World Cup card generated successfully
+      400:
+        description: Bad request (missing parameters or invalid input)
+      401:
+        description: Unauthorized (missing or invalid API key)
+      500:
+        description: Server error
+    """
+    return generate_fifa_worldcup_web()
 
 
 @app.route("/download/<filename>")

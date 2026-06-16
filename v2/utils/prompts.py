@@ -1,6 +1,7 @@
 """
 Character generation prompt constants for different hobbies and activities.
 """
+from typing import Optional
 
 # Hobby-based character prompts
 HOBBY_PROMPTS = {
@@ -38,4 +39,133 @@ STRICT RULES:
 ✅ Do NOT add any extra objects, equipment, or elements.
 ✅ Each character keeps ONLY what they had in their original image.
 ✅ Only adjust positioning and size slightly to blend them naturally."""
+
+FIFA_WORLD_CUP_PROMPT = """IMAGE 1 = User Photo (identity reference only)
+IMAGE 2 = Official Team Jersey Reference (optional — only if a jersey image was provided)
+IMAGE 3 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)
+
+CRITICAL — TEMPLATE FIDELITY (100% REQUIRED):
+Image 3 is the trading card template. Your output MUST reproduce Image 3 at 100% accuracy.
+Copy EXACTLY from Image 3:
+- Card dimensions, aspect ratio, and outer frame
+- Background colors, gradients, patterns, and textures
+- Border style, corner shapes, foil/holographic effects, and shadows
+- Logo placement, crest positions, sponsor areas, flags, and badges
+- Typography style, font weight, label positions, stat bars, and number styling
+- All decorative elements, icons, dividers, and graphic ornaments
+- Overall layout grid — every design element stays in the same place
+
+DO NOT invent a new card design. DO NOT simplify, modernize, crop, or restyle the template.
+DO NOT change the color palette, frame shape, borders, or composition of Image 3.
+Only replace: (1) the player portrait/photo area with the person from Image 1, and (2) text/stat values with the player profile and stats provided below — inside the existing text slots only.
+
+IDENTITY (Image 1):
+Preserve exact face, identity, skin tone, hair, and likeness from Image 1 when placing the player into the template's portrait slot.
+
+JERSEY (Image 2, if provided):
+Dress the person in the exact official team jersey from Image 2 — match colors, crest, sponsor marks, and kit details precisely.
+
+OUTPUT:
+A single finished trading card image that is visually identical to Image 3, with only the player photo and player data updated in their correct slots."""
+
+FIFA_TEMPLATE_STRICT_RULES = """FINAL TEMPLATE CHECKLIST:
+- The output card must be pixel-faithful to the template reference image in style, layout, and design.
+- Treat the template as a fixed master artwork — swap in the user photo and player text only.
+- If unsure, prefer an exact copy of the template over any creative interpretation."""
+
+FIFA_POSITIONS = [
+    "GOALKEEPER",
+    "DEFENDER",
+    "MIDFIELDER",
+    "STRIKER",
+    "WINGER",
+]
+
+FIFA_TEAMS = [
+    "Argentina",
+    "Australia",
+    "Brazil",
+    "Canada",
+    "Colombia",
+    "Ecuador",
+    "France",
+    "Germany",
+    "Japan",
+    "Mexico",
+    "Morocco",
+    "Netherlands",
+    "New Zealand",
+    "Paraguay",
+    "Portugal",
+    "Qatar",
+    "Saudi Arabia",
+    "Senegal",
+    "South Africa",
+    "South Korea",
+    "Spain",
+    "Switzerland",
+    "Tunisia",
+    "United States",
+    "Uruguay",
+]
+
+
+def build_fifa_card_context(
+    profile: Optional[dict] = None,
+    is_ai_stats: bool = True,
+    stats: Optional[dict] = None,
+) -> str:
+    """Build prompt text for player profile and stats to render on the trading card."""
+    profile = profile or {}
+    stats = stats or {}
+    lines = []
+
+    profile_parts = []
+    if profile.get("club_team"):
+        profile_parts.append(f"Club/Team: {profile['club_team']}")
+    if profile.get("first_name") or profile.get("last_name"):
+        full_name = " ".join(
+            part for part in [profile.get("first_name", "").strip(), profile.get("last_name", "").strip()] if part
+        )
+        if full_name:
+            profile_parts.append(f"Name: {full_name}")
+    if profile.get("jersey_number"):
+        profile_parts.append(f"Jersey #: {profile['jersey_number']}")
+    if profile.get("age"):
+        profile_parts.append(f"Age: {profile['age']}")
+    if profile.get("height_cm"):
+        profile_parts.append(f"Height: {profile['height_cm']} cm")
+    if profile.get("weight_kg"):
+        profile_parts.append(f"Weight: {profile['weight_kg']} kg")
+
+    if profile_parts:
+        lines.append("PLAYER PROFILE (fill into the template's existing name/info slots only — do not change card design):")
+        lines.extend(f"- {part}" for part in profile_parts)
+
+    if is_ai_stats:
+        lines.append(
+            "PLAYER STATS: Use AI-generated FIFA-style stats that fit the player's appearance. "
+            "Render position, overall rating, and attributes (PAC, SHO, PAS, DRI, DEF, PHY) in the template's existing stat areas only."
+        )
+    else:
+        stat_lines = []
+        if stats.get("position"):
+            stat_lines.append(f"Position: {stats['position']}")
+        if stats.get("rating"):
+            stat_lines.append(f"Overall Rating: {stats['rating']}")
+        for key, label in [
+            ("pace", "PAC"),
+            ("shooting", "SHO"),
+            ("passing", "PAS"),
+            ("dribbling", "DRI"),
+            ("defending", "DEF"),
+            ("physical", "PHY"),
+        ]:
+            if stats.get(key) is not None and str(stats.get(key)).strip() != "":
+                stat_lines.append(f"{label}: {stats[key]}")
+        if stat_lines:
+            lines.append("PLAYER STATS (use these exact values in the template's existing stat slots only):")
+            lines.extend(f"- {part}" for part in stat_lines)
+
+    return "\n".join(lines)
 

@@ -230,6 +230,67 @@
       padding: 0.75rem;
       margin-bottom: 0.75rem;
     }
+    .fifa-section-card {
+      background: #f8f9ff;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+    .fifa-section-title {
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin-bottom: 1rem;
+    }
+    .fifa-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      background: #fff;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+    }
+    .fifa-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+    @media (max-width: 768px) {
+      .fifa-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    .fifa-stat-item label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.35rem;
+      text-transform: uppercase;
+    }
+    .fifa-stat-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .fifa-stat-controls button {
+      width: 34px;
+      height: 34px;
+      border: 2px solid #667eea;
+      background: #fff;
+      color: #667eea;
+      border-radius: 8px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .fifa-stat-controls input {
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -245,6 +306,9 @@
         </button>
         <button class="nav-tab" id="referenceTab" onclick="switchTab('reference')">
           <i class="fas fa-palette me-2"></i>Reference
+        </button>
+        <button class="nav-tab" id="fifaWorldcupTab" onclick="switchTab('fifaWorldcup')">
+          <i class="fas fa-futbol me-2"></i>FIFA World Cup
         </button>
       </div>
     </div>
@@ -736,11 +800,43 @@
           </div>
         </div>
 
-        <!-- Reference Image (Image 2 / style source) -->
-        <div class="mb-4 p-3" style="background: #f8f9ff; border-radius: 12px; border: 2px solid #e9ecef;">
-          <h5 class="mb-3"><i class="fas fa-image me-2"></i>Reference Picture (style source, Image 2)</h5>
+        <!-- Optional Jersey (Image 2) -->
+        <div class="mb-4">
+          <h5 class="mb-3"><i class="fas fa-shirt me-2"></i>Jersey (optional, Image 2)</h5>
           <p class="text-muted small mb-3">
-            This image defines the visual style only (colors, brushwork, medium, mood). It is Image 2 in your prompt.
+            Optionally provide an official team jersey reference. When provided, it is sent as Image 2 between the user photo and style reference.
+          </p>
+          <div class="upload-area" onclick="document.getElementById('referenceJerseyInput').click()">
+            <div class="upload-icon"><i class="fas fa-shirt"></i></div>
+            <h5 class="mb-1">Click to choose jersey image</h5>
+            <p class="text-muted mb-0">Optional team jersey reference</p>
+            <input type="file" id="referenceJerseyInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="referenceJerseyFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="referenceJerseyFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearReferenceJerseyBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or jersey URL:</label>
+            <input
+              type="url"
+              id="referenceJerseyUrl"
+              class="form-control form-control-sm"
+              placeholder="https://example.com/jersey.jpg"
+            />
+          </div>
+        </div>
+
+        <!-- Reference Image (style source) -->
+        <div class="mb-4 p-3" style="background: #f8f9ff; border-radius: 12px; border: 2px solid #e9ecef;">
+          <h5 class="mb-3"><i class="fas fa-image me-2"></i>Reference Picture (style source)</h5>
+          <p class="text-muted small mb-3">
+            This image defines the visual style only (colors, brushwork, medium, mood). It follows the jersey image when one is provided.
           </p>
           <div class="upload-area" onclick="document.getElementById('referenceImageInput').click()">
             <div class="upload-icon"><i class="fas fa-palette"></i></div>
@@ -759,9 +855,9 @@
           </div>
         </div>
 
-        <!-- Optional Background (Image 3) -->
+        <!-- Optional Background -->
         <div class="mb-4">
-          <h5 class="mb-3"><i class="fas fa-mountain me-2"></i>Background (optional, Image 3)</h5>
+          <h5 class="mb-3"><i class="fas fa-mountain me-2"></i>Background (optional)</h5>
           <p class="text-muted small mb-3">
             Optionally provide a background to place the styled subject onto. Leave empty to let Gemini decide the background.
           </p>
@@ -863,6 +959,302 @@
     </div>
   </div>
 
+  <!-- FIFA World Cup Section -->
+  <div class="container">
+    <div class="main-container content-section" id="fifaWorldcupSection">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-futbol me-2"></i>FIFA World Cup 2026
+        </h1>
+        <p class="mb-0">
+          Generate a FIFA World Cup 2026 trading card with 100% exact template matching — only the player photo and stats are personalized.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <div class="mb-4">
+          <h5 class="mb-3"><i class="fas fa-user me-2"></i>User Photo (Image 1)</h5>
+          <p class="text-muted small mb-3">Identity reference — face and likeness are preserved from this image.</p>
+          <div class="upload-area" onclick="document.getElementById('fifaUserPhotoInput').click()">
+            <div class="upload-icon"><i class="fas fa-user"></i></div>
+            <h5 class="mb-1">Click to choose user photo</h5>
+            <p class="text-muted mb-0">Clear face photo works best</p>
+            <input type="file" id="fifaUserPhotoInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="fifaUserPhotoFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="fifaUserPhotoFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearFifaUserPhotoBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4 fifa-section-card">
+          <h5 class="fifa-section-title"><i class="fas fa-id-badge me-2"></i>Enter Your Profile</h5>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="fifaClubTeam">Club / Team</label>
+            <select id="fifaClubTeam" class="form-select">
+              <option value="">Select your team/club</option>
+              <option value="Argentina">Argentina</option>
+              <option value="Australia">Australia</option>
+              <option value="Brazil">Brazil</option>
+              <option value="Canada">Canada</option>
+              <option value="Colombia">Colombia</option>
+              <option value="Ecuador">Ecuador</option>
+              <option value="France">France</option>
+              <option value="Germany">Germany</option>
+              <option value="Japan">Japan</option>
+              <option value="Mexico">Mexico</option>
+              <option value="Morocco">Morocco</option>
+              <option value="Netherlands">Netherlands</option>
+              <option value="New Zealand">New Zealand</option>
+              <option value="Paraguay">Paraguay</option>
+              <option value="Portugal">Portugal</option>
+              <option value="Qatar">Qatar</option>
+              <option value="Saudi Arabia">Saudi Arabia</option>
+              <option value="Senegal">Senegal</option>
+              <option value="South Africa">South Africa</option>
+              <option value="South Korea">South Korea</option>
+              <option value="Spain">Spain</option>
+              <option value="Switzerland">Switzerland</option>
+              <option value="Tunisia">Tunisia</option>
+              <option value="United States">United States</option>
+              <option value="Uruguay">Uruguay</option>
+            </select>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaFirstName">First Name</label>
+              <input type="text" id="fifaFirstName" class="form-control" placeholder="Enter your first name" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaLastName">Last Name</label>
+              <input type="text" id="fifaLastName" class="form-control" placeholder="Enter your last name" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaJerseyNumber">Jersey #</label>
+              <input type="text" id="fifaJerseyNumber" class="form-control" placeholder="Enter jersey #" />
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaAge">Age</label>
+              <input type="number" id="fifaAge" class="form-control" min="1" max="99" placeholder="Enter age" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaHeightCm">Height (cm)</label>
+              <input type="number" id="fifaHeightCm" class="form-control" min="100" max="250" placeholder="Enter height cm" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="fifaWeightKg">Weight (kg)</label>
+              <input type="number" id="fifaWeightKg" class="form-control" min="30" max="200" placeholder="Enter weight kg" />
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4 fifa-section-card">
+          <h5 class="fifa-section-title"><i class="fas fa-chart-bar me-2"></i>Player Stats</h5>
+          <div class="fifa-toggle-row mb-3">
+            <div>
+              <div class="fw-bold">AI Stats</div>
+              <small class="text-muted">When on, Gemini generates realistic FIFA-style stats for the card.</small>
+            </div>
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" role="switch" id="fifaIsAiStats" checked />
+              <label class="form-check-label" for="fifaIsAiStats" id="fifaIsAiStatsLabel">On</label>
+            </div>
+          </div>
+
+          <div id="fifaManualStatsSection" style="display: none;">
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-bold" for="fifaPosition">Position</label>
+                <select id="fifaPosition" class="form-select">
+                  <option value="GOALKEEPER">Goalkeeper</option>
+                  <option value="DEFENDER">Defender</option>
+                  <option value="MIDFIELDER">Midfielder</option>
+                  <option value="STRIKER" selected>Striker</option>
+                  <option value="WINGER">Winger</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-bold" for="fifaRating">Rating</label>
+                <input type="number" id="fifaRating" class="form-control" min="1" max="99" placeholder="Enter rating" />
+              </div>
+            </div>
+            <div class="fifa-stat-grid">
+              <div class="fifa-stat-item">
+                <label for="fifaPace">PAC (Pace)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaPace">-</button>
+                  <input type="number" id="fifaPace" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaPace">+</button>
+                </div>
+              </div>
+              <div class="fifa-stat-item">
+                <label for="fifaShooting">SHO (Shooting)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaShooting">-</button>
+                  <input type="number" id="fifaShooting" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaShooting">+</button>
+                </div>
+              </div>
+              <div class="fifa-stat-item">
+                <label for="fifaPassing">PAS (Passing)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaPassing">-</button>
+                  <input type="number" id="fifaPassing" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaPassing">+</button>
+                </div>
+              </div>
+              <div class="fifa-stat-item">
+                <label for="fifaDribbling">DRI (Dribbling)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaDribbling">-</button>
+                  <input type="number" id="fifaDribbling" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaDribbling">+</button>
+                </div>
+              </div>
+              <div class="fifa-stat-item">
+                <label for="fifaDefending">DEF (Defending)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaDefending">-</button>
+                  <input type="number" id="fifaDefending" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaDefending">+</button>
+                </div>
+              </div>
+              <div class="fifa-stat-item">
+                <label for="fifaPhysical">PHY (Physical)</label>
+                <div class="fifa-stat-controls">
+                  <button type="button" class="fifa-stat-minus" data-target="fifaPhysical">-</button>
+                  <input type="number" id="fifaPhysical" class="form-control" min="1" max="99" value="80" />
+                  <button type="button" class="fifa-stat-plus" data-target="fifaPhysical">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <h5 class="mb-3"><i class="fas fa-shirt me-2"></i>Official Team Jersey (Image 2, optional)</h5>
+          <p class="text-muted small mb-3">Optional jersey reference — colors, crest, and kit design are matched when provided.</p>
+          <div class="upload-area" onclick="document.getElementById('fifaJerseyInput').click()">
+            <div class="upload-icon"><i class="fas fa-shirt"></i></div>
+            <h5 class="mb-1">Click to choose jersey image</h5>
+            <p class="text-muted mb-0">Optional official team jersey</p>
+            <input type="file" id="fifaJerseyInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="fifaJerseyFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="fifaJerseyFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearFifaJerseyBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or jersey URL:</label>
+            <input
+              type="url"
+              id="fifaJerseyUrl"
+              class="form-control form-control-sm"
+              placeholder="https://example.com/jersey.jpg"
+            />
+          </div>
+        </div>
+
+        <div class="mb-4 p-3" style="background: #f0fff4; border-radius: 12px; border: 2px solid #d4edda;">
+          <h5 class="mb-3"><i class="fas fa-id-card me-2"></i>Trading Card Template (Image 3)</h5>
+          <p class="text-muted small mb-3">Required reference — the output card must match this template at 100% (frame, colors, layout, typography, badges). Only the player photo and text data are swapped in.</p>
+          <div class="upload-area" onclick="document.getElementById('fifaTemplateInput').click()">
+            <div class="upload-icon"><i class="fas fa-id-card"></i></div>
+            <h5 class="mb-1">Click to choose card template</h5>
+            <p class="text-muted mb-0">Required trading card template</p>
+            <input type="file" id="fifaTemplateInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="fifaTemplateFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="fifaTemplateFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearFifaTemplateBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-bold">Temperature</label>
+          <p class="text-muted small mb-2">Lower values enforce stricter 100% template matching. Default is tuned for exact card reproduction.</p>
+          <input
+            type="range"
+            class="form-range"
+            id="fifaTemperature"
+            min="0"
+            max="2"
+            step="0.1"
+            value="0.4"
+          />
+          <div class="d-flex justify-content-between">
+            <small>0 (strictest)</small>
+            <small id="fifaTemperatureValue">0.4</small>
+            <small>2 (creative)</small>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-bold">Prompt (optional)</label>
+          <textarea
+            id="fifaPrompt"
+            class="form-control prompt-textarea"
+            placeholder="Leave empty to use the default strict 100% template-matching instructions..."
+            rows="8"
+          ></textarea>
+          <small class="text-muted">
+            Default prompt enforces 100% exact reproduction of the trading card template. Only the user photo and player text are replaced.
+          </small>
+        </div>
+
+        <button type="button" class="convert-btn" id="generateFifaBtn">
+          <i class="fas fa-futbol me-2"></i>Generate FIFA World Cup Card
+        </button>
+
+        <div class="mt-3" id="fifaProgress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0" id="fifaProgressText">Generating...</p>
+        </div>
+
+        <div class="status-message" id="fifaStatus"></div>
+
+        <div class="file-info mt-3" id="fifaResult" style="display: none;">
+          <h5 class="mb-2"><i class="fas fa-eye me-2"></i>Preview</h5>
+          <div class="row g-2 align-items-center">
+            <div class="col-md-6 text-center">
+              <img id="fifaPreviewImage" class="preview-image" alt="FIFA World Cup card result" />
+            </div>
+            <div class="col-md-6 text-center">
+              <p class="mb-2" id="fifaResultMessage">Card generated successfully!</p>
+              <a
+                href="#"
+                class="download-btn mt-1 btn"
+                id="fifaDownloadLink"
+                download
+              >
+                <i class="fas fa-download me-2"></i>Download Result
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Navigation functionality
     function switchTab(tab) {
@@ -870,11 +1262,13 @@
       document.getElementById("singleTab").classList.toggle("active", tab === "single");
       document.getElementById("batchTab").classList.toggle("active", tab === "batch");
       document.getElementById("referenceTab").classList.toggle("active", tab === "reference");
+      document.getElementById("fifaWorldcupTab").classList.toggle("active", tab === "fifaWorldcup");
       
       // Show/hide sections
       document.getElementById("singleSection").classList.toggle("active", tab === "single");
       document.getElementById("batchSection").classList.toggle("active", tab === "batch");
       document.getElementById("referenceSection").classList.toggle("active", tab === "reference");
+      document.getElementById("fifaWorldcupSection").classList.toggle("active", tab === "fifaWorldcup");
     }
 
     let currentFilename = null;
@@ -1621,6 +2015,7 @@ STRICT RULES:
     let referenceImageFile = null;
     let referenceSourceFile = null;
     let referenceBackgroundFile = null;
+    let referenceJerseyFile = null;
     let referenceOutputFilename = null;
 
     document.getElementById("referenceTemperature").addEventListener("input", (e) => {
@@ -1674,6 +2069,260 @@ STRICT RULES:
         referenceBackgroundFile = null;
         document.getElementById("referenceBackgroundInput").value = "";
         document.getElementById("referenceBackgroundFileInfo").style.display = "none";
+      }
+    });
+
+    document.getElementById("referenceJerseyInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        referenceJerseyFile = file;
+        document.getElementById("referenceJerseyFileName").textContent = file.name;
+        document.getElementById("referenceJerseyFileInfo").style.display = "block";
+        document.getElementById("referenceJerseyUrl").value = "";
+      }
+    });
+    document.getElementById("clearReferenceJerseyBtn").addEventListener("click", () => {
+      referenceJerseyFile = null;
+      document.getElementById("referenceJerseyInput").value = "";
+      document.getElementById("referenceJerseyFileInfo").style.display = "none";
+    });
+    document.getElementById("referenceJerseyUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        referenceJerseyFile = null;
+        document.getElementById("referenceJerseyInput").value = "";
+        document.getElementById("referenceJerseyFileInfo").style.display = "none";
+      }
+    });
+
+    // --- FIFA World Cup tab ---
+    let fifaUserPhotoFile = null;
+    let fifaJerseyFile = null;
+    let fifaTemplateFile = null;
+    let fifaOutputFilename = null;
+
+    document.getElementById("fifaTemperature").addEventListener("input", (e) => {
+      document.getElementById("fifaTemperatureValue").textContent = e.target.value;
+    });
+
+    const fifaIsAiStats = document.getElementById("fifaIsAiStats");
+    const fifaManualStatsSection = document.getElementById("fifaManualStatsSection");
+    const fifaIsAiStatsLabel = document.getElementById("fifaIsAiStatsLabel");
+
+    function updateFifaStatsMode() {
+      const aiEnabled = fifaIsAiStats.checked;
+      fifaManualStatsSection.style.display = aiEnabled ? "none" : "block";
+      fifaIsAiStatsLabel.textContent = aiEnabled ? "On" : "Off";
+    }
+    fifaIsAiStats.addEventListener("change", updateFifaStatsMode);
+    updateFifaStatsMode();
+
+    function clampFifaStatValue(value) {
+      const parsed = parseInt(value, 10);
+      if (Number.isNaN(parsed)) return 80;
+      return Math.max(1, Math.min(99, parsed));
+    }
+
+    document.querySelectorAll(".fifa-stat-minus, .fifa-stat-plus").forEach((button) => {
+      button.addEventListener("click", () => {
+        const input = document.getElementById(button.dataset.target);
+        if (!input) return;
+        const delta = button.classList.contains("fifa-stat-plus") ? 1 : -1;
+        input.value = clampFifaStatValue((parseInt(input.value, 10) || 80) + delta);
+      });
+    });
+
+    document.querySelectorAll("#fifaManualStatsSection input[type='number']").forEach((input) => {
+      input.addEventListener("change", () => {
+        input.value = clampFifaStatValue(input.value);
+      });
+    });
+
+    function appendFifaProfileAndStats(formData) {
+      const clubTeam = document.getElementById("fifaClubTeam").value.trim();
+      const firstName = document.getElementById("fifaFirstName").value.trim();
+      const lastName = document.getElementById("fifaLastName").value.trim();
+      const jerseyNumber = document.getElementById("fifaJerseyNumber").value.trim();
+      const age = document.getElementById("fifaAge").value.trim();
+      const heightCm = document.getElementById("fifaHeightCm").value.trim();
+      const weightKg = document.getElementById("fifaWeightKg").value.trim();
+
+      if (clubTeam) formData.append("club_team", clubTeam);
+      if (firstName) formData.append("first_name", firstName);
+      if (lastName) formData.append("last_name", lastName);
+      if (jerseyNumber) formData.append("jersey_number", jerseyNumber);
+      if (age) formData.append("age", age);
+      if (heightCm) formData.append("height_cm", heightCm);
+      if (weightKg) formData.append("weight_kg", weightKg);
+
+      formData.append("is_ai_stats", fifaIsAiStats.checked ? "true" : "false");
+
+      if (!fifaIsAiStats.checked) {
+        const position = document.getElementById("fifaPosition").value.trim();
+        const rating = document.getElementById("fifaRating").value.trim();
+        if (position) formData.append("position", position);
+        if (rating) formData.append("rating", rating);
+        formData.append("pace", document.getElementById("fifaPace").value);
+        formData.append("shooting", document.getElementById("fifaShooting").value);
+        formData.append("passing", document.getElementById("fifaPassing").value);
+        formData.append("dribbling", document.getElementById("fifaDribbling").value);
+        formData.append("defending", document.getElementById("fifaDefending").value);
+        formData.append("physical", document.getElementById("fifaPhysical").value);
+      }
+    }
+
+    document.getElementById("fifaUserPhotoInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        fifaUserPhotoFile = file;
+        document.getElementById("fifaUserPhotoFileName").textContent = file.name;
+        document.getElementById("fifaUserPhotoFileInfo").style.display = "block";
+      }
+    });
+    document.getElementById("clearFifaUserPhotoBtn").addEventListener("click", () => {
+      fifaUserPhotoFile = null;
+      document.getElementById("fifaUserPhotoInput").value = "";
+      document.getElementById("fifaUserPhotoFileInfo").style.display = "none";
+    });
+
+    document.getElementById("fifaJerseyInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        fifaJerseyFile = file;
+        document.getElementById("fifaJerseyFileName").textContent = file.name;
+        document.getElementById("fifaJerseyFileInfo").style.display = "block";
+        document.getElementById("fifaJerseyUrl").value = "";
+      }
+    });
+    document.getElementById("clearFifaJerseyBtn").addEventListener("click", () => {
+      fifaJerseyFile = null;
+      document.getElementById("fifaJerseyInput").value = "";
+      document.getElementById("fifaJerseyFileInfo").style.display = "none";
+    });
+    document.getElementById("fifaJerseyUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        fifaJerseyFile = null;
+        document.getElementById("fifaJerseyInput").value = "";
+        document.getElementById("fifaJerseyFileInfo").style.display = "none";
+      }
+    });
+
+    document.getElementById("fifaTemplateInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        fifaTemplateFile = file;
+        document.getElementById("fifaTemplateFileName").textContent = file.name;
+        document.getElementById("fifaTemplateFileInfo").style.display = "block";
+      }
+    });
+    document.getElementById("clearFifaTemplateBtn").addEventListener("click", () => {
+      fifaTemplateFile = null;
+      document.getElementById("fifaTemplateInput").value = "";
+      document.getElementById("fifaTemplateFileInfo").style.display = "none";
+    });
+
+    const fifaDownloadLink = document.getElementById("fifaDownloadLink");
+    fifaDownloadLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const filename = fifaDownloadLink.dataset.outputFilename || fifaOutputFilename;
+      if (!filename) return;
+      const downloadUrl = "/download/" + encodeURIComponent(filename);
+      const btn = fifaDownloadLink;
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner me-2"></span>Downloading...';
+      try {
+        const response = await fetch(downloadUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        const statusEl = document.getElementById("fifaStatus");
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Download failed: " + (err.message || "Could not download file");
+        statusEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    });
+
+    document.getElementById("generateFifaBtn").addEventListener("click", async () => {
+      if (!fifaUserPhotoFile) {
+        const el = document.getElementById("fifaStatus");
+        el.className = "status-message status-error";
+        el.textContent = "Please upload a user photo.";
+        el.style.display = "block";
+        return;
+      }
+      if (!fifaTemplateFile) {
+        const el = document.getElementById("fifaStatus");
+        el.className = "status-message status-error";
+        el.textContent = "Please upload a trading card template.";
+        el.style.display = "block";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("source", fifaUserPhotoFile);
+      formData.append("template", fifaTemplateFile);
+      appendFifaProfileAndStats(formData);
+      if (fifaJerseyFile) {
+        formData.append("jersey", fifaJerseyFile);
+      }
+      const fifaJerseyUrlValue = document.getElementById("fifaJerseyUrl").value.trim();
+      if (fifaJerseyUrlValue) {
+        formData.append("jersey_url", fifaJerseyUrlValue);
+      }
+      const fifaTemperatureValue = parseFloat(document.getElementById("fifaTemperature").value || "0");
+      if (fifaTemperatureValue > 0) {
+        formData.append("temperature", fifaTemperatureValue.toString());
+      }
+      const fifaPromptValue = document.getElementById("fifaPrompt").value.trim();
+      if (fifaPromptValue) {
+        formData.append("fifa_prompt", fifaPromptValue);
+      }
+
+      document.getElementById("fifaProgress").style.display = "block";
+      document.getElementById("fifaProgressText").textContent = "Generating...";
+      document.getElementById("fifaStatus").style.display = "none";
+      document.getElementById("fifaResult").style.display = "none";
+
+      try {
+        const res = await fetch("/generate-fifa-worldcup-web", { method: "POST", body: formData });
+        const data = await res.json();
+        document.getElementById("fifaProgress").style.display = "none";
+
+        if (!data.success) {
+          const el = document.getElementById("fifaStatus");
+          el.className = "status-message status-error";
+          el.textContent = data.error || "Generation failed";
+          el.style.display = "block";
+          return;
+        }
+
+        fifaOutputFilename = data.output_filename;
+        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        document.getElementById("fifaPreviewImage").src = url;
+        fifaDownloadLink.dataset.outputFilename = data.output_filename;
+        document.getElementById("fifaResultMessage").textContent = data.message || "Card generated successfully!";
+        document.getElementById("fifaResult").style.display = "block";
+        const el = document.getElementById("fifaStatus");
+        el.className = "status-message status-success";
+        el.textContent = data.message || "Done!";
+        el.style.display = "block";
+      } catch (err) {
+        document.getElementById("fifaProgress").style.display = "none";
+        const el = document.getElementById("fifaStatus");
+        el.className = "status-message status-error";
+        el.textContent = "Network error: " + err.message;
+        el.style.display = "block";
       }
     });
 
@@ -1751,9 +2400,16 @@ STRICT RULES:
       if (referenceBackgroundFile) {
         formData.append("background", referenceBackgroundFile);
       }
+      if (referenceJerseyFile) {
+        formData.append("jersey", referenceJerseyFile);
+      }
       const referenceBackgroundUrlValue = document.getElementById("referenceBackgroundUrl").value.trim();
       if (referenceBackgroundUrlValue) {
         formData.append("background_url", referenceBackgroundUrlValue);
+      }
+      const referenceJerseyUrlValue = document.getElementById("referenceJerseyUrl").value.trim();
+      if (referenceJerseyUrlValue) {
+        formData.append("jersey_url", referenceJerseyUrlValue);
       }
       if (referenceBackgroundFile && referenceBackgroundUrlValue) {
         formData.set("background_url", "");

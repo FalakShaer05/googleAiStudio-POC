@@ -747,20 +747,26 @@ def generate_image_in_reference_style(
     source_path: str,
     output_path: str,
     background_path: Optional[str] = None,
+    jersey_path: Optional[str] = None,
     temperature: Optional[float] = None,
     user_prompt: Optional[str] = None,
     logo_position: str = "top_right",
+    apply_logo_overlay: bool = True,
+    source_label: Optional[str] = None,
+    jersey_label: Optional[str] = None,
+    reference_label: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate an image that applies the visual style of the reference image to the source image.
 
     The frontend now owns the textual instructions. Whatever prompt the user types in the UI
     (including all Image 1 / Image 2 rules) is passed through via `user_prompt` and sent
-    directly to Gemini alongside the two images.
+    directly to Gemini alongside the images.
 
     - `source_path`  -> Image 1 (source person/content)
-    - `reference_path` -> Image 2 (style reference)
-    - `background_path` -> Image 3 (optional background to place subject onto)
+    - `jersey_path` -> Image 2 (optional official team jersey reference)
+    - `reference_path` -> Image 3 when jersey is present, else Image 2 (style reference)
+    - `background_path` -> next image index (optional background to place subject onto)
     - `user_prompt` -> Free-form instruction text from the UI
 
     Temperature controls how strongly the reference style is applied.
@@ -771,6 +777,8 @@ def generate_image_in_reference_style(
             return False, f"Reference image not found: {reference_path}"
         if not os.path.exists(source_path):
             return False, f"Source image not found: {source_path}"
+        if jersey_path and not os.path.exists(jersey_path):
+            return False, f"Jersey image not found: {jersey_path}"
         if background_path and not os.path.exists(background_path):
             return False, f"Background image not found: {background_path}"
 
@@ -793,58 +801,60 @@ def generate_image_in_reference_style(
         # contents list we will pass `source_image` first and `reference_image` second.
         reference_image = to_rgb(Image.open(reference_path))
         source_image = to_rgb(Image.open(source_path))
+        jersey_image = to_rgb(Image.open(jersey_path)) if jersey_path else None
         background_image = to_rgb(Image.open(background_path)) if background_path else None
-
-        # Use alternating text + image so the model never confuses which is reference vs source/background.
-        # Each image is immediately preceded by a label that says what it is.
-        # Text labels are written to match the exact order of images in `contents`.
-        # The model will see:
-        #   1) SOURCE image (person/content to preserve)
-        #   2) REFERENCE image (style to copy)
-        source_label = (
-            "SOURCE CONTENT (Image 1 - the next image only): "
-            "This image defines the PERSON / SUBJECT and COMPOSITION to keep. "
-            "Your output must show this same face and identity, with matching pose/head angle and framing, "
-            "unless the style rules below explicitly say otherwise. The next image is the source content."
-        )
-        ref_label = (
-            "REFERENCE STYLE (Image 2 - the next image only): "
-            "This image defines ONLY the STYLE to copy—colors, palette, brushwork or digital rendering, texture, lighting, and mood. "
-            "You must match this style as strictly and precisely as possible (aim for 100% style accuracy). "
-            "Use ONLY its style. Do NOT copy its face or identity, and do NOT replace the source person's anatomy. "
-            "The next image is the reference style."
-        )
 
         # Use the free-form prompt provided by the caller.
         # If none was supplied, fall back to a minimal, safe default so the API call
         # still works (but the UI should normally always send a prompt).
         if user_prompt is None or not str(user_prompt).strip():
-            task_instruction = (
-                "Image 1 is the source person. Image 2 is the reference style.\n"
-                "Apply ONLY the visual style from Image 2 (colors, rendering, lighting, background design) "
-                "to the person and composition from Image 1, preserving the original identity and anatomy."
-            )
+            if jersey_image is not None:
+                task_instruction = (
+                    "Image 1 is the source person. Image 2 is the official team jersey reference. "
+                    "Image 3 is the reference style.\n"
+                    "Dress the person from Image 1 in the jersey from Image 2 when applicable. "
+                    "Apply ONLY the visual style from Image 3 (colors, rendering, lighting, background design) "
+                    "to the person and composition from Image 1, preserving the original identity and anatomy."
+                )
+            else:
+                task_instruction = (
+                    "Image 1 is the source person. Image 2 is the reference style.\n"
+                    "Apply ONLY the visual style from Image 2 (colors, rendering, lighting, background design) "
+                    "to the person and composition from Image 1, preserving the original identity and anatomy."
+                )
         else:
             task_instruction = str(user_prompt).strip()
 
-        if background_image is not None:
+        if jersey_image is not None and "Image 2" not in task_instruction:
             task_instruction = (
                 f"{task_instruction}\n\n"
-                "Image 3 is an optional background image. Keep this background composition and scene context, "
-                "and place the styled subject naturally into it. Do not alter the subject identity from Image 1 "
-                "or the style source from Image 2."
+                "Image 2 is an optional official team jersey reference. When provided, dress the subject "
+                "from Image 1 in that exact jersey."
             )
 
-        # Order of contents is critical. The unified prompt below talks about:
-        #   Image 1 = Source Person
-        #   Image 2 = Reference Style
-        # So we MUST pass the source image first, then the reference image.
-        contents = [
-            # source_label,
-            source_image,
-            # ref_label,
-            reference_image,
-        ]
+        if background_image is not None:
+            background_image_index = 4 if jersey_image is not None else 3
+            style_image_index = 3 if jersey_image is not None else 2
+            task_instruction = (
+                f"{task_instruction}\n\n"
+                f"Image {background_image_index} is an optional background image. Keep this background "
+                f"composition and scene context, and place the styled subject naturally into it. Do not alter "
+                f"the subject identity from Image 1 or the style source from Image {style_image_index}."
+            )
+
+        # Order of contents is critical:
+        #   Image 1 = source, Image 2 = jersey (optional), Image 3 = reference style, then background.
+        contents = []
+        if source_label:
+            contents.append(source_label)
+        contents.append(source_image)
+        if jersey_image is not None:
+            if jersey_label:
+                contents.append(jersey_label)
+            contents.append(jersey_image)
+        if reference_label:
+            contents.append(reference_label)
+        contents.append(reference_image)
         if background_image is not None:
             contents.append(background_image)
         contents.append(task_instruction)
@@ -863,9 +873,10 @@ def generate_image_in_reference_style(
                 return False, "Invalid image object returned from Gemini"
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
-            # Match generate-character-web behavior by adding the top-right logo overlay.
-            # Reference flow uses the same station family default logo as non-warhol outputs.
-            img = add_signature_image_overlay(img, "cartoon", logo_position=logo_position)
+            if apply_logo_overlay:
+                # Match generate-character-web behavior by adding the top-right logo overlay.
+                # Reference flow uses the same station family default logo as non-warhol outputs.
+                img = add_signature_image_overlay(img, "cartoon", logo_position=logo_position)
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
@@ -875,6 +886,110 @@ def generate_image_in_reference_style(
     except Exception as e:
         print(f"generate_image_in_reference_style error: {e}")
         return False, str(e)
+
+
+def generate_fifa_worldcup_card(
+    user_photo_path: str,
+    template_path: str,
+    output_path: str,
+    jersey_path: Optional[str] = None,
+    temperature: Optional[float] = None,
+    user_prompt: Optional[str] = None,
+    logo_position: str = "top_right",
+    player_profile: Optional[Dict[str, Any]] = None,
+    is_ai_stats: bool = True,
+    player_stats: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, str]:
+    """
+    Generate a FIFA World Cup 2026 trading card.
+
+    - Image 1 = User Photo (identity reference)
+    - Image 2 = Official Team Jersey Reference (optional)
+    - Image 3 = FIFA World Cup 2026 Trading Card Template
+    """
+    from utils.prompts import FIFA_WORLD_CUP_PROMPT, FIFA_TEMPLATE_STRICT_RULES, build_fifa_card_context
+
+    if temperature is None:
+        temperature = 0.4
+
+    base_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_WORLD_CUP_PROMPT
+    context = build_fifa_card_context(
+        profile=player_profile,
+        is_ai_stats=is_ai_stats,
+        stats=player_stats,
+    )
+    prompt_parts = [base_prompt]
+    if context:
+        prompt_parts.append(context)
+    prompt_parts.append(FIFA_TEMPLATE_STRICT_RULES)
+    prompt = "\n\n".join(prompt_parts)
+
+    template_image_index = 3 if jersey_path else 2
+    source_label = (
+        "USER PHOTO (Image 1 — identity reference only): "
+        "Use this person's exact face and likeness in the template portrait slot. "
+        "Do not copy background, pose framing, or lighting from this image unless the template requires it."
+    )
+    jersey_label = (
+        "OFFICIAL TEAM JERSEY (Image 2 — kit reference only): "
+        "Match this exact jersey design on the player in the template portrait area."
+    )
+    reference_label = (
+        f"TRADING CARD TEMPLATE (Image {template_image_index} — mandatory 100% exact reference): "
+        "Reproduce this card design with 100% fidelity. Copy every visual detail — frame, colors, layout, "
+        "typography, badges, and decorative elements exactly. Only swap the player photo and player text data."
+    )
+
+    if jersey_path:
+        return generate_image_in_reference_style(
+            reference_path=template_path,
+            source_path=user_photo_path,
+            output_path=output_path,
+            jersey_path=jersey_path,
+            temperature=temperature,
+            user_prompt=prompt,
+            logo_position=logo_position,
+            apply_logo_overlay=False,
+            source_label=source_label,
+            jersey_label=jersey_label,
+            reference_label=reference_label,
+        )
+
+    # Without jersey, remap image indices in the default FIFA prompt.
+    prompt_without_jersey = prompt.replace(
+        "IMAGE 2 = Official Team Jersey Reference (optional — only if a jersey image was provided)\n",
+        "",
+    ).replace(
+        "IMAGE 3 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)",
+        "IMAGE 2 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)",
+    ).replace(
+        "Image 3 is the trading card template. Your output MUST reproduce Image 3 at 100% accuracy.\n"
+        "Copy EXACTLY from Image 3:",
+        "Image 2 is the trading card template. Your output MUST reproduce Image 2 at 100% accuracy.\n"
+        "Copy EXACTLY from Image 2:",
+    ).replace(
+        "DO NOT change the color palette, frame shape, borders, or composition of Image 3.",
+        "DO NOT change the color palette, frame shape, borders, or composition of Image 2.",
+    ).replace(
+        "JERSEY (Image 2, if provided):\n"
+        "Dress the person in the exact official team jersey from Image 2 — match colors, crest, sponsor marks, and kit details precisely.\n\n",
+        "",
+    ).replace(
+        "A single finished trading card image that is visually identical to Image 3, with only the player photo and player data updated in their correct slots.",
+        "A single finished trading card image that is visually identical to Image 2, with only the player photo and player data updated in their correct slots.",
+    )
+    reference_label_no_jersey = reference_label.replace("Image 3", "Image 2")
+    return generate_image_in_reference_style(
+        reference_path=template_path,
+        source_path=user_photo_path,
+        output_path=output_path,
+        temperature=temperature,
+        user_prompt=prompt_without_jersey,
+        logo_position=logo_position,
+        apply_logo_overlay=False,
+        source_label=source_label,
+        reference_label=reference_label_no_jersey,
+    )
 
 
 def generate_character_with_identity(
