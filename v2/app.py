@@ -78,26 +78,23 @@ def _parse_bool_form_value(value: str, default: bool = False) -> bool:
     return default
 
 
-def _parse_fifa_player_form() -> Tuple[dict, bool, dict]:
+def _parse_fifa_player_form() -> Tuple[dict, bool, bool, dict]:
     profile = {
         "club_team": request.form.get("club_team", "").strip(),
         "first_name": request.form.get("first_name", "").strip(),
         "last_name": request.form.get("last_name", "").strip(),
         "jersey_number": request.form.get("jersey_number", "").strip(),
-        "age": request.form.get("age", "").strip(),
-        "height_cm": request.form.get("height_cm", "").strip(),
-        "weight_kg": request.form.get("weight_kg", "").strip(),
     }
     profile = {key: value for key, value in profile.items() if value}
 
+    include_stats = _parse_bool_form_value(request.form.get("include_stats", "true"), default=True)
     is_ai_stats = _parse_bool_form_value(request.form.get("is_ai_stats", "true"), default=True)
 
-    position = request.form.get("position", "").strip().upper()
     stats = {}
-    if position:
-        stats["position"] = position
-    if not is_ai_stats:
-        stats.update({
+    if include_stats and not is_ai_stats:
+        position = request.form.get("position", "").strip().upper()
+        stats = {
+            "position": position,
             "rating": request.form.get("rating", "").strip(),
             "pace": request.form.get("pace", "").strip(),
             "shooting": request.form.get("shooting", "").strip(),
@@ -105,10 +102,10 @@ def _parse_fifa_player_form() -> Tuple[dict, bool, dict]:
             "dribbling": request.form.get("dribbling", "").strip(),
             "defending": request.form.get("defending", "").strip(),
             "physical": request.form.get("physical", "").strip(),
-        })
+        }
         stats = {key: value for key, value in stats.items() if value}
 
-    return profile, is_ai_stats, stats
+    return profile, include_stats, is_ai_stats, stats
 
 
 # Swagger configuration
@@ -669,7 +666,7 @@ def generate_fifa_worldcup_web():
                 temperature = parsed_temperature
 
         fifa_prompt = request.form.get("fifa_prompt", "").strip()
-        player_profile, is_ai_stats, player_stats = _parse_fifa_player_form()
+        player_profile, include_stats, is_ai_stats, player_stats = _parse_fifa_player_form()
         logo_position = request.form.get("logo_position", "top_right").strip().lower() or "top_right"
         if logo_position not in ALLOWED_LOGO_POSITIONS:
             return jsonify({"error": f"Invalid logo_position '{logo_position}'"}), 400
@@ -723,6 +720,7 @@ def generate_fifa_worldcup_web():
             user_prompt=fifa_prompt or None,
             logo_position=logo_position,
             player_profile=player_profile or None,
+            include_stats=include_stats,
             is_ai_stats=is_ai_stats,
             player_stats=player_stats or None,
         )
@@ -1461,6 +1459,12 @@ def api_generate_fifa_worldcup():
         required: false
         description: Optional custom prompt override
       - in: formData
+        name: include_stats
+        type: string
+        required: false
+        default: "true"
+        description: When true, include player stats on the card. When false, keep the template's original stats unchanged.
+      - in: formData
         name: is_ai_stats
         type: string
         required: false
@@ -1481,18 +1485,6 @@ def api_generate_fifa_worldcup():
         required: false
       - in: formData
         name: jersey_number
-        type: string
-        required: false
-      - in: formData
-        name: age
-        type: string
-        required: false
-      - in: formData
-        name: height_cm
-        type: string
-        required: false
-      - in: formData
-        name: weight_kg
         type: string
         required: false
       - in: formData

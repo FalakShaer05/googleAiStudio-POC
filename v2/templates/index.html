@@ -1048,24 +1048,22 @@
               <input type="text" id="fifaJerseyNumber" class="form-control" placeholder="Enter jersey #" />
             </div>
           </div>
-          <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label fw-bold" for="fifaAge">Age</label>
-              <input type="number" id="fifaAge" class="form-control" min="1" max="99" placeholder="Enter age" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label fw-bold" for="fifaHeightCm">Height (cm)</label>
-              <input type="number" id="fifaHeightCm" class="form-control" min="100" max="250" placeholder="Enter height cm" />
-            </div>
-            <div class="col-md-4">
-              <label class="form-label fw-bold" for="fifaWeightKg">Weight (kg)</label>
-              <input type="number" id="fifaWeightKg" class="form-control" min="30" max="200" placeholder="Enter weight kg" />
-            </div>
-          </div>
         </div>
 
         <div class="mb-4 fifa-section-card">
           <h5 class="fifa-section-title"><i class="fas fa-chart-bar me-2"></i>Player Stats</h5>
+          <div class="fifa-toggle-row mb-3">
+            <div>
+              <div class="fw-bold">Include Stats</div>
+              <small class="text-muted">When off, the card keeps the template's original stats unchanged.</small>
+            </div>
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" role="switch" id="fifaIncludeStats" checked />
+              <label class="form-check-label" for="fifaIncludeStats" id="fifaIncludeStatsLabel">On</label>
+            </div>
+          </div>
+
+          <div id="fifaStatsOptionsSection">
           <div class="fifa-toggle-row mb-3">
             <div>
               <div class="fw-bold">AI Stats</div>
@@ -1077,28 +1075,27 @@
             </div>
           </div>
 
-          <div class="mb-3">
-            <label class="form-label fw-bold" for="fifaPosition">Position</label>
-            <select id="fifaPosition" class="form-select">
-              <option value="GK">GK — Goalkeeper</option>
-              <option value="RB">RB — Right Back</option>
-              <option value="LB">LB — Left Back</option>
-              <option value="CB">CB — Center Back</option>
-              <option value="RWB">RWB — Right Wing Back</option>
-              <option value="LWB">LWB — Left Wing Back</option>
-              <option value="CDM">CDM — Central Defensive Midfielder</option>
-              <option value="CM">CM — Central Midfielder</option>
-              <option value="CAM">CAM — Central Attacking Midfielder</option>
-              <option value="RM">RM — Right Midfielder</option>
-              <option value="LM">LM — Left Midfielder</option>
-              <option value="RW">RW — Right Winger</option>
-              <option value="LW">LW — Left Winger</option>
-              <option value="CF">CF — Center Forward</option>
-              <option value="ST" selected>ST — Striker</option>
-            </select>
-          </div>
-
           <div id="fifaManualStatsSection" style="display: none;">
+            <div class="mb-3">
+              <label class="form-label fw-bold" for="fifaPosition">Position</label>
+              <select id="fifaPosition" class="form-select">
+                <option value="GK">GK — Goalkeeper</option>
+                <option value="RB">RB — Right Back</option>
+                <option value="LB">LB — Left Back</option>
+                <option value="CB">CB — Center Back</option>
+                <option value="RWB">RWB — Right Wing Back</option>
+                <option value="LWB">LWB — Left Wing Back</option>
+                <option value="CDM">CDM — Central Defensive Midfielder</option>
+                <option value="CM">CM — Central Midfielder</option>
+                <option value="CAM">CAM — Central Attacking Midfielder</option>
+                <option value="RM">RM — Right Midfielder</option>
+                <option value="LM">LM — Left Midfielder</option>
+                <option value="RW">RW — Right Winger</option>
+                <option value="LW">LW — Left Winger</option>
+                <option value="CF">CF — Center Forward</option>
+                <option value="ST" selected>ST — Striker</option>
+              </select>
+            </div>
             <div class="row g-3 mb-3">
               <div class="col-md-12">
                 <label class="form-label fw-bold" for="fifaRating">Rating</label>
@@ -1155,6 +1152,7 @@
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </div>
 
@@ -1226,11 +1224,11 @@
             min="0"
             max="2"
             step="0.1"
-            value="0.25"
+            value="0.1"
           />
           <div class="d-flex justify-content-between">
             <small>0 (strictest)</small>
-            <small id="fifaTemperatureValue">0.25</small>
+            <small id="fifaTemperatureValue">0.1</small>
             <small>2 (creative)</small>
           </div>
         </div>
@@ -2133,9 +2131,20 @@ STRICT RULES:
       document.getElementById("fifaTemperatureValue").textContent = e.target.value;
     });
 
+    const fifaIncludeStats = document.getElementById("fifaIncludeStats");
+    const fifaIncludeStatsLabel = document.getElementById("fifaIncludeStatsLabel");
+    const fifaStatsOptionsSection = document.getElementById("fifaStatsOptionsSection");
     const fifaIsAiStats = document.getElementById("fifaIsAiStats");
     const fifaManualStatsSection = document.getElementById("fifaManualStatsSection");
     const fifaIsAiStatsLabel = document.getElementById("fifaIsAiStatsLabel");
+
+    function updateFifaIncludeStatsMode() {
+      const includeEnabled = fifaIncludeStats.checked;
+      fifaStatsOptionsSection.style.display = includeEnabled ? "block" : "none";
+      fifaIncludeStatsLabel.textContent = includeEnabled ? "On" : "Off";
+    }
+    fifaIncludeStats.addEventListener("change", updateFifaIncludeStatsMode);
+    updateFifaIncludeStatsMode();
 
     function updateFifaStatsMode() {
       const aiEnabled = fifaIsAiStats.checked;
@@ -2171,32 +2180,29 @@ STRICT RULES:
       const firstName = document.getElementById("fifaFirstName").value.trim();
       const lastName = document.getElementById("fifaLastName").value.trim();
       const jerseyNumber = document.getElementById("fifaJerseyNumber").value.trim();
-      const age = document.getElementById("fifaAge").value.trim();
-      const heightCm = document.getElementById("fifaHeightCm").value.trim();
-      const weightKg = document.getElementById("fifaWeightKg").value.trim();
 
       if (clubTeam) formData.append("club_team", clubTeam);
       if (firstName) formData.append("first_name", firstName);
       if (lastName) formData.append("last_name", lastName);
       if (jerseyNumber) formData.append("jersey_number", jerseyNumber);
-      if (age) formData.append("age", age);
-      if (heightCm) formData.append("height_cm", heightCm);
-      if (weightKg) formData.append("weight_kg", weightKg);
 
-      formData.append("is_ai_stats", fifaIsAiStats.checked ? "true" : "false");
+      formData.append("include_stats", fifaIncludeStats.checked ? "true" : "false");
 
-      const position = document.getElementById("fifaPosition").value.trim();
-      if (position) formData.append("position", position);
+      if (fifaIncludeStats.checked) {
+        formData.append("is_ai_stats", fifaIsAiStats.checked ? "true" : "false");
 
-      if (!fifaIsAiStats.checked) {
-        const rating = document.getElementById("fifaRating").value.trim();
-        if (rating) formData.append("rating", rating);
-        formData.append("pace", document.getElementById("fifaPace").value);
-        formData.append("shooting", document.getElementById("fifaShooting").value);
-        formData.append("passing", document.getElementById("fifaPassing").value);
-        formData.append("dribbling", document.getElementById("fifaDribbling").value);
-        formData.append("defending", document.getElementById("fifaDefending").value);
-        formData.append("physical", document.getElementById("fifaPhysical").value);
+        if (!fifaIsAiStats.checked) {
+          const position = document.getElementById("fifaPosition").value.trim();
+          if (position) formData.append("position", position);
+          const rating = document.getElementById("fifaRating").value.trim();
+          if (rating) formData.append("rating", rating);
+          formData.append("pace", document.getElementById("fifaPace").value);
+          formData.append("shooting", document.getElementById("fifaShooting").value);
+          formData.append("passing", document.getElementById("fifaPassing").value);
+          formData.append("dribbling", document.getElementById("fifaDribbling").value);
+          formData.append("defending", document.getElementById("fifaDefending").value);
+          formData.append("physical", document.getElementById("fifaPhysical").value);
+        }
       }
     }
 

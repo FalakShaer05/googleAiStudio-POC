@@ -359,6 +359,15 @@ def generate_seed_from_prompt(normalized_prompt: str) -> int:
     return seed
 
 
+def generate_seed_from_inputs(*parts: str) -> int:
+    """Generate a stable seed from multiple input strings (paths, profile text, etc.)."""
+    hash_obj = hashlib.sha256()
+    for part in parts:
+        if part:
+            hash_obj.update(str(part).encode("utf-8"))
+    return int(hash_obj.hexdigest()[:8], 16) % (2**31)
+
+
 def normalize_prompt_for_consistency(prompt: str) -> str:
     """
     Normalize prompts to fix conflicting instructions and improve consistency.
@@ -888,17 +897,101 @@ def generate_image_in_reference_style(
         return False, str(e)
 
 
+def _prepare_fifa_identity_photo(img: Image.Image) -> Image.Image:
+    """Crop and normalize the user photo to emphasize face/head for identity preservation."""
+    w, h = img.size
+    if h > w:
+        crop_top = max(0, int(h * 0.02))
+        crop_bottom = min(h, int(h * 0.72))
+        img = img.crop((0, crop_top, w, crop_bottom))
+    else:
+        side = min(w, h)
+        left = (w - side) // 2
+        top = max(0, int((h - side) * 0.15))
+        img = img.crop((left, top, left + side, min(h, top + side)))
+
+    min_dim = 768
+    if max(img.size) < min_dim:
+        scale = min_dim / max(img.size)
+        img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+    return img
+
+
+def _generate_fifa_identity_portrait(
+    client: genai.Client,
+    user_image: Image.Image,
+    jersey_image: Optional[Image.Image],
+    temperature: float,
+    seed: Optional[int],
+) -> Optional[Image.Image]:
+    """Pass 1: lock identity (and optional jersey) before compositing onto the card template."""
+    from utils.prompts import FIFA_IDENTITY_PORTRAIT_PROMPT
+
+    contents = [
+        (
+            "IMAGE 1 — USER PHOTO (IDENTITY SOURCE): "
+            "Memorize this person's exact face before generating anything."
+        ),
+        user_image,
+        (
+            "IDENTITY LOCK: The output face MUST be this exact person — "
+            "same eyes, nose, mouth, jaw, skin tone, hair, glasses, beard, and distinctive features."
+        ),
+    ]
+    if jersey_image is not None:
+        contents.extend([
+            (
+                "IMAGE 2 — JERSEY (KIT ONLY): "
+                "Apply this jersey design to the person from Image 1. Do not copy any face from this image."
+            ),
+            jersey_image,
+        ])
+    contents.append(FIFA_IDENTITY_PORTRAIT_PROMPT)
+
+    response = _generate_content_image(
+        client=client,
+        model=get_gemini_image_model(),
+        contents=contents,
+        seed=seed,
+        temperature=temperature,
+        aspect_ratio="3:4",
+    )
+    return _extract_final_image_from_response(response)
+
+
 def _build_fifa_gemini_contents(
     user_image: Image.Image,
     template_image: Image.Image,
     task_instruction: str,
     jersey_image: Optional[Image.Image] = None,
+    use_identity_portrait: bool = False,
 ) -> list:
     """
     Build Gemini contents with text labels interleaved before each image so the
     model correctly separates identity (Image 1), jersey kit (Image 2), and
     card template (Image 3).
+
+    When use_identity_portrait is True, user_image is already a locked portrait
+    from pass 1 and jersey_image is omitted.
     """
+    if use_identity_portrait:
+        contents = [
+            (
+                "IMAGE 1 — LOCKED PLAYER PORTRAIT (identity reference): "
+                "This portrait already shows the correct player face. "
+                "Place this exact face and likeness onto the card — do not change the face."
+            ),
+            user_image,
+            (
+                "IMAGE 2 — TRADING CARD TEMPLATE (DESIGN/LAYOUT ONLY): "
+                "Reproduce this card at 100% fidelity. Replace only the portrait area with Image 1's face. "
+                "DO NOT keep the template's original face."
+            ),
+            template_image,
+            task_instruction,
+        ]
+        return contents
+
     template_index = 3 if jersey_image is not None else 2
     contents = [
         (
@@ -938,6 +1031,24 @@ def _build_fifa_gemini_contents(
     return contents
 
 
+def _build_fifa_task_instruction(
+    base_prompt: str,
+    context: str,
+    output_size_note: str,
+    include_final_identity_reminder: bool = True,
+) -> str:
+    from utils.prompts import FIFA_IDENTITY_LOCK, FIFA_IDENTITY_FINAL_REMINDER, FIFA_TEMPLATE_STRICT_RULES
+
+    prompt_parts = [FIFA_IDENTITY_LOCK, base_prompt]
+    if context:
+        prompt_parts.append(context)
+    prompt_parts.append(FIFA_TEMPLATE_STRICT_RULES)
+    prompt_parts.append(output_size_note)
+    if include_final_identity_reminder:
+        prompt_parts.append(FIFA_IDENTITY_FINAL_REMINDER)
+    return "\n\n".join(prompt_parts)
+
+
 def generate_fifa_worldcup_card(
     user_photo_path: str,
     template_path: str,
@@ -947,6 +1058,7 @@ def generate_fifa_worldcup_card(
     user_prompt: Optional[str] = None,
     logo_position: str = "top_right",
     player_profile: Optional[Dict[str, Any]] = None,
+    include_stats: bool = True,
     is_ai_stats: bool = True,
     player_stats: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
@@ -958,9 +1070,7 @@ def generate_fifa_worldcup_card(
     - Image 3 = FIFA World Cup 2026 Trading Card Template
     """
     from utils.prompts import (
-        FIFA_WORLD_CUP_PROMPT,
-        FIFA_IDENTITY_LOCK,
-        FIFA_TEMPLATE_STRICT_RULES,
+        FIFA_CARD_COMPOSITE_PROMPT,
         build_fifa_card_context,
     )
 
@@ -983,16 +1093,16 @@ def generate_fifa_worldcup_card(
                 return img.convert("RGB")
             return img
 
-        user_image = to_rgb(Image.open(user_photo_path))
+        user_image = _prepare_fifa_identity_photo(to_rgb(Image.open(user_photo_path)))
         template_image = to_rgb(Image.open(template_path))
         jersey_image = to_rgb(Image.open(jersey_path)) if jersey_path else None
 
         if temperature is None:
-            temperature = 0.25
+            temperature = 0.1
 
-        base_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_WORLD_CUP_PROMPT
         context = build_fifa_card_context(
             profile=player_profile,
+            include_stats=include_stats,
             is_ai_stats=is_ai_stats,
             stats=player_stats,
         )
@@ -1003,25 +1113,45 @@ def generate_fifa_worldcup_card(
             f"OUTPUT SIZE: Match the trading card template dimensions and aspect ratio "
             f"({template_w}x{template_h}, {aspect_ratio})."
         )
+        composite_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_CARD_COMPOSITE_PROMPT
+        task_instruction = _build_fifa_task_instruction(composite_prompt, context, output_size_note)
 
-        prompt_parts = [FIFA_IDENTITY_LOCK, base_prompt]
-        if context:
-            prompt_parts.append(context)
-        prompt_parts.extend([FIFA_TEMPLATE_STRICT_RULES, output_size_note])
-        task_instruction = "\n\n".join(prompt_parts)
+        seed = generate_seed_from_inputs(
+            user_photo_path,
+            template_path,
+            jersey_path or "",
+            context,
+            composite_prompt,
+        )
 
-        contents = _build_fifa_gemini_contents(
+        # Pass 1: generate identity-locked portrait (with jersey if provided).
+        identity_portrait = _generate_fifa_identity_portrait(
+            client=client,
             user_image=user_image,
-            template_image=template_image,
             jersey_image=jersey_image,
+            temperature=temperature,
+            seed=seed,
+        )
+        if identity_portrait is None:
+            return False, "Failed to generate identity-locked player portrait"
+
+        if identity_portrait.mode not in ("RGB", "RGBA"):
+            identity_portrait = identity_portrait.convert("RGB")
+
+        # Pass 2: composite locked portrait onto the trading card template.
+        contents = _build_fifa_gemini_contents(
+            user_image=identity_portrait,
+            template_image=template_image,
+            jersey_image=None,
             task_instruction=task_instruction,
+            use_identity_portrait=True,
         )
 
         response = _generate_content_image(
             client=client,
             model=get_gemini_image_model(),
             contents=contents,
-            seed=None,
+            seed=seed + 1,
             temperature=temperature,
             aspect_ratio=aspect_ratio,
         )

@@ -85,7 +85,35 @@ FORBIDDEN:
 - Do NOT blend, average, or morph faces between images
 - Do NOT beautify, age-shift, or generate a generic stock athlete face
 
-Composite Image 1's real face into the template's portrait area. The result must look like the user from Image 1 wearing the kit, inside the card from Image 3."""
+Composite Image 1's real face into the template's portrait area. The result must look like the user from Image 1 wearing the kit, inside the card from Image 3.
+
+If the user wears glasses, keep the same glasses. If they have a beard, mustache, or distinctive hair, preserve them exactly. Do not remove eyewear or facial hair."""
+
+FIFA_IDENTITY_PORTRAIT_PROMPT = """Create a chest-up football player portrait photo.
+
+IMAGE 1 = USER PHOTO — the face in your output MUST be the same person as Image 1.
+Copy exactly: face shape, eyes, eyebrows, nose, lips, jawline, skin tone, hair, facial hair, glasses, and every distinctive feature.
+
+If Image 2 (jersey) is provided, dress this same person in that exact kit only.
+Image 2 is clothing reference ONLY — never copy any face from Image 2.
+
+Use a simple neutral studio background. No trading card frame, no stats, no text overlays.
+Do NOT generate a different person. Do NOT beautify, slim, age-shift, or genericize the face."""
+
+FIFA_IDENTITY_FINAL_REMINDER = """FINAL IDENTITY CHECK (mandatory before output):
+The portrait face on the card MUST still be the exact person from the original user photo (Image 1).
+If the face looks like the template's original player or a new/generic athlete, you MUST correct it to match Image 1.
+Glasses, beard, hairline, and skin tone from Image 1 must remain visible and recognizable."""
+
+FIFA_CARD_COMPOSITE_PROMPT = """TWO INPUT IMAGES — ROLES:
+
+IMAGE 1 = LOCKED PLAYER PORTRAIT — the face is already correct. Do NOT change this person's face.
+IMAGE 2 = TRADING CARD TEMPLATE — copy card design/layout at 100% fidelity.
+
+Place Image 1's portrait into Image 2's portrait slot.
+Keep Image 1's exact face, glasses, beard, hair, and skin tone unchanged.
+Copy Image 2's frame, colors, typography, stats areas, and badges exactly.
+Only update player text/stats in the template's existing slots."""
 
 FIFA_TEMPLATE_STRICT_RULES = """FINAL CHECKLIST:
 - Face in output = Image 1 user photo (NOT the template face, NOT a new face)
@@ -153,6 +181,7 @@ FIFA_TEAMS = [
 
 def build_fifa_card_context(
     profile: Optional[dict] = None,
+    include_stats: bool = True,
     is_ai_stats: bool = True,
     stats: Optional[dict] = None,
 ) -> str:
@@ -172,19 +201,20 @@ def build_fifa_card_context(
             profile_parts.append(f"Name: {full_name}")
     if profile.get("jersey_number"):
         profile_parts.append(f"Jersey #: {profile['jersey_number']}")
-    if profile.get("age"):
-        profile_parts.append(f"Age: {profile['age']}")
-    if profile.get("height_cm"):
-        profile_parts.append(f"Height: {profile['height_cm']} cm")
-    if profile.get("weight_kg"):
-        profile_parts.append(f"Weight: {profile['weight_kg']} kg")
 
     if profile_parts:
         lines.append("PLAYER PROFILE (fill into the template's existing name/info slots only — do not change card design):")
         lines.extend(f"- {part}" for part in profile_parts)
 
+    if not include_stats:
+        lines.append(
+            "PLAYER STATS: Do NOT generate or update any stats, ratings, position abbreviation, or attribute values. "
+            "Preserve the template's original stat areas exactly as shown in the card template."
+        )
+        return "\n".join(lines)
+
     position_code = (stats.get("position") or "").strip().upper()
-    if position_code:
+    if not is_ai_stats and position_code:
         position_text = format_fifa_position(position_code)
         lines.append(
             f"PLAYER POSITION: {position_text}. "
@@ -194,8 +224,9 @@ def build_fifa_card_context(
 
     if is_ai_stats:
         lines.append(
-            "PLAYER STATS: Use AI-generated FIFA-style stats that fit the player's appearance and position. "
-            "Render overall rating and attributes (PAC, SHO, PAS, DRI, DEF, PHY) in the template's existing stat areas only."
+            "PLAYER STATS: Use AI-generated FIFA-style stats that fit the player's appearance. "
+            "Choose a realistic position abbreviation (GK, RB, LB, CB, CDM, CM, CAM, RM, LM, RW, LW, CF, ST) "
+            "and render overall rating plus attributes (PAC, SHO, PAS, DRI, DEF, PHY) in the template's existing stat areas only."
         )
     else:
         stat_lines = []
