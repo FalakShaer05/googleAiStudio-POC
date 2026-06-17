@@ -666,6 +666,12 @@ def generate_fifa_worldcup_web():
                 temperature = parsed_temperature
 
         fifa_prompt = request.form.get("fifa_prompt", "").strip()
+        raw_prompt_mode_raw = request.form.get("raw_prompt_mode", "").strip()
+        raw_prompt_mode = (
+            _parse_bool_form_value(raw_prompt_mode_raw, default=False)
+            if raw_prompt_mode_raw
+            else None
+        )
         player_profile, include_stats, is_ai_stats, player_stats = _parse_fifa_player_form()
         logo_position = request.form.get("logo_position", "top_right").strip().lower() or "top_right"
         if logo_position not in ALLOWED_LOGO_POSITIONS:
@@ -723,6 +729,7 @@ def generate_fifa_worldcup_web():
             include_stats=include_stats,
             is_ai_stats=is_ai_stats,
             player_stats=player_stats or None,
+            raw_prompt_mode=raw_prompt_mode,
         )
 
         cleanup_file(photo_path)
@@ -735,7 +742,7 @@ def generate_fifa_worldcup_web():
         cloudfront_url = upload_image_to_s3(out_path)
         response_data = {
             "success": True,
-            "message": "FIFA World Cup trading card generated successfully",
+            "message": message or "FIFA World Cup trading card generated successfully",
             "output_filename": out_filename,
             "local_path": f"/outputs/{out_filename}",
         }
@@ -1458,6 +1465,12 @@ def api_generate_fifa_worldcup():
         type: string
         required: false
         description: Optional custom prompt override
+      - in: formData
+        name: raw_prompt_mode
+        type: string
+        required: false
+        default: "false"
+        description: When true, single Gemini call with form inputs prepended above fifa_prompt only (no identity wrappers). Server default from FIFA_RAW_PROMPT_MODE env when omitted.
       - in: formData
         name: include_stats
         type: string
