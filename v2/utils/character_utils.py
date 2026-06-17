@@ -40,10 +40,10 @@ def get_gemini_image_model() -> str:
     """
     Returns the Gemini model id used for image generation/editing.
 
-    Defaults to the stable GA model. Override via GEMINI_IMAGE_MODEL to avoid
+    Defaults to gemini-3-pro-image. Override via GEMINI_IMAGE_MODEL to avoid
     code changes when Google retires preview model ids.
     """
-    return os.getenv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+    return os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
 
 
 def get_gemini_fallback_image_model() -> Optional[str]:
@@ -888,6 +888,56 @@ def generate_image_in_reference_style(
         return False, str(e)
 
 
+def _build_fifa_gemini_contents(
+    user_image: Image.Image,
+    template_image: Image.Image,
+    task_instruction: str,
+    jersey_image: Optional[Image.Image] = None,
+) -> list:
+    """
+    Build Gemini contents with text labels interleaved before each image so the
+    model correctly separates identity (Image 1), jersey kit (Image 2), and
+    card template (Image 3).
+    """
+    template_index = 3 if jersey_image is not None else 2
+    contents = [
+        (
+            "IMAGE 1 — USER PHOTO (IDENTITY SOURCE): "
+            "This is the ONLY image to copy the player's face from. "
+            "Study this person's facial features carefully before generating."
+        ),
+        user_image,
+        (
+            "IDENTITY LOCK AFTER IMAGE 1: "
+            "The face in your output MUST match this person exactly — same eyes, nose, mouth, "
+            "jawline, skin tone, hair, and distinctive features. "
+            "This identity overrides any face visible in the template."
+        ),
+    ]
+
+    if jersey_image is not None:
+        contents.extend([
+            (
+                "IMAGE 2 — JERSEY REFERENCE (KIT/CLOTHING ONLY): "
+                "Use ONLY for shirt design, colors, crest, sponsor marks, and kit details. "
+                "DO NOT copy any face, head, skin, or body identity from this image."
+            ),
+            jersey_image,
+        ])
+
+    contents.extend([
+        (
+            f"IMAGE {template_index} — TRADING CARD TEMPLATE (DESIGN/LAYOUT ONLY): "
+            "Reproduce this card at 100% fidelity — frame, colors, layout, typography, badges, and decorations. "
+            "IGNORE and REPLACE the portrait face in this template with the person from Image 1. "
+            "DO NOT keep the template's original face."
+        ),
+        template_image,
+        task_instruction,
+    ])
+    return contents
+
+
 def generate_fifa_worldcup_card(
     user_photo_path: str,
     template_path: str,
@@ -907,89 +957,90 @@ def generate_fifa_worldcup_card(
     - Image 2 = Official Team Jersey Reference (optional)
     - Image 3 = FIFA World Cup 2026 Trading Card Template
     """
-    from utils.prompts import FIFA_WORLD_CUP_PROMPT, FIFA_TEMPLATE_STRICT_RULES, build_fifa_card_context
-
-    if temperature is None:
-        temperature = 0.4
-
-    base_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_WORLD_CUP_PROMPT
-    context = build_fifa_card_context(
-        profile=player_profile,
-        is_ai_stats=is_ai_stats,
-        stats=player_stats,
-    )
-    prompt_parts = [base_prompt]
-    if context:
-        prompt_parts.append(context)
-    prompt_parts.append(FIFA_TEMPLATE_STRICT_RULES)
-    prompt = "\n\n".join(prompt_parts)
-
-    template_image_index = 3 if jersey_path else 2
-    source_label = (
-        "USER PHOTO (Image 1 — identity reference only): "
-        "Use this person's exact face and likeness in the template portrait slot. "
-        "Do not copy background, pose framing, or lighting from this image unless the template requires it."
-    )
-    jersey_label = (
-        "OFFICIAL TEAM JERSEY (Image 2 — kit reference only): "
-        "Match this exact jersey design on the player in the template portrait area."
-    )
-    reference_label = (
-        f"TRADING CARD TEMPLATE (Image {template_image_index} — mandatory 100% exact reference): "
-        "Reproduce this card design with 100% fidelity. Copy every visual detail — frame, colors, layout, "
-        "typography, badges, and decorative elements exactly. Only swap the player photo and player text data."
+    from utils.prompts import (
+        FIFA_WORLD_CUP_PROMPT,
+        FIFA_IDENTITY_LOCK,
+        FIFA_TEMPLATE_STRICT_RULES,
+        build_fifa_card_context,
     )
 
-    if jersey_path:
-        return generate_image_in_reference_style(
-            reference_path=template_path,
-            source_path=user_photo_path,
-            output_path=output_path,
-            jersey_path=jersey_path,
-            temperature=temperature,
-            user_prompt=prompt,
-            logo_position=logo_position,
-            apply_logo_overlay=False,
-            source_label=source_label,
-            jersey_label=jersey_label,
-            reference_label=reference_label,
+    try:
+        client = get_gemini_client()
+        if not os.path.exists(user_photo_path):
+            return False, f"User photo not found: {user_photo_path}"
+        if not os.path.exists(template_path):
+            return False, f"Trading card template not found: {template_path}"
+        if jersey_path and not os.path.exists(jersey_path):
+            return False, f"Jersey image not found: {jersey_path}"
+
+        def to_rgb(img: Image.Image) -> Image.Image:
+            img = img.copy()
+            if img.mode == "RGBA":
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[3])
+                return background
+            if img.mode != "RGB":
+                return img.convert("RGB")
+            return img
+
+        user_image = to_rgb(Image.open(user_photo_path))
+        template_image = to_rgb(Image.open(template_path))
+        jersey_image = to_rgb(Image.open(jersey_path)) if jersey_path else None
+
+        if temperature is None:
+            temperature = 0.25
+
+        base_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_WORLD_CUP_PROMPT
+        context = build_fifa_card_context(
+            profile=player_profile,
+            is_ai_stats=is_ai_stats,
+            stats=player_stats,
         )
 
-    # Without jersey, remap image indices in the default FIFA prompt.
-    prompt_without_jersey = prompt.replace(
-        "IMAGE 2 = Official Team Jersey Reference (optional — only if a jersey image was provided)\n",
-        "",
-    ).replace(
-        "IMAGE 3 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)",
-        "IMAGE 2 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)",
-    ).replace(
-        "Image 3 is the trading card template. Your output MUST reproduce Image 3 at 100% accuracy.\n"
-        "Copy EXACTLY from Image 3:",
-        "Image 2 is the trading card template. Your output MUST reproduce Image 2 at 100% accuracy.\n"
-        "Copy EXACTLY from Image 2:",
-    ).replace(
-        "DO NOT change the color palette, frame shape, borders, or composition of Image 3.",
-        "DO NOT change the color palette, frame shape, borders, or composition of Image 2.",
-    ).replace(
-        "JERSEY (Image 2, if provided):\n"
-        "Dress the person in the exact official team jersey from Image 2 — match colors, crest, sponsor marks, and kit details precisely.\n\n",
-        "",
-    ).replace(
-        "A single finished trading card image that is visually identical to Image 3, with only the player photo and player data updated in their correct slots.",
-        "A single finished trading card image that is visually identical to Image 2, with only the player photo and player data updated in their correct slots.",
-    )
-    reference_label_no_jersey = reference_label.replace("Image 3", "Image 2")
-    return generate_image_in_reference_style(
-        reference_path=template_path,
-        source_path=user_photo_path,
-        output_path=output_path,
-        temperature=temperature,
-        user_prompt=prompt_without_jersey,
-        logo_position=logo_position,
-        apply_logo_overlay=False,
-        source_label=source_label,
-        reference_label=reference_label_no_jersey,
-    )
+        template_w, template_h = template_image.size
+        aspect_ratio = select_gemini_aspect_ratio(template_w, template_h)
+        output_size_note = (
+            f"OUTPUT SIZE: Match the trading card template dimensions and aspect ratio "
+            f"({template_w}x{template_h}, {aspect_ratio})."
+        )
+
+        prompt_parts = [FIFA_IDENTITY_LOCK, base_prompt]
+        if context:
+            prompt_parts.append(context)
+        prompt_parts.extend([FIFA_TEMPLATE_STRICT_RULES, output_size_note])
+        task_instruction = "\n\n".join(prompt_parts)
+
+        contents = _build_fifa_gemini_contents(
+            user_image=user_image,
+            template_image=template_image,
+            jersey_image=jersey_image,
+            task_instruction=task_instruction,
+        )
+
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=contents,
+            seed=None,
+            temperature=temperature,
+            aspect_ratio=aspect_ratio,
+        )
+
+        img = _extract_final_image_from_response(response)
+        if img is not None:
+            if not hasattr(img, "size") or not isinstance(img, Image.Image):
+                return False, "Invalid image object returned from Gemini"
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+            img.save(output_path, optimize=True)
+            return True, "FIFA World Cup trading card generated successfully"
+        return False, "No image generated by Gemini"
+    except Exception as e:
+        print(f"generate_fifa_worldcup_card error: {e}")
+        return False, str(e)
 
 
 def generate_character_with_identity(

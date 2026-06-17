@@ -639,15 +639,21 @@ def generate_fifa_worldcup_web():
     """
     try:
         user_photo_file = request.files.get("source")
-        if not user_photo_file or not user_photo_file.filename:
-            return jsonify({"error": "User photo is required"}), 400
-        if not allowed_file(user_photo_file.filename):
+        source_url = request.form.get("source_url", "").strip()
+        if user_photo_file and user_photo_file.filename and source_url:
+            return jsonify({"error": "Provide either user photo file or source_url, not both"}), 400
+        if (not user_photo_file or not user_photo_file.filename) and not source_url:
+            return jsonify({"error": "User photo is required (upload a file or provide source_url)"}), 400
+        if user_photo_file and user_photo_file.filename and not allowed_file(user_photo_file.filename):
             return jsonify({"error": "Invalid user photo file type"}), 400
 
         template_file = request.files.get("template")
-        if not template_file or not template_file.filename:
-            return jsonify({"error": "Trading card template is required"}), 400
-        if not allowed_file(template_file.filename):
+        template_url = request.form.get("template_url", "").strip()
+        if template_file and template_url:
+            return jsonify({"error": "Provide either template file or template_url, not both"}), 400
+        if (not template_file or not template_file.filename) and not template_url:
+            return jsonify({"error": "Trading card template is required (upload a file or provide template_url)"}), 400
+        if template_file and template_file.filename and not allowed_file(template_file.filename):
             return jsonify({"error": "Invalid template file type"}), 400
 
         jersey_file = request.files.get("jersey")
@@ -668,13 +674,26 @@ def generate_fifa_worldcup_web():
         if logo_position not in ALLOWED_LOGO_POSITIONS:
             return jsonify({"error": f"Invalid logo_position '{logo_position}'"}), 400
 
-        photo_filename = generate_unique_filename(user_photo_file.filename, "fifa_photo")
-        photo_path = os.path.join(UPLOAD_FOLDER, photo_filename)
-        user_photo_file.save(photo_path)
+        if user_photo_file and user_photo_file.filename:
+            photo_filename = generate_unique_filename(user_photo_file.filename, "fifa_photo")
+            photo_path = os.path.join(UPLOAD_FOLDER, photo_filename)
+            user_photo_file.save(photo_path)
+        else:
+            photo_path = download_image_from_url(source_url, UPLOAD_FOLDER)
+            if not photo_path:
+                return jsonify({"error": "Failed to download user photo from URL"}), 400
+            photo_filename = os.path.basename(photo_path)
 
-        template_filename = generate_unique_filename(template_file.filename, "fifa_template")
-        template_path = os.path.join(UPLOAD_FOLDER, template_filename)
-        template_file.save(template_path)
+        if template_file and template_file.filename:
+            template_filename = generate_unique_filename(template_file.filename, "fifa_template")
+            template_path = os.path.join(UPLOAD_FOLDER, template_filename)
+            template_file.save(template_path)
+        else:
+            template_path = download_image_from_url(template_url, UPLOAD_FOLDER)
+            if not template_path:
+                cleanup_file(photo_path)
+                return jsonify({"error": "Failed to download trading card template from URL"}), 400
+            template_filename = os.path.basename(template_path)
 
         jersey_path = None
         if jersey_file and jersey_file.filename:
@@ -1403,13 +1422,23 @@ def api_generate_fifa_worldcup():
       - in: formData
         name: source
         type: file
-        required: true
-        description: User photo (identity reference, Image 1)
+        required: false
+        description: User photo (identity reference, Image 1). Required if source_url is not provided.
+      - in: formData
+        name: source_url
+        type: string
+        required: false
+        description: URL for user photo (Image 1). Required if source file is not provided.
       - in: formData
         name: template
         type: file
-        required: true
-        description: FIFA World Cup 2026 trading card template (Image 3)
+        required: false
+        description: FIFA World Cup 2026 trading card template (Image 3). Required if template_url is not provided.
+      - in: formData
+        name: template_url
+        type: string
+        required: false
+        description: URL for trading card template (Image 3). Required if template file is not provided.
       - in: formData
         name: jersey
         type: file

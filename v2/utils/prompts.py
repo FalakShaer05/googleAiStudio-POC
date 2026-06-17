@@ -40,38 +40,59 @@ STRICT RULES:
 ✅ Each character keeps ONLY what they had in their original image.
 ✅ Only adjust positioning and size slightly to blend them naturally."""
 
-FIFA_WORLD_CUP_PROMPT = """IMAGE 1 = User Photo (identity reference only)
-IMAGE 2 = Official Team Jersey Reference (optional — only if a jersey image was provided)
-IMAGE 3 = FIFA World Cup 2026 Trading Card Template (MANDATORY EXACT REFERENCE)
+FIFA_WORLD_CUP_PROMPT = """THREE INPUT IMAGES — ROLES (read carefully before generating):
 
-CRITICAL — TEMPLATE FIDELITY (100% REQUIRED):
-Image 3 is the trading card template. Your output MUST reproduce Image 3 at 100% accuracy.
-Copy EXACTLY from Image 3:
+IMAGE 1 = USER PHOTO → sole source for the player's FACE and IDENTITY
+IMAGE 2 = JERSEY PHOTO → sole source for KIT/JERSEY design only (optional)
+IMAGE 3 = TRADING CARD TEMPLATE → sole source for CARD DESIGN/LAYOUT only
+
+PRIORITY ORDER (when instructions conflict):
+1. Identity from Image 1 (highest — face must match Image 1 exactly)
+2. Card design from Image 3 (100% template fidelity for frame, layout, typography, badges)
+3. Jersey kit from Image 2 (dress Image 1's person in this exact jersey when provided)
+
+CRITICAL — TEMPLATE FIDELITY (Image 3):
+Reproduce Image 3 at 100% accuracy for:
 - Card dimensions, aspect ratio, and outer frame
 - Background colors, gradients, patterns, and textures
 - Border style, corner shapes, foil/holographic effects, and shadows
 - Logo placement, crest positions, sponsor areas, flags, and badges
 - Typography style, font weight, label positions, stat bars, and number styling
 - All decorative elements, icons, dividers, and graphic ornaments
-- Overall layout grid — every design element stays in the same place
 
 DO NOT invent a new card design. DO NOT simplify, modernize, crop, or restyle the template.
-DO NOT change the color palette, frame shape, borders, or composition of Image 3.
-Only replace: (1) the player portrait/photo area with the person from Image 1, and (2) text/stat values with the player profile and stats provided below — inside the existing text slots only.
-
-IDENTITY (Image 1):
-Preserve exact face, identity, skin tone, hair, and likeness from Image 1 when placing the player into the template's portrait slot.
+Only replace: (1) the portrait face/body in the template with the person from Image 1, and (2) text/stat values in existing slots.
 
 JERSEY (Image 2, if provided):
-Dress the person in the exact official team jersey from Image 2 — match colors, crest, sponsor marks, and kit details precisely.
+Apply this exact jersey onto the person from Image 1. Image 2 is clothing reference ONLY — never copy any face from Image 2.
 
 OUTPUT:
-A single finished trading card image that is visually identical to Image 3, with only the player photo and player data updated in their correct slots."""
+One finished trading card visually identical to Image 3, with Image 1's face in the portrait slot and updated player text."""
 
-FIFA_TEMPLATE_STRICT_RULES = """FINAL TEMPLATE CHECKLIST:
-- The output card must be pixel-faithful to the template reference image in style, layout, and design.
-- Treat the template as a fixed master artwork — swap in the user photo and player text only.
-- If unsure, prefer an exact copy of the template over any creative interpretation."""
+FIFA_IDENTITY_LOCK = """CRITICAL — IDENTITY LOCK (HIGHEST PRIORITY — Image 1):
+The output player's face MUST be recognizably the SAME PERSON as Image 1 (user photo).
+
+PRESERVE from Image 1:
+- Face shape, eye shape/color, eyebrows, nose, lips, jawline, cheekbones
+- Skin tone and complexion
+- Hair color, hair style, facial hair
+- Distinctive features (moles, scars, glasses if worn, etc.)
+- Approximate age appearance
+
+FORBIDDEN:
+- Do NOT keep or copy the face shown in the trading card template (Image 3) — replace it entirely with Image 1
+- Do NOT use any face or head from the jersey image (Image 2)
+- Do NOT blend, average, or morph faces between images
+- Do NOT beautify, age-shift, or generate a generic stock athlete face
+
+Composite Image 1's real face into the template's portrait area. The result must look like the user from Image 1 wearing the kit, inside the card from Image 3."""
+
+FIFA_TEMPLATE_STRICT_RULES = """FINAL CHECKLIST:
+- Face in output = Image 1 user photo (NOT the template face, NOT a new face)
+- Card design in output = Image 3 template at 100% fidelity
+- Jersey in output = Image 2 kit on Image 1's person (if jersey provided)
+- If unsure about the face, match Image 1 more closely
+- If unsure about the card design, match Image 3 more closely"""
 
 FIFA_POSITIONS = {
     "GK": "Goalkeeper",

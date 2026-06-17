@@ -12,7 +12,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
     HOME=/app \
     REMBG_MODEL_ORDER=u2net,isnet-general-use,birefnet-general \
-    SKIP_FREEPIK=false
+    SKIP_FREEPIK=false \
+    GEMINI_IMAGE_MODEL=gemini-3-pro-image \
+    GEMINI_FALLBACK_IMAGE_MODEL=gemini-2.5-flash-image \
+    GEMINI_MAX_RETRIES=3 \
+    GEMINI_RETRY_INITIAL_DELAY_S=1.0 \
+    GEMINI_RETRY_MAX_DELAY_S=10.0
 
 # Install minimal system dependencies (only what's absolutely needed)
 RUN apt-get update && apt-get install -y \

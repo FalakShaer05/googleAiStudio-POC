@@ -974,7 +974,7 @@
       <div class="p-4">
         <div class="mb-4">
           <h5 class="mb-3"><i class="fas fa-user me-2"></i>User Photo (Image 1)</h5>
-          <p class="text-muted small mb-3">Identity reference — face and likeness are preserved from this image.</p>
+          <p class="text-muted small mb-3">Identity source — your face and likeness are taken only from this image. Use a clear, front-facing photo.</p>
           <div class="upload-area" onclick="document.getElementById('fifaUserPhotoInput').click()">
             <div class="upload-icon"><i class="fas fa-user"></i></div>
             <h5 class="mb-1">Click to choose user photo</h5>
@@ -989,6 +989,15 @@
                 <i class="fas fa-times"></i>
               </button>
             </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or user photo URL:</label>
+            <input
+              type="url"
+              id="fifaUserPhotoUrl"
+              class="form-control form-control-sm"
+              placeholder="https://example.com/user-photo.jpg"
+            />
           </div>
         </div>
 
@@ -1196,6 +1205,15 @@
               </button>
             </div>
           </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or card template URL:</label>
+            <input
+              type="url"
+              id="fifaTemplateUrl"
+              class="form-control form-control-sm"
+              placeholder="https://example.com/card-template.jpg"
+            />
+          </div>
         </div>
 
         <div class="mb-4">
@@ -1208,11 +1226,11 @@
             min="0"
             max="2"
             step="0.1"
-            value="0.4"
+            value="0.25"
           />
           <div class="d-flex justify-content-between">
             <small>0 (strictest)</small>
-            <small id="fifaTemperatureValue">0.4</small>
+            <small id="fifaTemperatureValue">0.25</small>
             <small>2 (creative)</small>
           </div>
         </div>
@@ -2188,12 +2206,20 @@ STRICT RULES:
         fifaUserPhotoFile = file;
         document.getElementById("fifaUserPhotoFileName").textContent = file.name;
         document.getElementById("fifaUserPhotoFileInfo").style.display = "block";
+        document.getElementById("fifaUserPhotoUrl").value = "";
       }
     });
     document.getElementById("clearFifaUserPhotoBtn").addEventListener("click", () => {
       fifaUserPhotoFile = null;
       document.getElementById("fifaUserPhotoInput").value = "";
       document.getElementById("fifaUserPhotoFileInfo").style.display = "none";
+    });
+    document.getElementById("fifaUserPhotoUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        fifaUserPhotoFile = null;
+        document.getElementById("fifaUserPhotoInput").value = "";
+        document.getElementById("fifaUserPhotoFileInfo").style.display = "none";
+      }
     });
 
     document.getElementById("fifaJerseyInput").addEventListener("change", (e) => {
@@ -2224,12 +2250,20 @@ STRICT RULES:
         fifaTemplateFile = file;
         document.getElementById("fifaTemplateFileName").textContent = file.name;
         document.getElementById("fifaTemplateFileInfo").style.display = "block";
+        document.getElementById("fifaTemplateUrl").value = "";
       }
     });
     document.getElementById("clearFifaTemplateBtn").addEventListener("click", () => {
       fifaTemplateFile = null;
       document.getElementById("fifaTemplateInput").value = "";
       document.getElementById("fifaTemplateFileInfo").style.display = "none";
+    });
+    document.getElementById("fifaTemplateUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        fifaTemplateFile = null;
+        document.getElementById("fifaTemplateInput").value = "";
+        document.getElementById("fifaTemplateFileInfo").style.display = "none";
+      }
     });
 
     const fifaDownloadLink = document.getElementById("fifaDownloadLink");
@@ -2266,24 +2300,37 @@ STRICT RULES:
     });
 
     document.getElementById("generateFifaBtn").addEventListener("click", async () => {
-      if (!fifaUserPhotoFile) {
+      const fifaUserPhotoUrlValue = document.getElementById("fifaUserPhotoUrl").value.trim();
+      const fifaTemplateUrlValue = document.getElementById("fifaTemplateUrl").value.trim();
+
+      if (!fifaUserPhotoFile && !fifaUserPhotoUrlValue) {
         const el = document.getElementById("fifaStatus");
         el.className = "status-message status-error";
-        el.textContent = "Please upload a user photo.";
+        el.textContent = "Please upload a user photo or provide a user photo URL.";
         el.style.display = "block";
         return;
       }
-      if (!fifaTemplateFile) {
+      if (!fifaTemplateFile && !fifaTemplateUrlValue) {
         const el = document.getElementById("fifaStatus");
         el.className = "status-message status-error";
-        el.textContent = "Please upload a trading card template.";
+        el.textContent = "Please upload a trading card template or provide a template URL.";
         el.style.display = "block";
         return;
       }
 
       const formData = new FormData();
-      formData.append("source", fifaUserPhotoFile);
-      formData.append("template", fifaTemplateFile);
+      if (fifaUserPhotoFile) {
+        formData.append("source", fifaUserPhotoFile);
+      }
+      if (fifaUserPhotoUrlValue) {
+        formData.append("source_url", fifaUserPhotoUrlValue);
+      }
+      if (fifaTemplateFile) {
+        formData.append("template", fifaTemplateFile);
+      }
+      if (fifaTemplateUrlValue) {
+        formData.append("template_url", fifaTemplateUrlValue);
+      }
       appendFifaProfileAndStats(formData);
       if (fifaJerseyFile) {
         formData.append("jersey", fifaJerseyFile);
