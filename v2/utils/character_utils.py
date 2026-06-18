@@ -1031,6 +1031,14 @@ def _build_fifa_gemini_contents(
     return contents
 
 
+def _fifa_raw_prompt_mode_enabled(raw_prompt_mode: Optional[bool] = None) -> bool:
+    """Resolve raw prompt mode from an explicit flag or FIFA_RAW_PROMPT_MODE env (default false)."""
+    if raw_prompt_mode is not None:
+        return raw_prompt_mode
+    value = (os.getenv("FIFA_RAW_PROMPT_MODE") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _build_fifa_raw_prompt(context: str, user_prompt: Optional[str]) -> str:
     """Build prompt for raw mode: form inputs above, user prompt below — no wrapper text."""
     context_text = (context or "").strip()
@@ -1056,6 +1064,24 @@ def _build_fifa_raw_gemini_contents(
     return contents
 
 
+def _build_fifa_task_instruction(
+    base_prompt: str,
+    context: str,
+    output_size_note: str,
+    include_final_identity_reminder: bool = True,
+) -> str:
+    from utils.prompts import FIFA_IDENTITY_LOCK, FIFA_IDENTITY_FINAL_REMINDER, FIFA_TEMPLATE_STRICT_RULES
+
+    prompt_parts = [FIFA_IDENTITY_LOCK, base_prompt]
+    if context:
+        prompt_parts.append(context)
+    prompt_parts.append(FIFA_TEMPLATE_STRICT_RULES)
+    prompt_parts.append(output_size_note)
+    if include_final_identity_reminder:
+        prompt_parts.append(FIFA_IDENTITY_FINAL_REMINDER)
+    return "\n\n".join(prompt_parts)
+
+
 def generate_fifa_worldcup_card(
     user_photo_path: str,
     template_path: str,
@@ -1068,6 +1094,7 @@ def generate_fifa_worldcup_card(
     include_stats: bool = True,
     is_ai_stats: bool = True,
     player_stats: Optional[Dict[str, Any]] = None,
+    raw_prompt_mode: Optional[bool] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a FIFA World Cup 2026 trading card.
@@ -1076,9 +1103,13 @@ def generate_fifa_worldcup_card(
     - Image 2 = Official Team Jersey Reference (optional)
     - Image 3 = FIFA World Cup 2026 Trading Card Template
 
-    Uses a single Gemini call with images + form inputs prepended above the user prompt.
+    When raw_prompt_mode is true (or FIFA_RAW_PROMPT_MODE env), uses a single Gemini call
+    with images + user inputs prepended above the user prompt only (no wrapper text).
     """
-    from utils.prompts import build_fifa_raw_context
+    from utils.prompts import (
+        FIFA_CARD_COMPOSITE_PROMPT,
+        build_fifa_card_context,
+    )
 
     try:
         client = get_gemini_client()
@@ -1088,6 +1119,8 @@ def generate_fifa_worldcup_card(
             return False, f"Trading card template not found: {template_path}"
         if jersey_path and not os.path.exists(jersey_path):
             return False, f"Jersey image not found: {jersey_path}"
+
+        use_raw_prompt = _fifa_raw_prompt_mode_enabled(raw_prompt_mode)
 
         def to_rgb(img: Image.Image) -> Image.Image:
             img = img.copy()
@@ -1103,32 +1136,86 @@ def generate_fifa_worldcup_card(
         template_image = to_rgb(Image.open(template_path))
         jersey_image = to_rgb(Image.open(jersey_path)) if jersey_path else None
 
-        template_w, template_h = template_image.size
-        aspect_ratio = select_gemini_aspect_ratio(template_w, template_h)
-
-        context = build_fifa_raw_context(
+        context = build_fifa_card_context(
             profile=player_profile,
             include_stats=include_stats,
             is_ai_stats=is_ai_stats,
             stats=player_stats,
         )
-        prompt = _build_fifa_raw_prompt(context, user_prompt)
-        if not prompt:
-            return False, "Prompt is required"
-        contents = _build_fifa_raw_gemini_contents(
-            user_image=user_image_raw,
-            template_image=template_image,
-            prompt=prompt,
-            jersey_image=jersey_image,
-        )
-        response = _generate_content_image(
-            client=client,
-            model=get_gemini_image_model(),
-            contents=contents,
-            seed=None,
-            temperature=temperature,
-            aspect_ratio=aspect_ratio,
-        )
+
+        template_w, template_h = template_image.size
+        aspect_ratio = select_gemini_aspect_ratio(template_w, template_h)
+
+        if use_raw_prompt:
+            user_image = user_image_raw
+            prompt = _build_fifa_raw_prompt(context, user_prompt)
+            if not prompt:
+                return False, "Prompt is required in raw prompt mode (enter a prompt or fill profile/stats fields)"
+            contents = _build_fifa_raw_gemini_contents(
+                user_image=user_image,
+                template_image=template_image,
+                prompt=prompt,
+                jersey_image=jersey_image,
+            )
+            response = _generate_content_image(
+                client=client,
+                model=get_gemini_image_model(),
+                contents=contents,
+                seed=None,
+                temperature=temperature,
+                aspect_ratio=aspect_ratio,
+            )
+        else:
+            user_image = _prepare_fifa_identity_photo(user_image_raw)
+            if temperature is None:
+                temperature = 0.1
+
+            output_size_note = (
+                f"OUTPUT SIZE: Match the trading card template dimensions and aspect ratio "
+                f"({template_w}x{template_h}, {aspect_ratio})."
+            )
+            composite_prompt = user_prompt.strip() if user_prompt and str(user_prompt).strip() else FIFA_CARD_COMPOSITE_PROMPT
+            task_instruction = _build_fifa_task_instruction(composite_prompt, context, output_size_note)
+
+            seed = generate_seed_from_inputs(
+                user_photo_path,
+                template_path,
+                jersey_path or "",
+                context,
+                composite_prompt,
+            )
+
+            # Pass 1: generate identity-locked portrait (with jersey if provided).
+            identity_portrait = _generate_fifa_identity_portrait(
+                client=client,
+                user_image=user_image,
+                jersey_image=jersey_image,
+                temperature=temperature,
+                seed=seed,
+            )
+            if identity_portrait is None:
+                return False, "Failed to generate identity-locked player portrait"
+
+            if identity_portrait.mode not in ("RGB", "RGBA"):
+                identity_portrait = identity_portrait.convert("RGB")
+
+            # Pass 2: composite locked portrait onto the trading card template.
+            contents = _build_fifa_gemini_contents(
+                user_image=identity_portrait,
+                template_image=template_image,
+                jersey_image=None,
+                task_instruction=task_instruction,
+                use_identity_portrait=True,
+            )
+
+            response = _generate_content_image(
+                client=client,
+                model=get_gemini_image_model(),
+                contents=contents,
+                seed=seed + 1,
+                temperature=temperature,
+                aspect_ratio=aspect_ratio,
+            )
 
         img = _extract_final_image_from_response(response)
         if img is not None:

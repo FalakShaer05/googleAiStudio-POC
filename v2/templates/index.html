@@ -1233,16 +1233,31 @@
           </div>
         </div>
 
+        <div class="mb-4 fifa-section-card">
+          <div class="fifa-toggle-row mb-3">
+            <div>
+              <label class="form-label fw-bold mb-1" for="fifaRawPromptMode">Raw prompt mode (AI Studio style)</label>
+              <small class="text-muted d-block">
+                One Gemini call — profile/stats text is placed above your prompt only. No identity wrappers or two-pass pipeline.
+              </small>
+            </div>
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" role="switch" id="fifaRawPromptMode" />
+              <label class="form-check-label" for="fifaRawPromptMode" id="fifaRawPromptModeLabel">Off</label>
+            </div>
+          </div>
+        </div>
+
         <div class="mb-4">
-          <label class="form-label fw-bold">Prompt <span class="text-danger">*</span></label>
+          <label class="form-label fw-bold">Prompt <span id="fifaPromptRequiredMark" class="text-danger" style="display: none;">*</span><span id="fifaPromptOptionalMark">(optional)</span></label>
           <textarea
             id="fifaPrompt"
             class="form-control prompt-textarea"
-            placeholder="Paste your Google AI Studio prompt here..."
+            placeholder="Leave empty to use the default strict 100% template-matching instructions..."
             rows="8"
           ></textarea>
-          <small class="text-muted">
-            Your prompt is sent as-is. Profile and stats from the form are prepended above it when filled.
+          <small class="text-muted" id="fifaPromptHelp">
+            Default prompt enforces 100% exact reproduction of the trading card template. Only the user photo and player text are replaced.
           </small>
         </div>
 
@@ -2131,6 +2146,27 @@ STRICT RULES:
       document.getElementById("fifaTemperatureValue").textContent = e.target.value;
     });
 
+    const fifaRawPromptMode = document.getElementById("fifaRawPromptMode");
+    const fifaRawPromptModeLabel = document.getElementById("fifaRawPromptModeLabel");
+    const fifaPromptRequiredMark = document.getElementById("fifaPromptRequiredMark");
+    const fifaPromptOptionalMark = document.getElementById("fifaPromptOptionalMark");
+    const fifaPromptHelp = document.getElementById("fifaPromptHelp");
+
+    function updateFifaRawPromptMode() {
+      const rawEnabled = fifaRawPromptMode.checked;
+      fifaRawPromptModeLabel.textContent = rawEnabled ? "On" : "Off";
+      fifaPromptRequiredMark.style.display = rawEnabled ? "inline" : "none";
+      fifaPromptOptionalMark.style.display = rawEnabled ? "none" : "inline";
+      fifaPromptHelp.textContent = rawEnabled
+        ? "Profile and stats from the form are sent above this prompt. Enter the same prompt you use in Google AI Studio."
+        : "Default prompt enforces 100% exact reproduction of the trading card template. Only the user photo and player text are replaced.";
+      document.getElementById("fifaPrompt").placeholder = rawEnabled
+        ? "Paste your Google AI Studio prompt here..."
+        : "Leave empty to use the default strict 100% template-matching instructions...";
+    }
+    fifaRawPromptMode.addEventListener("change", updateFifaRawPromptMode);
+    updateFifaRawPromptMode();
+
     const fifaIncludeStats = document.getElementById("fifaIncludeStats");
     const fifaIncludeStatsLabel = document.getElementById("fifaIncludeStatsLabel");
     const fifaStatsOptionsSection = document.getElementById("fifaStatsOptionsSection");
@@ -2350,14 +2386,24 @@ STRICT RULES:
         formData.append("temperature", fifaTemperatureValue.toString());
       }
       const fifaPromptValue = document.getElementById("fifaPrompt").value.trim();
-      if (!fifaPromptValue) {
-        const el = document.getElementById("fifaStatus");
-        el.className = "status-message status-error";
-        el.textContent = "A prompt is required.";
-        el.style.display = "block";
-        return;
+      if (fifaRawPromptMode.checked && !fifaPromptValue) {
+        const hasProfileInput =
+          document.getElementById("fifaClubTeam").value.trim() ||
+          document.getElementById("fifaFirstName").value.trim() ||
+          document.getElementById("fifaLastName").value.trim() ||
+          document.getElementById("fifaJerseyNumber").value.trim();
+        if (!hasProfileInput) {
+          const el = document.getElementById("fifaStatus");
+          el.className = "status-message status-error";
+          el.textContent = "Raw prompt mode requires a prompt or profile/stats fields.";
+          el.style.display = "block";
+          return;
+        }
       }
-      formData.append("fifa_prompt", fifaPromptValue);
+      if (fifaPromptValue) {
+        formData.append("fifa_prompt", fifaPromptValue);
+      }
+      formData.append("raw_prompt_mode", fifaRawPromptMode.checked ? "true" : "false");
 
       document.getElementById("fifaProgress").style.display = "block";
       document.getElementById("fifaProgressText").textContent = "Generating...";
