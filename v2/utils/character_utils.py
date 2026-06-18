@@ -1031,6 +1031,168 @@ def _build_fifa_gemini_contents(
     return contents
 
 
+def _fifa_is_outer_canvas_pixel(
+    r: int,
+    g: int,
+    b: int,
+    light_threshold: int = 235,
+    dark_threshold: int = 28,
+) -> bool:
+    """True for near-white or near-black canvas pixels outside the card outline."""
+    if r >= light_threshold and g >= light_threshold and b >= light_threshold:
+        return True
+
+    rgb_avg = (r + g + b) / 3
+    rgb_diff = max(r, g, b) - min(r, g, b)
+    if rgb_avg >= light_threshold - 10 and rgb_diff < 30:
+        return True
+
+    if r <= dark_threshold and g <= dark_threshold and b <= dark_threshold:
+        return True
+    return rgb_avg <= dark_threshold + 5 and rgb_diff < 20
+
+
+def _fifa_build_outer_canvas_mask(
+    img: Image.Image,
+    light_threshold: int = 235,
+    dark_threshold: int = 28,
+):
+    """Return a bool mask of edge-connected outer canvas pixels (white or black margins)."""
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    w, h = img.size
+    if w < 2 or h < 2:
+        return None, img
+
+    if NUMPY_AVAILABLE:
+        arr = np.array(img)
+        r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+        rgb_avg = (r.astype(np.int16) + g.astype(np.int16) + b.astype(np.int16)) / 3
+        rgb_diff = np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])
+        is_light = (r >= light_threshold) & (g >= light_threshold) & (b >= light_threshold)
+        is_near_white = (rgb_avg >= light_threshold - 10) & (rgb_diff < 30)
+        is_dark = (r <= dark_threshold) & (g <= dark_threshold) & (b <= dark_threshold)
+        is_near_black = (rgb_avg <= dark_threshold + 5) & (rgb_diff < 20)
+        background_mask = is_light | is_near_white | is_dark | is_near_black
+    else:
+        pixels = img.load()
+        background_mask = [
+            [
+                _fifa_is_outer_canvas_pixel(
+                    pixels[x, y][0],
+                    pixels[x, y][1],
+                    pixels[x, y][2],
+                    light_threshold,
+                    dark_threshold,
+                )
+                for x in range(w)
+            ]
+            for y in range(h)
+        ]
+
+    outer_bg = [[False] * w for _ in range(h)]
+    visited = [[False] * w for _ in range(h)]
+    queue: deque = deque()
+
+    def is_background(x: int, y: int) -> bool:
+        if NUMPY_AVAILABLE:
+            return bool(background_mask[y, x])
+        return background_mask[y][x]
+
+    for x in range(w):
+        for y in (0, h - 1):
+            if is_background(x, y) and not visited[y][x]:
+                visited[y][x] = True
+                queue.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if is_background(x, y) and not visited[y][x]:
+                visited[y][x] = True
+                queue.append((x, y))
+
+    while queue:
+        x, y = queue.popleft()
+        outer_bg[y][x] = True
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < w and 0 <= ny < h and not visited[ny][nx] and is_background(nx, ny):
+                visited[ny][nx] = True
+                queue.append((nx, ny))
+
+    if NUMPY_AVAILABLE:
+        return np.array(outer_bg, dtype=bool), img
+
+    return outer_bg, img
+
+
+def _fifa_flood_fill_outer_canvas(img: Image.Image) -> Image.Image:
+    """
+    Remove edge-connected outer canvas and return a cropped RGBA card.
+
+    White/black margins and corner padding outside the shield outline become
+    transparent. Internal whites (stats, jersey stripes, logos) are preserved.
+    """
+    if img.mode == "RGBA":
+        rgb_source = img.convert("RGB")
+    elif img.mode != "RGB":
+        rgb_source = img.convert("RGB")
+    else:
+        rgb_source = img
+
+    outer_bg, rgb_source = _fifa_build_outer_canvas_mask(rgb_source)
+    if outer_bg is None:
+        return img.convert("RGBA")
+
+    w, h = rgb_source.size
+
+    if NUMPY_AVAILABLE:
+        if not outer_bg.any():
+            return rgb_source.convert("RGBA")
+
+        arr = np.array(rgb_source)
+        alpha = np.full((h, w), 255, dtype=np.uint8)
+        alpha[outer_bg] = 0
+        rgba = np.dstack([arr, alpha])
+        ys, xs = np.where(alpha > 0)
+        left, top, right, bottom = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+        return Image.fromarray(rgba[top:bottom, left:right], "RGBA")
+
+    if not any(any(row) for row in outer_bg):
+        return rgb_source.convert("RGBA")
+
+    result = rgb_source.convert("RGBA")
+    result_pixels = result.load()
+    content_coords = []
+    for y in range(h):
+        for x in range(w):
+            if outer_bg[y][x]:
+                result_pixels[x, y] = (0, 0, 0, 0)
+            else:
+                content_coords.append((x, y))
+
+    if not content_coords:
+        return result
+
+    xs = [coord[0] for coord in content_coords]
+    ys = [coord[1] for coord in content_coords]
+    return result.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
+
+
+def adjust_fifa_raw_prompt_background(img: Image.Image) -> Image.Image:
+    """
+    Trim outer canvas from raw-prompt FIFA card output.
+
+    Edge-connected white/black margins become transparent and the image is cropped
+    to the card. Whites inside the card (text, kit details, badges) are preserved.
+    """
+    try:
+        return _fifa_flood_fill_outer_canvas(img)
+    except Exception as exc:
+        print(f"adjust_fifa_raw_prompt_background: {exc}")
+        return img.convert("RGBA") if img.mode != "RGBA" else img
+
+
 def _fifa_raw_prompt_mode_enabled(raw_prompt_mode: Optional[bool] = None) -> bool:
     """Resolve raw prompt mode from an explicit flag or FIFA_RAW_PROMPT_MODE env (default false)."""
     if raw_prompt_mode is not None:
@@ -1223,10 +1385,15 @@ def generate_fifa_worldcup_card(
                 return False, "Invalid image object returned from Gemini"
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
+            if use_raw_prompt:
+                img = adjust_fifa_raw_prompt_background(img)
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-            img.save(output_path, optimize=True)
+            if img.mode == "RGBA":
+                img.save(output_path, format="PNG", optimize=True)
+            else:
+                img.save(output_path, optimize=True)
             return True, "FIFA World Cup trading card generated successfully"
         return False, "No image generated by Gemini"
     except Exception as e:
