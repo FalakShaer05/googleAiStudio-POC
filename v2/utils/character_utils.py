@@ -1031,116 +1031,13 @@ def _build_fifa_gemini_contents(
     return contents
 
 
-def _fifa_outside_transparency_enabled() -> bool:
-    """When true (default), strip stadium/scene pixels outside the card border."""
-    value = (os.getenv("FIFA_SKIP_OUTSIDE_TRANSPARENCY") or "").strip().lower()
-    return value not in {"1", "true", "yes", "on"}
-
-
-def _build_fifa_template_opaque_mask(template: Image.Image) -> Image.Image:
-    """Build an L-mode mask (255 = keep) from template non-background pixels."""
-    rgba = template.convert("RGBA")
-    if NUMPY_AVAILABLE:
-        arr = np.array(rgba)
-        alpha = arr[:, :, 3]
-        red, green, blue = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        opaque = alpha > 16
-        not_white = ~((red > 235) & (green > 235) & (blue > 235))
-        card = opaque & not_white
-        return Image.fromarray((card.astype(np.uint8) * 255), "L")
-
-    mask = Image.new("L", rgba.size, 0)
-    mask_pixels = mask.load()
-    rgba_pixels = rgba.load()
-    for y in range(rgba.height):
-        for x in range(rgba.width):
-            red, green, blue, alpha = rgba_pixels[x, y]
-            if alpha <= 16:
-                continue
-            if red > 235 and green > 235 and blue > 235:
-                continue
-            mask_pixels[x, y] = 255
-    return mask
-
-
-def _template_mask_covers_full_frame(card_mask: Image.Image, threshold: float = 0.97) -> bool:
-    mask_arr = np.array(card_mask) if NUMPY_AVAILABLE else list(card_mask.getdata())
-    if NUMPY_AVAILABLE:
-        coverage = float(np.count_nonzero(mask_arr > 0)) / mask_arr.size
-    else:
-        coverage = sum(1 for value in mask_arr if value > 0) / len(mask_arr)
-    return coverage >= threshold
-
-
-def _apply_fifa_template_mask_transparency(
-    generated: Image.Image,
-    template: Image.Image,
-) -> Image.Image:
-    """Make pixels outside the template card silhouette transparent."""
-    generated = generated.convert("RGBA")
-    gen_w, gen_h = generated.size
-    tpl_w, tpl_h = template.size
-    card_mask = _build_fifa_template_opaque_mask(template)
-
-    if _template_mask_covers_full_frame(card_mask):
-        return generated
-
-    if (gen_w, gen_h) != (tpl_w, tpl_h):
-        scale = min(gen_w / tpl_w, gen_h / tpl_h)
-        scaled_w = max(1, int(round(tpl_w * scale)))
-        scaled_h = max(1, int(round(tpl_h * scale)))
-        card_mask = card_mask.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
-        positioned_mask = Image.new("L", (gen_w, gen_h), 0)
-        offset_x = (gen_w - scaled_w) // 2
-        offset_y = (gen_h - scaled_h) // 2
-        positioned_mask.paste(card_mask, (offset_x, offset_y))
-        card_mask = positioned_mask
-
-    if NUMPY_AVAILABLE:
-        gen_arr = np.array(generated)
-        gen_arr[:, :, 3] = np.minimum(gen_arr[:, :, 3], np.array(card_mask))
-        return Image.fromarray(gen_arr, "RGBA")
-
-    generated.putalpha(card_mask)
-    return generated
-
-
-def _remove_fifa_outside_card_with_rembg(generated: Image.Image) -> Optional[Image.Image]:
-    """Isolate the card subject using rembg (already in project requirements)."""
-    try:
-        from rembg import remove
-
-        result = remove(generated.convert("RGBA"))
-        if isinstance(result, bytes):
-            result = Image.open(io.BytesIO(result)).convert("RGBA")
-        return result.convert("RGBA")
-    except Exception as exc:
-        print(f"rembg FIFA outside-card transparency failed: {exc}")
-        return None
-
-
-def _apply_fifa_outside_card_transparency(
-    generated: Image.Image,
-    template: Image.Image,
-) -> Image.Image:
-    """Remove stadium/scene pixels outside the trading card border."""
-    rembg_result = _remove_fifa_outside_card_with_rembg(generated)
-    if rembg_result is not None:
-        return rembg_result
-    return _apply_fifa_template_mask_transparency(generated, template)
-
-
 def _build_fifa_raw_prompt(context: str, user_prompt: Optional[str]) -> str:
     """Build prompt for raw mode: form inputs above, user prompt below — no wrapper text."""
-    from utils.prompts import FIFA_OUTPUT_TRANSPARENCY_RULES
-
     context_text = (context or "").strip()
     user_text = (user_prompt or "").strip()
     if context_text and user_text:
-        body = f"{context_text}\n\n{user_text}"
-    else:
-        body = user_text or context_text
-    return f"{body}\n\n{FIFA_OUTPUT_TRANSPARENCY_RULES}".strip()
+        return f"{context_text}\n\n{user_text}"
+    return user_text or context_text
 
 
 def _build_fifa_raw_gemini_contents(
@@ -1203,8 +1100,7 @@ def generate_fifa_worldcup_card(
             return img
 
         user_image_raw = to_rgb(Image.open(user_photo_path))
-        template_image_raw = Image.open(template_path)
-        template_image = to_rgb(template_image_raw)
+        template_image = to_rgb(Image.open(template_path))
         jersey_image = to_rgb(Image.open(jersey_path)) if jersey_path else None
 
         template_w, template_h = template_image.size
@@ -1240,12 +1136,10 @@ def generate_fifa_worldcup_card(
                 return False, "Invalid image object returned from Gemini"
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
-            if _fifa_outside_transparency_enabled():
-                img = _apply_fifa_outside_card_transparency(img, template_image_raw)
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-            img.save(output_path, format="PNG", optimize=True)
+            img.save(output_path, optimize=True)
             return True, "FIFA World Cup trading card generated successfully"
         return False, "No image generated by Gemini"
     except Exception as e:
