@@ -248,3 +248,54 @@ def build_fifa_card_context(
 
     return "\n".join(lines)
 
+
+def build_fifa_raw_context(
+    profile: Optional[dict] = None,
+    include_stats: bool = True,
+    is_ai_stats: bool = True,
+    stats: Optional[dict] = None,
+) -> str:
+    """Short summary of form inputs for raw prompt mode — prepended above the user prompt."""
+    profile = profile or {}
+    stats = stats or {}
+    lines = []
+
+    if profile.get("club_team"):
+        lines.append(f"Team: {profile['club_team']}")
+    if profile.get("first_name") or profile.get("last_name"):
+        full_name = " ".join(
+            part for part in [profile.get("first_name", "").strip(), profile.get("last_name", "").strip()] if part
+        )
+        if full_name:
+            lines.append(f"Name: {full_name}")
+    if profile.get("jersey_number"):
+        lines.append(f"Jersey #: {profile['jersey_number']}")
+
+    if not include_stats:
+        lines.append("Stats: off (keep template defaults)")
+    elif is_ai_stats:
+        lines.append("Stats: AI-generated")
+    else:
+        stat_parts = []
+        position_code = (stats.get("position") or "").strip().upper()
+        if position_code:
+            stat_parts.append(f"Position {position_code}")
+        if stats.get("rating"):
+            stat_parts.append(f"Rating {stats['rating']}")
+        for key, label in [
+            ("pace", "PAC"),
+            ("shooting", "SHO"),
+            ("passing", "PAS"),
+            ("dribbling", "DRI"),
+            ("defending", "DEF"),
+            ("physical", "PHY"),
+        ]:
+            if stats.get(key) is not None and str(stats.get(key)).strip() != "":
+                stat_parts.append(f"{label} {stats[key]}")
+        if stat_parts:
+            lines.append("Stats: " + ", ".join(stat_parts))
+
+    if not lines:
+        return ""
+    return "Card values:\n" + "\n".join(lines)
+
