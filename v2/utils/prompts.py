@@ -115,6 +115,13 @@ Keep Image 1's exact face, glasses, beard, hair, and skin tone unchanged.
 Copy Image 2's frame, colors, typography, stats areas, and badges exactly.
 Only update player text/stats in the template's existing slots."""
 
+FIFA_OUTPUT_TRANSPARENCY_RULES = """CRITICAL — TRANSPARENT OUTSIDE THE CARD:
+- Output ONLY the trading card itself (the shield/frame from the template).
+- Everything OUTSIDE the card's outer gold/frame border must be fully transparent (alpha = 0).
+- Do NOT render any stadium, crowd, lights, bokeh, confetti, vignette, floor, sky, or scenery outside the card.
+- Do NOT add a photographic or cinematic background around the card.
+- The final PNG must be the isolated card on transparency — nothing else outside the card edges."""
+
 FIFA_TEMPLATE_STRICT_RULES = """FINAL CHECKLIST:
 - Face in output = Image 1 user photo (NOT the template face, NOT a new face)
 - Card design in output = Image 3 template at 100% fidelity
