@@ -59,6 +59,7 @@ Reproduce Image 3 at 100% accuracy for:
 - Logo placement, crest positions, sponsor areas, flags, and badges
 - Typography style, font weight, label positions, stat bars, and number styling
 - All decorative elements, icons, dividers, and graphic ornaments
+- Side card icons/badges on the left and right edges of the frame (must remain visible)
 
 DO NOT invent a new card design. DO NOT simplify, modernize, crop, or restyle the template.
 Only replace: (1) the portrait face/body in the template with the person from Image 1, and (2) text/stat values in existing slots.
@@ -118,6 +119,7 @@ Only update player text/stats in the template's existing slots."""
 FIFA_TEMPLATE_STRICT_RULES = """FINAL CHECKLIST:
 - Face in output = Image 1 user photo (NOT the template face, NOT a new face)
 - Card design in output = Image 3 template at 100% fidelity
+- Side card icons/badges on the left and right edges must match Image 3 exactly
 - Jersey in output = Image 2 kit on Image 1's person (if jersey provided)
 - If unsure about the face, match Image 1 more closely
 - If unsure about the card design, match Image 3 more closely"""

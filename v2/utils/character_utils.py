@@ -1036,9 +1036,12 @@ def _fifa_is_outer_canvas_pixel(
     g: int,
     b: int,
     light_threshold: int = 235,
-    dark_threshold: int = 28,
 ) -> bool:
-    """True for near-white or near-black canvas pixels outside the card outline."""
+    """True for near-white canvas pixels outside the card outline.
+
+    Near-black pixels are intentionally excluded so side card icons, stats bars,
+    and other dark template decorations are never treated as removable background.
+    """
     if r >= light_threshold and g >= light_threshold and b >= light_threshold:
         return True
 
@@ -1047,17 +1050,70 @@ def _fifa_is_outer_canvas_pixel(
     if rgb_avg >= light_threshold - 10 and rgb_diff < 30:
         return True
 
-    if r <= dark_threshold and g <= dark_threshold and b <= dark_threshold:
-        return True
-    return rgb_avg <= dark_threshold + 5 and rgb_diff < 20
+    return False
+
+
+def _fifa_dilate_bool_mask(mask, radius: int):
+    """Expand a boolean mask by ``radius`` pixels (numpy path only)."""
+    if radius <= 0 or not NUMPY_AVAILABLE:
+        return mask
+
+    result = np.asarray(mask, dtype=bool)
+    for _ in range(radius):
+        padded = np.pad(result, 1, mode="constant", constant_values=False)
+        result = np.logical_or.reduce([
+            padded[0:-2, 0:-2], padded[0:-2, 1:-1], padded[0:-2, 2:],
+            padded[1:-1, 0:-2], padded[1:-1, 1:-1], padded[1:-1, 2:],
+            padded[2:, 0:-2], padded[2:, 1:-1], padded[2:, 2:],
+        ])
+    return result
+
+
+def _fifa_build_template_card_mask(
+    template_image: Image.Image,
+    target_size: Tuple[int, int],
+) -> Optional[Any]:
+    """Card silhouette from the template, including side icons and dark decorations."""
+    if template_image is None:
+        return None
+
+    template_rgb = template_image.convert("RGB").resize(target_size, Image.Resampling.LANCZOS)
+    outer_bg, _ = _fifa_build_outer_canvas_mask(template_rgb)
+    if outer_bg is None:
+        return None
+
+    if NUMPY_AVAILABLE:
+        card_mask = ~np.asarray(outer_bg, dtype=bool)
+        if not card_mask.any():
+            return None
+        radius = max(2, int(min(target_size) * 0.01))
+        return _fifa_dilate_bool_mask(card_mask, radius)
+
+    w, h = target_size
+    return [[not outer_bg[y][x] for x in range(w)] for y in range(h)]
+
+
+def _fifa_apply_template_card_mask(outer_bg, template_image: Optional[Image.Image], target_size: Tuple[int, int]):
+    """Keep template card regions opaque even if flood fill misclassified them."""
+    card_mask = _fifa_build_template_card_mask(template_image, target_size)
+    if card_mask is None:
+        return outer_bg
+
+    if NUMPY_AVAILABLE:
+        return np.asarray(outer_bg, dtype=bool) & ~np.asarray(card_mask, dtype=bool)
+
+    w, h = target_size
+    return [
+        [outer_bg[y][x] and not card_mask[y][x] for x in range(w)]
+        for y in range(h)
+    ]
 
 
 def _fifa_build_outer_canvas_mask(
     img: Image.Image,
     light_threshold: int = 235,
-    dark_threshold: int = 28,
 ):
-    """Return a bool mask of edge-connected outer canvas pixels (white or black margins)."""
+    """Return a bool mask of edge-connected outer white canvas pixels."""
     if img.mode != "RGB":
         img = img.convert("RGB")
 
@@ -1072,9 +1128,7 @@ def _fifa_build_outer_canvas_mask(
         rgb_diff = np.maximum.reduce([r, g, b]) - np.minimum.reduce([r, g, b])
         is_light = (r >= light_threshold) & (g >= light_threshold) & (b >= light_threshold)
         is_near_white = (rgb_avg >= light_threshold - 10) & (rgb_diff < 30)
-        is_dark = (r <= dark_threshold) & (g <= dark_threshold) & (b <= dark_threshold)
-        is_near_black = (rgb_avg <= dark_threshold + 5) & (rgb_diff < 20)
-        background_mask = is_light | is_near_white | is_dark | is_near_black
+        background_mask = is_light | is_near_white
     else:
         pixels = img.load()
         background_mask = [
@@ -1084,7 +1138,6 @@ def _fifa_build_outer_canvas_mask(
                     pixels[x, y][1],
                     pixels[x, y][2],
                     light_threshold,
-                    dark_threshold,
                 )
                 for x in range(w)
             ]
@@ -1126,12 +1179,16 @@ def _fifa_build_outer_canvas_mask(
     return outer_bg, img
 
 
-def _fifa_flood_fill_outer_canvas(img: Image.Image) -> Image.Image:
+def _fifa_flood_fill_outer_canvas(
+    img: Image.Image,
+    template_image: Optional[Image.Image] = None,
+) -> Image.Image:
     """
     Remove edge-connected outer canvas and return a cropped RGBA card.
 
-    White/black margins and corner padding outside the shield outline become
-    transparent. Internal whites (stats, jersey stripes, logos) are preserved.
+    White margins and corner padding outside the shield outline become
+    transparent. Dark template elements (side icons, stats bar) and internal
+    whites (stats text, jersey stripes, logos) are preserved.
     """
     if img.mode == "RGBA":
         rgb_source = img.convert("RGB")
@@ -1145,6 +1202,7 @@ def _fifa_flood_fill_outer_canvas(img: Image.Image) -> Image.Image:
         return img.convert("RGBA")
 
     w, h = rgb_source.size
+    outer_bg = _fifa_apply_template_card_mask(outer_bg, template_image, (w, h))
 
     if NUMPY_AVAILABLE:
         if not outer_bg.any():
@@ -1179,15 +1237,19 @@ def _fifa_flood_fill_outer_canvas(img: Image.Image) -> Image.Image:
     return result.crop((min(xs), min(ys), max(xs) + 1, max(ys) + 1))
 
 
-def adjust_fifa_raw_prompt_background(img: Image.Image) -> Image.Image:
+def adjust_fifa_raw_prompt_background(
+    img: Image.Image,
+    template_image: Optional[Image.Image] = None,
+) -> Image.Image:
     """
     Trim outer canvas from raw-prompt FIFA card output.
 
-    Edge-connected white/black margins become transparent and the image is cropped
-    to the card. Whites inside the card (text, kit details, badges) are preserved.
+    Edge-connected white margins become transparent and the image is cropped to the
+    card. Side icons and other dark template decorations are preserved using the
+    card template as a reference mask when provided.
     """
     try:
-        return _fifa_flood_fill_outer_canvas(img)
+        return _fifa_flood_fill_outer_canvas(img, template_image=template_image)
     except Exception as exc:
         print(f"adjust_fifa_raw_prompt_background: {exc}")
         return img.convert("RGBA") if img.mode != "RGBA" else img
@@ -1386,7 +1448,7 @@ def generate_fifa_worldcup_card(
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
             if use_raw_prompt:
-                img = adjust_fifa_raw_prompt_background(img)
+                img = adjust_fifa_raw_prompt_background(img, template_image=template_image)
             output_dir = os.path.dirname(output_path)
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
