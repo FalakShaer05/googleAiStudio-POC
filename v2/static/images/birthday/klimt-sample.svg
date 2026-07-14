@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" width="320" height="180">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1208"/>
+      <stop offset="100%" stop-color="#2d1f0a"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f5e6a8"/>
+      <stop offset="50%" stop-color="#d4af37"/>
+      <stop offset="100%" stop-color="#b8860b"/>
+    </linearGradient>
+    <pattern id="mosaic" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#c9a227" opacity="0.3"/>
+      <rect x="2" y="2" width="6" height="6" fill="#f5e6a8" opacity="0.5"/>
+      <rect x="10" y="10" width="4" height="4" fill="#8b6914" opacity="0.6"/>
+    </pattern>
+  </defs>
+  <rect width="320" height="180" fill="url(#bg)"/>
+  <rect width="320" height="180" fill="url(#mosaic)" opacity="0.4"/>
+  <ellipse cx="160" cy="95" rx="55" ry="70" fill="url(#gold)" opacity="0.85"/>
+  <rect x="95" y="35" width="130" height="120" fill="none" stroke="#f5e6a8" stroke-width="2" opacity="0.7"/>
+  <circle cx="130" cy="60" r="8" fill="#f5e6a8" opacity="0.8"/>
+  <circle cx="190" cy="55" r="6" fill="#d4af37"/>
+  <circle cx="160" cy="130" r="10" fill="#b8860b" opacity="0.9"/>
+  <rect x="110" y="145" width="100" height="8" rx="2" fill="#f5e6a8" opacity="0.6"/>
+  <path d="M40 20 Q80 50 40 80 Q20 50 40 20" fill="none" stroke="#d4af37" stroke-width="1.5" opacity="0.7"/>
+  <path d="M280 100 Q240 130 280 160 Q300 130 280 100" fill="none" stroke="#d4af37" stroke-width="1.5" opacity="0.7"/>
+  <text x="160" y="172" text-anchor="middle" fill="#f5e6a8" font-family="Georgia, serif" font-size="11" opacity="0.9">Klimt Inspired</text>
+</svg>
