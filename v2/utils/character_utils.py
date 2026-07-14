@@ -2541,3 +2541,160 @@ Return a SINGLE final composited image ready for printing.
         print(f"generate_character_composited_with_background error: {e}")
         return False, str(e)
 
+
+def generate_birthday_card(
+    celebrant_photo_path: Optional[str],
+    celebrant_name: str,
+    celebrant_age: str,
+    participants: list,
+    style: str,
+    output_path: str,
+    user_prompt: Optional[str] = None,
+    card_text: Optional[str] = None,
+    temperature: Optional[float] = None,
+    reference_photo_path: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """
+    Generate a celebration card in a single Gemini pass.
+
+    Image order sent to the model:
+      1) Celebrant photo (optional — when provided, this face is featured)
+      2) Participant photos (each must appear as a person when provided)
+      3) Optional inspiration image LAST (loose vibe only)
+
+    participants: list of dicts with keys 'relationship', 'name', 'message', optional 'photo_path'
+    style: 'klimt', 'vangogh', or 'custom'
+    """
+    from utils.prompts import build_birthday_generation_prompt
+
+    style_key = (style or "vangogh").strip().lower()
+    if style_key == "custom" and not (user_prompt and user_prompt.strip()):
+        return False, "Custom style requires a prompt describing your desired art direction"
+
+    has_celebrant_photo = bool(celebrant_photo_path and os.path.exists(celebrant_photo_path))
+    if celebrant_photo_path and not has_celebrant_photo:
+        return False, f"Celebrant photo not found: {celebrant_photo_path}"
+
+    if reference_photo_path and not os.path.exists(reference_photo_path):
+        return False, f"Layout reference image not found: {reference_photo_path}"
+
+    try:
+        output_dir = os.path.dirname(output_path) or "."
+        os.makedirs(output_dir, exist_ok=True)
+
+        def _to_rgb(img: Image.Image) -> Image.Image:
+            if img.mode == "RGBA":
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                bg.paste(img, mask=img.split()[3])
+                return bg
+            if img.mode != "RGB":
+                return img.convert("RGB")
+            return img
+
+        participants_for_prompt = []
+        participant_images = []
+        for p in participants:
+            photo_path = p.get("photo_path")
+            has_photo = bool(photo_path and os.path.exists(photo_path))
+            participants_for_prompt.append({
+                **p,
+                "has_photo": has_photo,
+                "photo_path": photo_path if has_photo else None,
+            })
+            if has_photo:
+                participant_images.append(_to_rgb(Image.open(photo_path)))
+
+        has_reference = bool(reference_photo_path)
+        full_prompt = build_birthday_generation_prompt(
+            style=style_key,
+            celebrant_name=celebrant_name,
+            celebrant_age=celebrant_age,
+            participants=participants_for_prompt,
+            user_prompt=user_prompt,
+            card_text=card_text,
+            has_reference=has_reference,
+            participant_photo_count=len(participant_images),
+            has_celebrant_photo=has_celebrant_photo,
+        )
+
+        client = get_gemini_client()
+        normalized_prompt = normalize_prompt_for_consistency(full_prompt)
+        seed = generate_seed_from_prompt(
+            f"{style_key}:{celebrant_name}:celeb={has_celebrant_photo}:ref={has_reference}:p={len(participant_images)}:{normalized_prompt}"
+        )
+
+        contents = [normalized_prompt]
+        next_image_num = 1
+
+        if has_celebrant_photo:
+            celebrant_image = _to_rgb(Image.open(celebrant_photo_path))
+            contents.extend([
+                f"IMAGE {next_image_num} = CELEBRANT PHOTO (uploaded by user). "
+                "This exact person MUST be the large central portrait. "
+                "Do not replace this face with anyone else.",
+                celebrant_image,
+            ])
+            next_image_num += 1
+        else:
+            contents.append(
+                "No celebrant photo was uploaded. Feature the celebrant by name/age in the artwork "
+                "(title and composition focus) without inventing a specific real-person face. "
+                "You may use a stylized silhouette, back view, or symbolic focal figure."
+            )
+
+        for idx, participant_image in enumerate(participant_images):
+            contents.extend([
+                f"IMAGE {next_image_num} = PARTICIPANT PHOTO {idx + 1} (uploaded by user). "
+                f"This person's face MUST appear recognizably in the final card "
+                f"(smaller portrait beside the celebrant / focal area). Do not omit them.",
+                participant_image,
+            ])
+            next_image_num += 1
+
+        if reference_photo_path:
+            reference_image = _to_rgb(Image.open(reference_photo_path))
+            contents.extend([
+                f"IMAGE {next_image_num} = LOOSE CREATIVE INSPIRATION (optional). "
+                "Glance for a celebration-card vibe or rough arrangement idea, then forget the details. "
+                "Invent a fresh composition, scenery, colors, and typography. "
+                "Do NOT recreate this image. Do NOT use any face from it.",
+                reference_image,
+                "Be creative. Prioritize an original celebration artwork"
+                + (" featuring the uploaded faces." if (has_celebrant_photo or participant_images) else "."),
+            ])
+        elif has_celebrant_photo:
+            contents.append(
+                "Be creative. The uploaded celebrant face must be featured clearly."
+            )
+
+        if temperature is not None:
+            gen_temperature = temperature
+        elif has_reference:
+            gen_temperature = 0.9
+        else:
+            gen_temperature = 0.55
+
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=contents,
+            seed=seed,
+            temperature=gen_temperature,
+            aspect_ratio="3:4",
+        )
+
+        img = _extract_final_image_from_response(response)
+        if img is None:
+            return False, "Failed to generate celebration card from Gemini"
+
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        img.save(output_path, optimize=True)
+        return True, "Celebration card generated successfully"
+
+    except Exception as e:
+        print(f"generate_birthday_card error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e)
+

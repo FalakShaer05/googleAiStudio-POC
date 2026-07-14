@@ -291,6 +291,111 @@
       text-align: center;
       font-weight: 700;
     }
+    .birthday-section-card {
+      background: #fff8fc;
+      border: 2px solid #f0d6e8;
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+    .birthday-style-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    @media (max-width: 768px) {
+      .birthday-style-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .birthday-style-card {
+      border: 3px solid #e9ecef;
+      border-radius: 12px;
+      padding: 0.75rem;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s ease;
+      background: #fff;
+    }
+    .birthday-style-card:hover {
+      border-color: #e91e8c;
+      transform: translateY(-2px);
+    }
+    .birthday-style-card.selected {
+      border-color: #e91e8c;
+      background: #fff0f7;
+      box-shadow: 0 4px 12px rgba(233, 30, 140, 0.2);
+    }
+    .birthday-style-preview {
+      height: 120px;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 0.5rem;
+      background: #f0f0f0;
+    }
+    .birthday-style-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .birthday-count-grid {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .birthday-count-btn {
+      width: 56px;
+      height: 56px;
+      border: 2px solid #667eea;
+      background: #fff;
+      color: #333;
+      border-radius: 10px;
+      font-size: 1.25rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .birthday-count-btn:hover,
+    .birthday-count-btn.selected {
+      background: #667eea;
+      color: #fff;
+    }
+    .birthday-participant-card {
+      background: #fff;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .birthday-participant-label {
+      color: #f4c430;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+    .birthday-convert-btn {
+      background: linear-gradient(135deg, #e91e8c 0%, #c2185b 100%);
+      border: none;
+      color: #fff;
+      padding: 1rem 2rem;
+      border-radius: 50px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      width: 100%;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    .birthday-convert-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(233, 30, 140, 0.4);
+    }
+    .birthday-convert-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
   </style>
 </head>
 <body>
@@ -309,6 +414,9 @@
         </button>
         <button class="nav-tab" id="fifaWorldcupTab" onclick="switchTab('fifaWorldcup')">
           <i class="fas fa-futbol me-2"></i>FIFA World Cup
+        </button>
+        <button class="nav-tab" id="birthdayTab" onclick="switchTab('birthday')">
+          <span class="me-2" aria-hidden="true">🎉</span>Celebration
         </button>
       </div>
     </div>
@@ -1297,6 +1405,188 @@
     </div>
   </div>
 
+  <!-- Celebration Section -->
+  <div class="container">
+    <div class="main-container content-section" id="birthdaySection">
+      <div class="header">
+        <h1 class="mb-1">
+          <span class="me-2" aria-hidden="true">🎉</span>Celebration Generator
+        </h1>
+        <p class="mb-0">
+          Create a personalized celebration card — upload photos for the celebrant and participants, choose an art style, and merge into one final artwork.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <!-- Step 1: Style Selection -->
+        <div class="mb-4 birthday-section-card">
+          <h5 class="mb-3 text-center fw-bold">Select Celebration Style</h5>
+          <div class="birthday-style-grid">
+            <div class="birthday-style-card" data-style="klimt" onclick="selectBirthdayStyle('klimt')">
+              <div class="birthday-style-preview">
+                <img src="{{ url_for('static', filename='images/birthday/klimt-sample.svg') }}" alt="Klimt inspired celebration card sample" />
+              </div>
+              <div class="fw-bold">Klimt Inspired</div>
+              <small class="text-muted">Celebration Card</small>
+            </div>
+            <div class="birthday-style-card selected" data-style="vangogh" onclick="selectBirthdayStyle('vangogh')">
+              <div class="birthday-style-preview">
+                <img src="{{ url_for('static', filename='images/birthday/vangogh-sample.png') }}" alt="Van Gogh inspired celebration card sample" />
+              </div>
+              <div class="fw-bold">Van Gogh Inspired</div>
+              <small class="text-muted">Celebration Card</small>
+            </div>
+            <div class="birthday-style-card" data-style="custom" onclick="selectBirthdayStyle('custom')">
+              <div class="birthday-style-preview">
+                <img src="{{ url_for('static', filename='images/birthday/custom-sample.svg') }}" alt="Create your own style sample" />
+              </div>
+              <div class="fw-bold">Create Your Own</div>
+              <small class="text-muted">Style</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Celebrant -->
+        <div class="mb-4 birthday-section-card">
+          <h5 class="mb-3"><i class="fas fa-user me-2"></i>Celebrant</h5>
+          <p class="text-muted small mb-3">Photo is optional — name is enough. Upload a photo only if you want the celebrant's face on the card.</p>
+          <div class="upload-area" onclick="document.getElementById('birthdayCelebrantInput').click()">
+            <div class="upload-icon"><i class="fas fa-camera"></i></div>
+            <h5 class="mb-1">Click to upload celebrant photo <span class="text-muted">(optional)</span></h5>
+            <p class="text-muted mb-0">Clear face photo works best when provided</p>
+            <input type="file" id="birthdayCelebrantInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="birthdayCelebrantFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="birthdayCelebrantFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearBirthdayCelebrantBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or celebrant photo URL <span class="text-muted">(optional)</span>:</label>
+            <input type="url" id="birthdayCelebrantUrl" class="form-control form-control-sm" placeholder="https://example.com/photo.jpg" />
+          </div>
+          <div class="row g-3 mt-3">
+            <div class="col-md-8">
+              <label class="form-label fw-bold" for="birthdayCelebrantName">What is the celebrant's name?</label>
+              <input type="text" id="birthdayCelebrantName" class="form-control" placeholder="Enter celebrant's name here" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-bold" for="birthdayCelebrantAge">How old is the celebrant?</label>
+              <input type="text" id="birthdayCelebrantAge" class="form-control" placeholder="Enter age" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2b: Layout Reference (optional) -->
+        <div class="mb-4 birthday-section-card">
+          <h5 class="mb-3"><i class="fas fa-image me-2"></i>Inspiration Image <span class="text-muted">(optional)</span></h5>
+          <p class="text-muted small mb-3">
+            Optional soft inspiration only — mood or rough birthday-card vibe.
+            The AI should stay creative and invent a new scene using your uploaded people, not recreate this image.
+          </p>
+          <div class="upload-area" onclick="document.getElementById('birthdayReferenceInput').click()">
+            <div class="upload-icon"><i class="fas fa-layer-group"></i></div>
+            <h5 class="mb-1">Click to upload inspiration image</h5>
+            <p class="text-muted mb-0">Optional creative spark — not a strict template</p>
+            <input type="file" id="birthdayReferenceInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="birthdayReferenceFileInfo" style="display: none;">
+            <div class="d-flex align-items-center">
+              <i class="fas fa-image me-2"></i>
+              <span id="birthdayReferenceFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="clearBirthdayReferenceBtn">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small mb-1">Or inspiration image URL:</label>
+            <input type="url" id="birthdayReferenceUrl" class="form-control form-control-sm" placeholder="https://example.com/inspiration.jpg" />
+          </div>
+        </div>
+
+        <!-- Step 3: Participant Count -->
+        <div class="mb-4 birthday-section-card text-center">
+          <h5 class="mb-3 fw-bold">How many people will participate in this design?</h5>
+          <div class="birthday-count-grid" id="birthdayCountGrid">
+            <button type="button" class="birthday-count-btn selected" data-count="1" onclick="selectBirthdayCount(1)">1</button>
+            <button type="button" class="birthday-count-btn" data-count="2" onclick="selectBirthdayCount(2)">2</button>
+            <button type="button" class="birthday-count-btn" data-count="3" onclick="selectBirthdayCount(3)">3</button>
+            <button type="button" class="birthday-count-btn" data-count="4" onclick="selectBirthdayCount(4)">4</button>
+            <button type="button" class="birthday-count-btn" data-count="5" onclick="selectBirthdayCount(5)">5</button>
+            <button type="button" class="birthday-count-btn" data-count="6" onclick="selectBirthdayCount(6)">6</button>
+          </div>
+        </div>
+
+        <!-- Step 4: Participants -->
+        <div class="mb-4" id="birthdayParticipantsSection">
+          <div id="birthdayParticipantsContainer"></div>
+        </div>
+
+        <!-- Step 5: Station Prompt -->
+        <div class="mb-4 birthday-section-card">
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="birthdayCardText">Card Message <span class="text-muted">(optional)</span></label>
+            <input type="text" id="birthdayCardText" class="form-control" placeholder="e.g. Wishing you a wonderful day!" />
+            <small class="text-muted">Extra text to include on the celebration card beyond participant messages</small>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="birthdayPrompt">
+              Station Prompt
+              <span id="birthdayPromptRequiredMark" class="text-danger" style="display: none;">*</span>
+            </label>
+            <textarea id="birthdayPrompt" class="form-control prompt-textarea" rows="14"></textarea>
+            <small class="text-muted" id="birthdayPromptHelp">
+              Prefilled for the selected station. Edit to fine-tune — the celebrant name, age, and participant messages are added automatically at generation time.
+            </small>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Temperature</label>
+            <p class="text-muted small mb-2">Higher = more creative. Default 0.9 with an inspiration image to avoid copying it.</p>
+            <input type="range" class="form-range" id="birthdayTemperature" min="0" max="2" step="0.1" value="0.9" />
+            <div class="d-flex justify-content-between">
+              <small>0 (strictest)</small>
+              <small id="birthdayTemperatureValue">0.9</small>
+              <small>2 (creative)</small>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" class="birthday-convert-btn" id="generateBirthdayBtn">
+          <span class="me-2" aria-hidden="true">🎉</span>Generate Celebration Card
+        </button>
+
+        <div class="mt-3" id="birthdayProgress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0" id="birthdayProgressText">Generating portraits and merging...</p>
+        </div>
+
+        <div class="status-message" id="birthdayStatus"></div>
+
+        <div class="file-info mt-3" id="birthdayResult" style="display: none;">
+          <h5 class="mb-2"><i class="fas fa-eye me-2"></i>Preview</h5>
+          <div class="row g-2 align-items-center">
+            <div class="col-md-6 text-center">
+              <img id="birthdayPreviewImage" class="preview-image" alt="Celebration card result" />
+            </div>
+            <div class="col-md-6 text-center">
+              <p class="mb-2" id="birthdayResultMessage">Celebration card generated successfully!</p>
+              <a href="#" class="download-btn mt-1 btn" id="birthdayDownloadLink" download>
+                <i class="fas fa-download me-2"></i>Download Result
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Navigation functionality
     function switchTab(tab) {
@@ -1305,12 +1595,14 @@
       document.getElementById("batchTab").classList.toggle("active", tab === "batch");
       document.getElementById("referenceTab").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupTab").classList.toggle("active", tab === "fifaWorldcup");
+      document.getElementById("birthdayTab").classList.toggle("active", tab === "birthday");
       
       // Show/hide sections
       document.getElementById("singleSection").classList.toggle("active", tab === "single");
       document.getElementById("batchSection").classList.toggle("active", tab === "batch");
       document.getElementById("referenceSection").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupSection").classList.toggle("active", tab === "fifaWorldcup");
+      document.getElementById("birthdaySection").classList.toggle("active", tab === "birthday");
     }
 
     let currentFilename = null;
@@ -2582,6 +2874,361 @@ STRICT RULES:
 
     // Initialize batch with one item
     addBatchItem();
+
+    // --- Birthday Card tab ---
+    const BIRTHDAY_RELATIONSHIPS = [
+      "Mother", "Father", "Grand Mother", "Grand Father", "Sibling", "Child",
+      "Relative", "Spouse / Partner", "Boyfriend / Girlfriend", "Best Friend",
+      "Friend", "Colleague", "Others"
+    ];
+    const BIRTHDAY_STATION_PROMPTS = {{ birthday_station_prompts | tojson }};
+
+    let birthdayStyle = "vangogh";
+    let birthdayParticipantCount = 1;
+    let birthdayCelebrantFile = null;
+    let birthdayReferenceFile = null;
+    let birthdayParticipantFiles = {};
+    let birthdayParticipantMessages = {};
+    let birthdayOutputFilename = null;
+
+    function applyBirthdayStationPrompt(style, force) {
+      const promptEl = document.getElementById("birthdayPrompt");
+      const stationPrompt = BIRTHDAY_STATION_PROMPTS[style] || BIRTHDAY_STATION_PROMPTS.vangogh;
+      if (force || !promptEl.dataset.userEdited || promptEl.dataset.userEdited !== "true") {
+        promptEl.value = stationPrompt;
+        promptEl.dataset.userEdited = "false";
+      }
+    }
+
+    function selectBirthdayStyle(style) {
+      birthdayStyle = style;
+      document.querySelectorAll(".birthday-style-card").forEach((card) => {
+        card.classList.toggle("selected", card.dataset.style === style);
+      });
+      const isCustom = style === "custom";
+      document.getElementById("birthdayPromptRequiredMark").style.display = isCustom ? "inline" : "none";
+      document.getElementById("birthdayPromptHelp").textContent = isCustom
+        ? "Required for custom style — describe your art direction. Celebrant name, age, and participant messages are added automatically."
+        : "Prefilled for the selected station. Edit to fine-tune — the celebrant name, age, and participant messages are added automatically at generation time.";
+      applyBirthdayStationPrompt(style, true);
+    }
+
+    document.getElementById("birthdayPrompt").addEventListener("input", (e) => {
+      e.target.dataset.userEdited = "true";
+    });
+
+    function selectBirthdayCount(count) {
+      birthdayParticipantCount = count;
+      document.querySelectorAll(".birthday-count-btn").forEach((btn) => {
+        btn.classList.toggle("selected", parseInt(btn.dataset.count, 10) === count);
+      });
+      renderBirthdayParticipants();
+    }
+
+    function renderBirthdayParticipants() {
+      const container = document.getElementById("birthdayParticipantsContainer");
+      const existingFiles = { ...birthdayParticipantFiles };
+      const existingMessages = { ...birthdayParticipantMessages };
+      birthdayParticipantFiles = {};
+      birthdayParticipantMessages = {};
+      container.innerHTML = "";
+
+      for (let i = 0; i < birthdayParticipantCount; i++) {
+        const ordinals = ["FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH"];
+        const label = ordinals[i] || `#${i + 1}`;
+        const saved = existingMessages[i] || {};
+        const card = document.createElement("div");
+        card.className = "birthday-participant-card";
+        card.innerHTML = `
+          <div class="birthday-participant-label">${label} PERSON:</div>
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Relationship to celebrant</label>
+              <select id="birthdayRelationship_${i}" class="form-select">
+                <option value="">Select from this dropdown</option>
+                ${BIRTHDAY_RELATIONSHIPS.map((r) => `<option value="${r}" ${saved.relationship === r ? "selected" : ""}>${r}</option>`).join("")}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-bold">Your name <span class="text-muted">(for sign-off)</span></label>
+              <input type="text" id="birthdayParticipantName_${i}" class="form-control" placeholder="e.g. John" value="${saved.name || ""}" />
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Personal message for the card</label>
+            <textarea id="birthdayParticipantMessage_${i}" class="form-control" rows="2"
+              placeholder="e.g. Best Mom in the world!">${saved.message || ""}</textarea>
+            <small class="text-muted">Rendered as handwritten-style text on the card (left/right of the celebrant)</small>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-12">
+              <label class="form-label fw-bold">Photo <span class="text-muted">(recommended — face will appear on the card)</span></label>
+              <div class="upload-area" onclick="document.getElementById('birthdayParticipantInput_${i}').click()">
+                <div class="upload-icon"><i class="fas fa-camera"></i></div>
+                <h6 class="mb-1">Upload participant photo</h6>
+                <input type="file" id="birthdayParticipantInput_${i}" class="file-input birthday-participant-input" data-index="${i}" accept="image/*" />
+              </div>
+              <div class="file-info mt-2" id="birthdayParticipantFileInfo_${i}" style="display: none;">
+                <div class="d-flex align-items-center">
+                  <i class="fas fa-image me-2"></i>
+                  <span id="birthdayParticipantFileName_${i}"></span>
+                  <button type="button" class="btn btn-sm btn-outline-danger ms-auto birthday-clear-participant" data-index="${i}">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="mt-2">
+                <input type="url" id="birthdayParticipantUrl_${i}" class="form-control form-control-sm birthday-participant-url" data-index="${i}" placeholder="Or photo URL (optional)" />
+              </div>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+
+        if (existingFiles[i]) {
+          birthdayParticipantFiles[i] = existingFiles[i];
+          document.getElementById(`birthdayParticipantFileName_${i}`).textContent = existingFiles[i].name;
+          document.getElementById(`birthdayParticipantFileInfo_${i}`).style.display = "block";
+        }
+      }
+
+      container.querySelectorAll(".birthday-participant-input").forEach((input) => {
+        input.addEventListener("change", (e) => {
+          const idx = parseInt(e.target.dataset.index, 10);
+          const file = e.target.files[0];
+          if (file) {
+            birthdayParticipantFiles[idx] = file;
+            document.getElementById(`birthdayParticipantFileName_${idx}`).textContent = file.name;
+            document.getElementById(`birthdayParticipantFileInfo_${idx}`).style.display = "block";
+            document.getElementById(`birthdayParticipantUrl_${idx}`).value = "";
+          }
+        });
+      });
+
+      container.querySelectorAll(".birthday-clear-participant").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = parseInt(btn.dataset.index, 10);
+          delete birthdayParticipantFiles[idx];
+          document.getElementById(`birthdayParticipantInput_${idx}`).value = "";
+          document.getElementById(`birthdayParticipantFileInfo_${idx}`).style.display = "none";
+        });
+      });
+
+      container.querySelectorAll(".birthday-participant-url").forEach((input) => {
+        input.addEventListener("input", (e) => {
+          if (e.target.value.trim()) {
+            const idx = parseInt(e.target.dataset.index, 10);
+            delete birthdayParticipantFiles[idx];
+            document.getElementById(`birthdayParticipantInput_${idx}`).value = "";
+            document.getElementById(`birthdayParticipantFileInfo_${idx}`).style.display = "none";
+          }
+        });
+      });
+    }
+
+    document.getElementById("birthdayCelebrantInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        birthdayCelebrantFile = file;
+        document.getElementById("birthdayCelebrantFileName").textContent = file.name;
+        document.getElementById("birthdayCelebrantFileInfo").style.display = "block";
+        document.getElementById("birthdayCelebrantUrl").value = "";
+      }
+    });
+    document.getElementById("clearBirthdayCelebrantBtn").addEventListener("click", () => {
+      birthdayCelebrantFile = null;
+      document.getElementById("birthdayCelebrantInput").value = "";
+      document.getElementById("birthdayCelebrantFileInfo").style.display = "none";
+    });
+    document.getElementById("birthdayCelebrantUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        birthdayCelebrantFile = null;
+        document.getElementById("birthdayCelebrantInput").value = "";
+        document.getElementById("birthdayCelebrantFileInfo").style.display = "none";
+      }
+    });
+
+    document.getElementById("birthdayReferenceInput").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        birthdayReferenceFile = file;
+        document.getElementById("birthdayReferenceFileName").textContent = file.name;
+        document.getElementById("birthdayReferenceFileInfo").style.display = "block";
+        document.getElementById("birthdayReferenceUrl").value = "";
+      }
+    });
+    document.getElementById("clearBirthdayReferenceBtn").addEventListener("click", () => {
+      birthdayReferenceFile = null;
+      document.getElementById("birthdayReferenceInput").value = "";
+      document.getElementById("birthdayReferenceFileInfo").style.display = "none";
+    });
+    document.getElementById("birthdayReferenceUrl").addEventListener("input", (e) => {
+      if (e.target.value.trim()) {
+        birthdayReferenceFile = null;
+        document.getElementById("birthdayReferenceInput").value = "";
+        document.getElementById("birthdayReferenceFileInfo").style.display = "none";
+      }
+    });
+
+    document.getElementById("birthdayTemperature").addEventListener("input", (e) => {
+      document.getElementById("birthdayTemperatureValue").textContent = e.target.value;
+    });
+
+    const birthdayDownloadLink = document.getElementById("birthdayDownloadLink");
+    birthdayDownloadLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const filename = birthdayDownloadLink.dataset.outputFilename || birthdayOutputFilename;
+      if (!filename) return;
+      const downloadUrl = "/download/" + encodeURIComponent(filename);
+      const btn = birthdayDownloadLink;
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner me-2"></span>Downloading...';
+      try {
+        const response = await fetch(downloadUrl, { cache: "no-store" });
+        if (!response.ok) throw new Error("Download failed");
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      } catch (err) {
+        const statusEl = document.getElementById("birthdayStatus");
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Download failed: " + (err.message || "Could not download file");
+        statusEl.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    });
+
+    document.getElementById("generateBirthdayBtn").addEventListener("click", async () => {
+      const celebrantUrl = document.getElementById("birthdayCelebrantUrl").value.trim();
+      const celebrantName = document.getElementById("birthdayCelebrantName").value.trim();
+      const celebrantAge = document.getElementById("birthdayCelebrantAge").value.trim();
+      const birthdayPrompt = document.getElementById("birthdayPrompt").value.trim();
+      const cardText = document.getElementById("birthdayCardText").value.trim();
+
+      const statusEl = document.getElementById("birthdayStatus");
+      statusEl.style.display = "none";
+
+      if (!celebrantName) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Please enter the celebrant's name.";
+        statusEl.style.display = "block";
+        return;
+      }
+      if (birthdayStyle === "custom" && !birthdayPrompt) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Custom style requires a prompt describing your art direction.";
+        statusEl.style.display = "block";
+        return;
+      }
+
+      const participants = [];
+      for (let i = 0; i < birthdayParticipantCount; i++) {
+        const file = birthdayParticipantFiles[i];
+        const url = document.getElementById(`birthdayParticipantUrl_${i}`)?.value.trim() || "";
+        const relationship = document.getElementById(`birthdayRelationship_${i}`)?.value.trim() || "";
+        const name = document.getElementById(`birthdayParticipantName_${i}`)?.value.trim() || "";
+        const message = document.getElementById(`birthdayParticipantMessage_${i}`)?.value.trim() || "";
+        if (!relationship) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = `Please select a relationship for participant ${i + 1}.`;
+          statusEl.style.display = "block";
+          return;
+        }
+        if (!message) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = `Please enter a personal message for participant ${i + 1}.`;
+          statusEl.style.display = "block";
+          return;
+        }
+        participants.push({
+          relationship,
+          name,
+          message,
+          photo_url: url || undefined,
+        });
+      }
+
+      if (!birthdayPrompt) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Station prompt cannot be empty.";
+        statusEl.style.display = "block";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("style", birthdayStyle);
+      formData.append("celebrant_name", celebrantName);
+      if (celebrantAge) formData.append("celebrant_age", celebrantAge);
+      if (birthdayCelebrantFile) {
+        formData.append("celebrant", birthdayCelebrantFile);
+      } else if (celebrantUrl) {
+        formData.append("celebrant_url", celebrantUrl);
+      }
+      if (birthdayReferenceFile) {
+        formData.append("reference", birthdayReferenceFile);
+      } else {
+        const referenceUrl = document.getElementById("birthdayReferenceUrl").value.trim();
+        if (referenceUrl) formData.append("reference_url", referenceUrl);
+      }
+      formData.append("participants", JSON.stringify(participants));
+      for (let i = 0; i < birthdayParticipantCount; i++) {
+        if (birthdayParticipantFiles[i]) {
+          formData.append(`participant_${i}`, birthdayParticipantFiles[i]);
+        }
+      }
+      if (birthdayPrompt) formData.append("birthday_prompt", birthdayPrompt);
+      if (cardText) formData.append("card_text", cardText);
+      const tempVal = parseFloat(document.getElementById("birthdayTemperature").value || "0");
+      if (tempVal > 0) formData.append("temperature", tempVal.toString());
+
+      document.getElementById("birthdayProgress").style.display = "block";
+      document.getElementById("birthdayProgressText").textContent =
+        "Generating celebration card with station prompt and participant messages...";
+      document.getElementById("birthdayResult").style.display = "none";
+      document.getElementById("generateBirthdayBtn").disabled = true;
+
+      try {
+        const response = await fetch("/generate-birthday-card-web", { method: "POST", body: formData });
+        const data = await response.json();
+        document.getElementById("birthdayProgress").style.display = "none";
+        document.getElementById("generateBirthdayBtn").disabled = false;
+
+        if (!data.success) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = data.error || "Generation failed";
+          statusEl.style.display = "block";
+          return;
+        }
+
+        birthdayOutputFilename = data.output_filename;
+        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        document.getElementById("birthdayPreviewImage").src = url;
+        birthdayDownloadLink.dataset.outputFilename = data.output_filename;
+        document.getElementById("birthdayResultMessage").textContent = data.message || "Celebration card generated!";
+        document.getElementById("birthdayResult").style.display = "block";
+        statusEl.className = "status-message status-success";
+        statusEl.textContent = data.message || "Done!";
+        statusEl.style.display = "block";
+      } catch (err) {
+        document.getElementById("birthdayProgress").style.display = "none";
+        document.getElementById("generateBirthdayBtn").disabled = false;
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Network error: " + err.message;
+        statusEl.style.display = "block";
+      }
+    });
+
+    renderBirthdayParticipants();
+    applyBirthdayStationPrompt("vangogh", true);
   </script>
 </body>
 </html>

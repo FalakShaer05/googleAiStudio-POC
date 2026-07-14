@@ -35,11 +35,12 @@ from utils.character_utils import (
     add_signature_image_overlay,
     generate_image_in_reference_style,
     generate_fifa_worldcup_card,
+    generate_birthday_card,
 )
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
-from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT
+from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, BIRTHDAY_STATION_PREFILLED_PROMPTS
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for API access
@@ -106,6 +107,56 @@ def _parse_fifa_player_form() -> Tuple[dict, bool, bool, dict]:
         stats = {key: value for key, value in stats.items() if value}
 
     return profile, include_stats, is_ai_stats, stats
+
+
+def _parse_birthday_participants_form(max_participants: int = 6) -> Tuple[list, list]:
+    """Parse participant metadata and collect validation errors."""
+    participants_json = request.form.get("participants", "[]")
+    try:
+        participants_meta = json.loads(participants_json) if participants_json else []
+    except json.JSONDecodeError:
+        return [], ["Invalid participants JSON"]
+
+    if not isinstance(participants_meta, list):
+        return [], ["Participants must be a JSON array"]
+
+    if len(participants_meta) > max_participants:
+        return [], [f"Maximum {max_participants} participants allowed"]
+
+    errors = []
+    parsed = []
+    for idx, item in enumerate(participants_meta):
+        if not isinstance(item, dict):
+            errors.append(f"Participant {idx + 1}: invalid entry")
+            continue
+        relationship = (item.get("relationship") or "").strip()
+        name = (item.get("name") or "").strip()
+        message = (item.get("message") or "").strip()
+        photo_url = (item.get("photo_url") or "").strip()
+        photo_file = request.files.get(f"participant_{idx}")
+        has_file = photo_file and photo_file.filename
+        if not relationship:
+            errors.append(f"Participant {idx + 1}: relationship is required")
+            continue
+        if not message:
+            errors.append(f"Participant {idx + 1}: personal message is required")
+            continue
+        if has_file and photo_url:
+            errors.append(f"Participant {idx + 1}: provide either file or URL, not both")
+            continue
+        if has_file and not allowed_file(photo_file.filename):
+            errors.append(f"Participant {idx + 1}: invalid file type")
+            continue
+        parsed.append({
+            "index": idx,
+            "relationship": relationship,
+            "name": name,
+            "message": message,
+            "photo_file": photo_file if has_file else None,
+            "photo_url": photo_url or None,
+        })
+
+    return parsed, errors
 
 
 # Swagger configuration
@@ -286,7 +337,10 @@ def process_single_character(item_data, index):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        birthday_station_prompts=BIRTHDAY_STATION_PREFILLED_PROMPTS,
+    )
 
 
 @app.route("/generate-character-web", methods=["POST"])
@@ -752,6 +806,150 @@ def generate_fifa_worldcup_web():
     except Exception as e:
         import traceback
         print("Error in generate-fifa-worldcup-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/generate-birthday-card-web", methods=["POST"])
+def generate_birthday_card_web():
+    """
+    Birthday card generation: styled portraits for celebrant + participants, merged into one card.
+    """
+    celebrant_path = None
+    reference_path = None
+    participant_paths = []
+    try:
+        style = request.form.get("style", "klimt").strip().lower()
+        if style not in {"klimt", "vangogh", "custom"}:
+            return jsonify({"error": "Invalid style. Choose klimt, vangogh, or custom."}), 400
+
+        celebrant_name = request.form.get("celebrant_name", "").strip()
+        celebrant_age = request.form.get("celebrant_age", "").strip()
+        birthday_prompt = request.form.get("birthday_prompt", "").strip()
+        card_text = request.form.get("card_text", "").strip()
+
+        if not celebrant_name:
+            return jsonify({"error": "Celebrant name is required"}), 400
+
+        if style == "custom" and not birthday_prompt:
+            return jsonify({"error": "Custom style requires a prompt describing your art direction"}), 400
+
+        if not birthday_prompt and style != "custom":
+            birthday_prompt = BIRTHDAY_STATION_PREFILLED_PROMPTS.get(style, "")
+
+        celebrant_file = request.files.get("celebrant")
+        celebrant_url = request.form.get("celebrant_url", "").strip()
+        if celebrant_file and celebrant_url:
+            return jsonify({"error": "Provide either celebrant file or celebrant_url, not both"}), 400
+        if celebrant_file and celebrant_file.filename and not allowed_file(celebrant_file.filename):
+            return jsonify({"error": "Invalid celebrant photo file type"}), 400
+
+        reference_file = request.files.get("reference")
+        reference_url = request.form.get("reference_url", "").strip()
+        if reference_file and reference_url:
+            return jsonify({"error": "Provide either reference file or reference_url, not both"}), 400
+        if reference_file and reference_file.filename and not allowed_file(reference_file.filename):
+            return jsonify({"error": "Invalid layout reference file type"}), 400
+
+        participants_meta, parse_errors = _parse_birthday_participants_form()
+        if parse_errors:
+            return jsonify({"error": "; ".join(parse_errors)}), 400
+
+        temperature_raw = request.form.get("temperature", "").strip()
+        temperature = None
+        if temperature_raw:
+            parsed_temperature = max(0.0, min(2.0, float(temperature_raw)))
+            if parsed_temperature > 0:
+                temperature = parsed_temperature
+
+        if celebrant_file and celebrant_file.filename:
+            celebrant_filename = generate_unique_filename(celebrant_file.filename, "birthday_celebrant")
+            celebrant_path = os.path.join(UPLOAD_FOLDER, celebrant_filename)
+            celebrant_file.save(celebrant_path)
+        elif celebrant_url:
+            celebrant_path = download_image_from_url(celebrant_url, UPLOAD_FOLDER)
+            if not celebrant_path:
+                return jsonify({"error": "Failed to download celebrant photo from URL"}), 400
+        else:
+            celebrant_path = None
+
+        if reference_file and reference_file.filename:
+            reference_filename = generate_unique_filename(reference_file.filename, "birthday_reference")
+            reference_path = os.path.join(UPLOAD_FOLDER, reference_filename)
+            reference_file.save(reference_path)
+        elif reference_url:
+            reference_path = download_image_from_url(reference_url, UPLOAD_FOLDER)
+            if not reference_path:
+                cleanup_file(celebrant_path)
+                return jsonify({"error": "Failed to download layout reference image from URL"}), 400
+
+        participants = []
+        for item in participants_meta:
+            idx = item["index"]
+            photo_path = None
+            if item["photo_file"]:
+                filename = generate_unique_filename(item["photo_file"].filename, f"birthday_participant_{idx}")
+                photo_path = os.path.join(UPLOAD_FOLDER, filename)
+                item["photo_file"].save(photo_path)
+                participant_paths.append(photo_path)
+            elif item.get("photo_url"):
+                photo_path = download_image_from_url(item["photo_url"], UPLOAD_FOLDER)
+                if not photo_path:
+                    cleanup_file(celebrant_path)
+                    cleanup_file(reference_path)
+                    for p in participant_paths:
+                        cleanup_file(p)
+                    return jsonify({"error": f"Failed to download participant {idx + 1} photo from URL"}), 400
+                participant_paths.append(photo_path)
+            participants.append({
+                "photo_path": photo_path,
+                "relationship": item["relationship"],
+                "name": item.get("name", ""),
+                "message": item.get("message", ""),
+            })
+
+        out_filename = generate_unique_filename("birthday_card.png", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = generate_birthday_card(
+            celebrant_photo_path=celebrant_path,
+            celebrant_name=celebrant_name,
+            celebrant_age=celebrant_age,
+            participants=participants,
+            style=style,
+            output_path=out_path,
+            user_prompt=birthday_prompt or None,
+            card_text=card_text or None,
+            temperature=temperature,
+            reference_photo_path=reference_path,
+        )
+
+        cleanup_file(celebrant_path)
+        cleanup_file(reference_path)
+        for p in participant_paths:
+            cleanup_file(p)
+
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        cloudfront_url = upload_image_to_s3(out_path)
+        response_data = {
+            "success": True,
+            "message": message or "Birthday card generated successfully",
+            "output_filename": out_filename,
+            "local_path": f"/outputs/{out_filename}",
+            "participant_count": len(participants),
+        }
+        if cloudfront_url:
+            response_data["image_url"] = cloudfront_url
+        return jsonify(response_data)
+    except Exception as e:
+        cleanup_file(celebrant_path)
+        cleanup_file(reference_path)
+        for p in participant_paths:
+            cleanup_file(p)
+        import traceback
+        print("Error in generate-birthday-card-web:", e)
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
@@ -1816,6 +2014,27 @@ def get_hobby_prompts():
             "skateboarding": "Playing Skateboarding"
         },
         "prompts": HOBBY_PROMPTS
+    })
+
+
+@app.route("/api/birthday-station-prompts", methods=["GET"])
+def get_birthday_station_prompts():
+    """
+    Get prefilled prompts for birthday card stations.
+    ---
+    tags:
+      - Character Generation
+    responses:
+      200:
+        description: Birthday station prefilled prompts
+    """
+    return jsonify({
+        "stations": {
+            "klimt": "Klimt Inspired Birthday Card",
+            "vangogh": "Van Gogh Inspired Birthday Card",
+            "custom": "Create Your Own Style",
+        },
+        "prompts": BIRTHDAY_STATION_PREFILLED_PROMPTS,
     })
 
 
