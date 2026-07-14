@@ -2545,12 +2545,10 @@ Return a SINGLE final composited image ready for printing.
 def generate_birthday_card(
     celebrant_photo_path: Optional[str],
     celebrant_name: str,
-    celebrant_age: str,
     participants: list,
     style: str,
     output_path: str,
     user_prompt: Optional[str] = None,
-    card_text: Optional[str] = None,
     temperature: Optional[float] = None,
     reference_photo_path: Optional[str] = None,
 ) -> Tuple[bool, str]:
@@ -2562,7 +2560,7 @@ def generate_birthday_card(
       2) Participant photos (each must appear as a person when provided)
       3) Optional inspiration image LAST (loose vibe only)
 
-    participants: list of dicts with keys 'relationship', 'name', 'message', optional 'photo_path'
+    participants: list of dicts with optional 'photo_path'
     style: 'klimt', 'vangogh', or 'custom'
     """
     from utils.prompts import build_birthday_generation_prompt
@@ -2608,12 +2606,10 @@ def generate_birthday_card(
         full_prompt = build_birthday_generation_prompt(
             style=style_key,
             celebrant_name=celebrant_name,
-            celebrant_age=celebrant_age,
             participants=participants_for_prompt,
             user_prompt=user_prompt,
-            card_text=card_text,
             has_reference=has_reference,
-            participant_photo_count=len(participant_images),
+            participant_art_count=len(participant_images),
             has_celebrant_photo=has_celebrant_photo,
         )
 
@@ -2637,30 +2633,38 @@ def generate_birthday_card(
             next_image_num += 1
         else:
             contents.append(
-                "No celebrant photo was uploaded. Feature the celebrant by name/age in the artwork "
+                "No celebrant photo was uploaded. Feature the celebrant by name in the artwork "
                 "(title and composition focus) without inventing a specific real-person face. "
                 "You may use a stylized silhouette, back view, or symbolic focal figure."
             )
 
         for idx, participant_image in enumerate(participant_images):
             contents.extend([
-                f"IMAGE {next_image_num} = PARTICIPANT PHOTO {idx + 1} (uploaded by user). "
-                f"This person's face MUST appear recognizably in the final card "
-                f"(smaller portrait beside the celebrant / focal area). Do not omit them.",
+                f"IMAGE {next_image_num} = PARTICIPANT ARTWORK {idx + 1} (uploaded by user). "
+                "This is finished art to MERGE into the final celebration card — NOT a raw selfie. "
+                "Preserve its illustration, painted characters, and visual style. "
+                "Harmonize with the station art style and blend edges seamlessly into the scene.",
                 participant_image,
             ])
             next_image_num += 1
 
         if reference_photo_path:
             reference_image = _to_rgb(Image.open(reference_photo_path))
+            if participant_images and has_celebrant_photo:
+                merge_note = " with merged participant art and the uploaded celebrant face."
+            elif participant_images:
+                merge_note = " with merged participant art."
+            elif has_celebrant_photo:
+                merge_note = " featuring the uploaded celebrant face."
+            else:
+                merge_note = "."
             contents.extend([
                 f"IMAGE {next_image_num} = LOOSE CREATIVE INSPIRATION (optional). "
                 "Glance for a celebration-card vibe or rough arrangement idea, then forget the details. "
                 "Invent a fresh composition, scenery, colors, and typography. "
                 "Do NOT recreate this image. Do NOT use any face from it.",
                 reference_image,
-                "Be creative. Prioritize an original celebration artwork"
-                + (" featuring the uploaded faces." if (has_celebrant_photo or participant_images) else "."),
+                f"Be creative. Prioritize an original celebration artwork{merge_note}",
             ])
         elif has_celebrant_photo:
             contents.append(

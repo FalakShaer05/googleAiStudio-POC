@@ -268,27 +268,28 @@ ART STYLE (MANDATORY — follow exactly every time):
 COMPOSITION LAYOUT:
 - IMAGE 1 = CELEBRANT (birthday person) — integrate their uploaded photo centrally (waist-up), painted with the same impasto brushstroke texture as the background
 - The celebrant is the focal point — largest and most prominent figure in the center
-- If participant photos are uploaded, paint EACH participant as a smaller recognizable portrait beside the celebrant
-- Also render participant personal messages as handwritten-style text near those people (left/right)
+- If participant artworks are uploaded, merge EACH submitted illustration beautifully into the final card (left/right/around the celebrant)
 - Bottom center: large bold cursive script text "Happy Birthday [Name]" with a dark outline for legibility
-- Include celebrant age near the name if provided
 
 DECORATIVE ELEMENTS:
 - Glowing five-pointed stars flanking the celebrant's head
 - Small festive accents: party hats, balloons, or stars woven into the swirling sky
-- Relationship-appropriate badge overlays when applicable (e.g. "THE BEST!" medal, "Best Mom" / "Best Dad" ribbon badge)
-- Small pink heart icons near participant messages
+- Optional celebratory badge overlays (e.g. "THE BEST!" medal, ribbon badges)
 
-IDENTITY PRESERVATION (CRITICAL):
-- The celebrant's face MUST come from the uploaded CELEBRANT PHOTO — never invent a different person
+IDENTITY PRESERVATION (CELEBRANT ONLY):
+- If a celebrant photo is uploaded, that face MUST be the central portrait — never invent a different person
 - Preserve exact face shape, eyes, glasses, hair color, hairstyle, skin tone, and facial features
 - Apply Van Gogh brushstroke TEXTURE to the portrait — do NOT replace the face with a generic person or a layout-reference face
 - Do NOT beautify, age-shift, or alter distinctive features
-- Every uploaded participant photo face must also remain recognizable
+
+PARTICIPANT ART MERGE:
+- Each participant upload is finished ARTWORK (illustration/painted portrait), NOT a raw selfie to repaint
+- Preserve each artwork's visual content, characters, and painted style while harmonizing brushwork and palette with the station style
+- Blend edges seamlessly — no visible paste borders, no awkward rectangular crops
+- Unify all contributions into ONE cohesive impasto painting
 
 TEXT RENDERING:
 - Main heading: elegant bold cursive/script font with dark stroke outline
-- Participant notes: warm handwritten-style font on left and right sides of the celebrant
 - All text must be clearly legible against the painted background
 
 OUTPUT:
@@ -308,27 +309,29 @@ ART STYLE (MANDATORY — follow exactly every time):
 COMPOSITION LAYOUT:
 - IMAGE 1 = CELEBRANT (birthday person) — integrate their uploaded photo centrally (waist-up), framed in ornate gold decorative patterns
 - The celebrant is the focal point — largest and most prominent figure in the center
-- If participant photos are uploaded, paint EACH participant as a smaller recognizable portrait beside the celebrant
-- Also render participant personal messages as elegant handwritten-style text near those people (left/right)
+- If participant artworks are uploaded, merge EACH submitted illustration beautifully into the final card (left/right/around the celebrant)
 - Bottom center: ornate gold script text "Happy Birthday [Name]" integrated into the mosaic border design
-- Include celebrant age near the name if provided
 
 DECORATIVE ELEMENTS:
 - Gold leaf mosaic circles, rectangles, and spiral patterns surrounding the portrait
 - Floral motifs, decorative borders, and Art Nouveau ornamental corners
-- Relationship-appropriate badge overlays when applicable (e.g. "THE BEST!" medal, "Best Mom" / "Best Dad" ribbon)
+- Optional celebratory badge overlays (e.g. "THE BEST!" medal, ribbon badges)
 - Small heart and star accents in gold and warm tones
 
-IDENTITY PRESERVATION (CRITICAL):
-- The celebrant's face MUST come from the uploaded CELEBRANT PHOTO — never invent a different person
+IDENTITY PRESERVATION (CELEBRANT ONLY):
+- If a celebrant photo is uploaded, that face MUST be the central portrait — never invent a different person
 - Preserve exact face shape, eyes, glasses, hair color, hairstyle, skin tone, and facial features
 - Apply Klimt decorative STYLE around the portrait — do NOT replace the face with a generic person or a layout-reference face
 - Do NOT beautify, age-shift, or alter distinctive features
-- Every uploaded participant photo face must also remain recognizable
+
+PARTICIPANT ART MERGE:
+- Each participant upload is finished ARTWORK (illustration/painted portrait), NOT a raw selfie to repaint
+- Preserve each artwork's visual content and decorative style while harmonizing gold accents and mosaic textures with the station style
+- Blend edges seamlessly — no visible paste borders, no awkward rectangular crops
+- Unify all contributions into ONE cohesive Klimt-inspired painting
 
 TEXT RENDERING:
 - Main heading: elegant gold script/cursive font integrated into the mosaic design
-- Participant notes: refined handwritten-style font on left and right sides
 - All text must be clearly legible against the gold and warm-toned background
 
 OUTPUT:
@@ -340,20 +343,22 @@ OUTPUT:
 
 COMPOSITION LAYOUT:
 - IMAGE 1 = CELEBRANT (birthday person) — integrate their uploaded photo centrally as the focal point
-- If participant photos are uploaded, paint EACH participant as a smaller recognizable portrait beside the celebrant
-- Participant messages appear as handwritten-style text near those people / on the LEFT and RIGHT sides
+- If participant artworks are uploaded, merge EACH submitted illustration beautifully into the final card (left/right/around the celebrant)
 - Bottom center: prominent "Happy Birthday [Name]" text in a style matching your art direction
-- Include celebrant age near the name if provided
 
-IDENTITY PRESERVATION (CRITICAL):
-- The celebrant's face MUST come from the uploaded CELEBRANT PHOTO
+IDENTITY PRESERVATION (CELEBRANT ONLY):
+- If a celebrant photo is uploaded, that face MUST be the central portrait
 - Preserve exact face shape, eyes, glasses, hair, skin tone, and distinctive features
 - Do NOT beautify, age-shift, generate a generic face, or reuse any face from a layout reference
-- Every uploaded participant photo face must also remain recognizable
+
+PARTICIPANT ART MERGE:
+- Each participant upload is finished ARTWORK (illustration/painted portrait), NOT a raw selfie to repaint
+- Preserve each artwork's visual content while harmonizing style, palette, and texture with your art direction
+- Blend edges seamlessly — no visible paste borders — unify into ONE cohesive artwork
 
 DECORATIVE ELEMENTS:
 - Festive celebratory accents appropriate to your chosen style
-- Relationship-appropriate badges when applicable (e.g. "THE BEST!" medal, relationship ribbons)
+- Optional celebratory badges, ribbons, hearts, or stars
 
 OUTPUT:
 - ONE unified print-ready birthday card portrait (3:4 aspect ratio)
@@ -370,19 +375,25 @@ BIRTHDAY_STYLE_LABELS = {
     "custom": "Create Your Own Style",
 }
 
-BIRTHDAY_IDENTITY_LOCK = """CRITICAL — USER PHOTOS WHEN PROVIDED:
+BIRTHDAY_IDENTITY_LOCK = """CRITICAL — CELEBRANT PHOTO (when provided):
 - If a CELEBRANT PHOTO is attached, that face MUST be the main central portrait and stay recognizably the same person
 - Preserve from the celebrant photo: face shape, eyes, eyebrows, nose, lips, jawline, skin tone, hair, glasses, facial hair, age appearance
-- Apply art style as TEXTURE/brushwork ONLY — never replace, beautify, or swap an uploaded face
-- If PARTICIPANT PHOTOS are attached, EACH of those people MUST appear as painted portraits (recognizable faces)
-- If NO celebrant photo is uploaded, center the card on the celebrant NAME/AGE and composition — do not invent a fake celebrity-like face for them
-- FORBIDDEN: keeping any face shown only in an inspiration/reference image"""
+- Apply art style as TEXTURE/brushwork ONLY — never replace, beautify, or swap an uploaded celebrant face
+- If NO celebrant photo is uploaded, center the card on the celebrant NAME and composition — do not invent a fake celebrity-like face for them
+- FORBIDDEN: keeping any face shown only in an inspiration/reference image
+
+PARTICIPANT ARTWORK (when provided):
+- Each participant upload is FINISHED ART to merge — NOT a raw selfie to extract and repaint
+- Preserve the visual content, characters, and painted style of each submitted artwork
+- Harmonize palette, brushwork, lighting, and decorative details with the station style
+- Blend edges seamlessly into the background — no visible paste borders or collage panels
+- Do NOT treat participant uploads as photo references for new face generation"""
 
 BIRTHDAY_REFERENCE_LAYOUT_INSTRUCTIONS = """LAYOUT REFERENCE — LOOSE CREATIVE INSPIRATION ONLY:
 The last attached image is a soft mood / arrangement idea. Be creative. Do NOT treat it as a template.
 
 Take ONLY light inspiration, such as:
-- A general sense that there is a main person and supporting messages or people around them
+- A general sense that there is a main focal area with supporting art around it
 - A festive birthday-card vibe
 - Optional decorative accents like badges, hearts, or title text near the bottom
 
@@ -394,27 +405,10 @@ You have FULL creative freedom to:
 
 Must NOT do:
 - Copy or closely recreate the layout reference image
-- Reuse its face(s), background details, brush patterns, color layout, or exact text
+- Reuse its artwork details, background details, brush patterns, color layout, or exact text
 - Make an output that a viewer would say "this is basically the same as the reference"
 
-Still required: use the uploaded celebrant (and any participant photos) as the real people in the scene."""
-
-BIRTHDAY_RELATIONSHIPS = [
-    "Mother",
-    "Father",
-    "Grand Mother",
-    "Grand Father",
-    "Sibling",
-    "Child",
-    "Relative",
-    "Spouse / Partner",
-    "Boyfriend / Girlfriend",
-    "Best Friend",
-    "Friend",
-    "Colleague",
-    "Others",
-]
-
+Still required: merge uploaded celebrant photo (if any) and participant artworks beautifully into one unified card."""
 
 def get_birthday_station_prompt(style: str) -> str:
     """Return the prefilled station prompt for UI and generation defaults."""
@@ -425,68 +419,42 @@ def get_birthday_station_prompt(style: str) -> str:
 
 
 def build_birthday_participant_context(participants: list) -> str:
-    """Build participant people + message instructions for the generation prompt."""
+    """Build participant art-merge instructions for the generation prompt."""
     if not participants:
-        return "PARTICIPANTS: None — celebrant-only card. Only Image 1 (celebrant) must appear as a person."
+        return "PARTICIPANT ART: None — celebrant-only card."
 
     lines = [
-        "PARTICIPANTS (each uploaded participant photo MUST appear as a recognizable painted person in the card):",
+        "PARTICIPANT ART CONTRIBUTIONS (merge each uploaded artwork into the final card):",
     ]
     positions = ["LEFT of celebrant", "RIGHT of celebrant", "lower LEFT", "lower RIGHT", "upper LEFT", "upper RIGHT"]
     for idx, p in enumerate(participants):
-        relationship = (p.get("relationship") or "Participant").strip()
-        name = (p.get("name") or "").strip()
-        message = (p.get("message") or "").strip()
-        has_photo = bool(p.get("photo_path") or p.get("has_photo"))
+        has_art = bool(p.get("photo_path") or p.get("has_photo"))
         pos = positions[idx] if idx < len(positions) else f"near celebrant ({idx + 1})"
-        who = name or relationship
-        if has_photo:
+        if has_art:
             lines.append(
-                f"- Participant {idx + 1} ({who}, {relationship}): MUST show this person's uploaded photo face "
-                f"as a painted portrait {pos} of the celebrant (smaller than the celebrant)."
+                f"- Participant {idx + 1}: MERGE their submitted artwork {pos}. "
+                "Treat it as finished art — preserve its illustration, painted characters, and visual style. "
+                "Harmonize brushwork/palette with the station style and blend edges seamlessly into the scene."
             )
         else:
             lines.append(
-                f"- Participant {idx + 1} ({who}, {relationship}): no photo uploaded — render message text only {pos}."
+                f"- Participant {idx + 1}: no artwork uploaded — add decorative celebratory accents {pos} only."
             )
-        if message:
-            lines.append(f'  Message text near them: "{message}"{" — " + name if name else ""}')
-        badge_hint = _birthday_relationship_badge(relationship)
-        if badge_hint:
-            lines.append(f"  Badge/ribbon idea: {badge_hint}")
 
     return "\n".join(lines)
 
 
-def _birthday_relationship_badge(relationship: str) -> str:
-    rel = (relationship or "").strip().lower()
-    if rel in {"mother", "father", "grand mother", "grand father"}:
-        label = relationship.strip()
-        return f'"Best {label}" ribbon badge and/or "THE BEST!" medal'
-    if rel == "child":
-        return '"THE BEST!" medal or "Best Parent" ribbon if appropriate'
-    return ""
-
-
 def build_birthday_card_context(
     celebrant_name: str,
-    celebrant_age: str,
     participants: list,
-    card_text: Optional[str] = None,
 ) -> str:
     """Build dynamic card context appended to the station prompt."""
     lines = [
         "CARD DETAILS:",
         f'- Celebrant name: {celebrant_name or "Celebrant"}',
+        f'- Main heading text: "Happy Birthday {celebrant_name or "Celebrant"}"',
+        "- Do NOT render age numbers or age-related text on the card",
     ]
-    if celebrant_age and celebrant_age.strip():
-        lines.append(f"- Celebrant age: {celebrant_age.strip()}")
-    lines.append(f'- Main heading text: "Happy Birthday {celebrant_name or "Celebrant"}"')
-    if celebrant_age and celebrant_age.strip():
-        lines.append(f'- Include age "{celebrant_age.strip()}" near the celebrant name in the design')
-
-    if card_text and card_text.strip():
-        lines.append(f'- Additional card message: "{card_text.strip()}"')
 
     lines.append("")
     lines.append(build_birthday_participant_context(participants))
@@ -498,12 +466,10 @@ def build_birthday_card_context(
 def build_birthday_generation_prompt(
     style: str,
     celebrant_name: str,
-    celebrant_age: str,
     participants: list,
     user_prompt: Optional[str] = None,
-    card_text: Optional[str] = None,
     has_reference: bool = False,
-    participant_photo_count: int = 0,
+    participant_art_count: int = 0,
     has_celebrant_photo: bool = True,
 ) -> str:
     """Assemble the full generation prompt: station base + dynamic context."""
@@ -511,9 +477,7 @@ def build_birthday_generation_prompt(
     base_prompt = (user_prompt or "").strip() or get_birthday_station_prompt(style_key)
     context = build_birthday_card_context(
         celebrant_name=celebrant_name,
-        celebrant_age=celebrant_age,
         participants=participants,
-        card_text=card_text,
     )
 
     image_plan = ["IMAGE ROLES (read carefully before drawing):"]
@@ -523,24 +487,25 @@ def build_birthday_generation_prompt(
         )
     else:
         image_plan.append(
-            "NO celebrant photo was uploaded — feature celebrant by name/age in title and layout. "
+            "NO celebrant photo was uploaded — feature celebrant by name in title and layout. "
             "Do not invent a specific real-person face for them."
         )
-    if participant_photo_count:
+    if participant_art_count:
         image_plan.append(
-            f"{participant_photo_count} PARTICIPANT PHOTO(S) are provided — each face MUST appear as a painted person."
+            f"{participant_art_count} PARTICIPANT ARTWORK(S) are provided — merge each beautifully into the final card. "
+            "These are finished illustrations to blend in, NOT raw selfies to repaint."
         )
     if has_reference:
         image_plan.append(
-            "An INSPIRATION image may be attached last — soft vibe only. Be creative. Do not copy it or its faces."
+            "An INSPIRATION image may be attached last — soft vibe only. Be creative. Do not copy it."
         )
     if has_celebrant_photo:
         image_plan.append(
-            "SUCCESS CHECK: Viewers must recognize the uploaded celebrant face. Keep the card original and creative."
+            "SUCCESS CHECK: Uploaded celebrant face is featured. Participant artworks are merged seamlessly. Keep the card original and creative."
         )
     else:
         image_plan.append(
-            "SUCCESS CHECK: Celebrant name is clearly featured. Keep the card original and creative."
+            "SUCCESS CHECK: Celebrant name is clearly featured. Participant artworks are merged seamlessly. Keep the card original and creative."
         )
 
     parts = [
