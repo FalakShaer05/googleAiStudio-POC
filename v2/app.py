@@ -129,18 +129,9 @@ def _parse_birthday_participants_form(max_participants: int = 6) -> Tuple[list, 
         if not isinstance(item, dict):
             errors.append(f"Participant {idx + 1}: invalid entry")
             continue
-        relationship = (item.get("relationship") or "").strip()
-        name = (item.get("name") or "").strip()
-        message = (item.get("message") or "").strip()
         photo_url = (item.get("photo_url") or "").strip()
         photo_file = request.files.get(f"participant_{idx}")
         has_file = photo_file and photo_file.filename
-        if not relationship:
-            errors.append(f"Participant {idx + 1}: relationship is required")
-            continue
-        if not message:
-            errors.append(f"Participant {idx + 1}: personal message is required")
-            continue
         if has_file and photo_url:
             errors.append(f"Participant {idx + 1}: provide either file or URL, not both")
             continue
@@ -149,9 +140,6 @@ def _parse_birthday_participants_form(max_participants: int = 6) -> Tuple[list, 
             continue
         parsed.append({
             "index": idx,
-            "relationship": relationship,
-            "name": name,
-            "message": message,
             "photo_file": photo_file if has_file else None,
             "photo_url": photo_url or None,
         })
@@ -824,9 +812,7 @@ def generate_birthday_card_web():
             return jsonify({"error": "Invalid style. Choose klimt, vangogh, or custom."}), 400
 
         celebrant_name = request.form.get("celebrant_name", "").strip()
-        celebrant_age = request.form.get("celebrant_age", "").strip()
         birthday_prompt = request.form.get("birthday_prompt", "").strip()
-        card_text = request.form.get("card_text", "").strip()
 
         if not celebrant_name:
             return jsonify({"error": "Celebrant name is required"}), 400
@@ -903,9 +889,6 @@ def generate_birthday_card_web():
                 participant_paths.append(photo_path)
             participants.append({
                 "photo_path": photo_path,
-                "relationship": item["relationship"],
-                "name": item.get("name", ""),
-                "message": item.get("message", ""),
             })
 
         out_filename = generate_unique_filename("birthday_card.png", "output")
@@ -914,12 +897,10 @@ def generate_birthday_card_web():
         success, message = generate_birthday_card(
             celebrant_photo_path=celebrant_path,
             celebrant_name=celebrant_name,
-            celebrant_age=celebrant_age,
             participants=participants,
             style=style,
             output_path=out_path,
             user_prompt=birthday_prompt or None,
-            card_text=card_text or None,
             temperature=temperature,
             reference_photo_path=reference_path,
         )
