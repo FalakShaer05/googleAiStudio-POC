@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from flasgger import Swagger, swag_from
 from flask_cors import CORS
-from typing import Tuple
+from typing import Optional, Tuple
 
 # Load environment variables from .env file
 # Try to load from parent directory (root) first, then current directory
@@ -36,6 +36,8 @@ from utils.character_utils import (
     generate_image_in_reference_style,
     generate_fifa_worldcup_card,
     generate_birthday_card,
+    upscale_image_high_resolution,
+    normalize_image_size,
 )
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -77,6 +79,11 @@ def _parse_bool_form_value(value: str, default: bool = False) -> bool:
     if normalized in {"0", "false", "off", "no"}:
         return False
     return default
+
+
+def _parse_image_size_form_value(value: Optional[str] = None) -> Optional[str]:
+    """Parse optional Gemini image_size from form (1K / 2K / 4K)."""
+    return normalize_image_size(value)
 
 
 def _parse_fifa_player_form() -> Tuple[dict, bool, bool, dict]:
@@ -371,6 +378,7 @@ def generate_character_web():
                 temperature = parsed_temperature
         canvas_size = request.form.get("canvas_size", "").strip() or None
         dpi = int(request.form.get("dpi", "300"))
+        image_size = _parse_image_size_form_value(request.form.get("image_size", ""))
         use_gemini_compositing = request.form.get("use_gemini_compositing", "true").lower() == "true"
         station = request.form.get("station", "").strip() or None  # Station: pencil-sketch, cartoon, caricature, retro90, wynwood
 
@@ -418,7 +426,7 @@ def generate_character_web():
 
         print("🎨 Character Generator Flow")
         print(f"  Background provided: {bool(background_path)}")
-        print(f"  Position: {position}, scale: {scale}, canvas_size: {canvas_size}, dpi: {dpi}")
+        print(f"  Position: {position}, scale: {scale}, canvas_size: {canvas_size}, dpi: {dpi}, image_size: {image_size or '1K'}")
 
         # Call appropriate helper
         if background_path:
@@ -434,6 +442,7 @@ def generate_character_web():
                 use_gemini_compositing=use_gemini_compositing,
                 station=station,
                 temperature=temperature,
+                image_size=image_size,
             )
         else:
             success, message = generate_character_with_identity(
@@ -449,6 +458,7 @@ def generate_character_web():
                 station=station,
                 temperature=temperature,
                 logo_position=logo_position,
+                image_size=image_size,
             )
 
         if not success:
@@ -931,6 +941,80 @@ def generate_birthday_card_web():
             cleanup_file(p)
         import traceback
         print("Error in generate-birthday-card-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/upscale-image-web", methods=["POST"])
+def upscale_image_web():
+    """
+    Upscale an existing artwork to high resolution (2K/4K) while keeping content identical.
+    Useful for print-ready DPI after generating art at the default ~1K output.
+    """
+    image_path = None
+    try:
+        image_file = request.files.get("image")
+        image_url = request.form.get("image_url", "").strip()
+
+        if not image_file and not image_url:
+            return jsonify({"error": "Either image file or image_url is required"}), 400
+        if image_file and image_url:
+            return jsonify({"error": "Provide either image file or image_url, not both"}), 400
+
+        image_size = _parse_image_size_form_value(request.form.get("image_size", "4K")) or "4K"
+        if image_size not in {"2K", "4K"}:
+            return jsonify({"error": "image_size must be 2K or 4K for high-resolution upscale"}), 400
+
+        canvas_size = request.form.get("canvas_size", "").strip() or None
+        dpi = int(request.form.get("dpi", "300"))
+        if dpi < 72 or dpi > 600:
+            return jsonify({"error": "dpi must be between 72 and 600"}), 400
+
+        if image_file and image_file.filename:
+            if not allowed_file(image_file.filename):
+                return jsonify({"error": "Invalid image file type"}), 400
+            image_filename = generate_unique_filename(image_file.filename, "upscale_src")
+            image_path = os.path.join(UPLOAD_FOLDER, image_filename)
+            image_file.save(image_path)
+        else:
+            image_path = download_image_from_url(image_url, UPLOAD_FOLDER)
+            if not image_path:
+                return jsonify({"error": "Failed to download image from URL"}), 400
+
+        out_filename = generate_unique_filename("highres.png", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = upscale_image_high_resolution(
+            image_path=image_path,
+            output_path=out_path,
+            image_size=image_size,
+            dpi=dpi,
+            canvas_size=canvas_size,
+        )
+
+        cleanup_file(image_path)
+
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        cloudfront_url = upload_image_to_s3(out_path)
+        info = get_image_info(out_path)
+        response_data = {
+            "success": True,
+            "message": message,
+            "output_filename": out_filename,
+            "local_path": f"/outputs/{out_filename}",
+            "image_size": image_size,
+            "dpi": dpi,
+            "image_info": info,
+        }
+        if cloudfront_url:
+            response_data["image_url"] = cloudfront_url
+        return jsonify(response_data)
+    except Exception as e:
+        cleanup_file(image_path)
+        import traceback
+        print("Error in upscale-image-web:", e)
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 

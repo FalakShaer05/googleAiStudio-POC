@@ -144,16 +144,17 @@
     }
     .nav-tab {
       flex: 1;
-      padding: 1rem 2rem;
+      padding: 0.85rem 0.6rem;
       text-align: center;
       cursor: pointer;
       border: none;
       background: transparent;
       color: #667eea;
       font-weight: 600;
-      font-size: 1rem;
+      font-size: 0.82rem;
       transition: all 0.3s ease;
       position: relative;
+      white-space: nowrap;
     }
     .nav-tab:hover {
       background: rgba(102, 126, 234, 0.1);
@@ -418,6 +419,9 @@
         <button class="nav-tab" id="birthdayTab" onclick="switchTab('birthday')">
           <span class="me-2" aria-hidden="true">🎉</span>Celebration
         </button>
+        <button class="nav-tab" id="highResTab" onclick="switchTab('highRes')">
+          <i class="fas fa-expand-arrows-alt me-2"></i>High Res
+        </button>
       </div>
     </div>
   </div>
@@ -636,7 +640,16 @@
             </div>
           </div>
           <div class="row mb-3">
-            <div class="col-12">
+            <div class="col-md-6">
+              <label class="form-label">Resolution</label>
+              <select class="form-select" id="charImageSize" name="image_size">
+                <option value="1K" selected>Standard (1K)</option>
+                <option value="2K">High (2K)</option>
+                <option value="4K">Print / Ultra (4K)</option>
+              </select>
+              <small class="text-muted">Higher = sharper print, slower &amp; more cost</small>
+            </div>
+            <div class="col-md-6">
               <label class="form-label">Temperature</label>
               <input
                 type="range"
@@ -1576,6 +1589,97 @@
     </div>
   </div>
 
+  <!-- High Resolution Upscale Section -->
+  <div class="container">
+    <div class="main-container content-section" id="highResSection">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-expand-arrows-alt me-2"></i>High Resolution / DPI
+        </h1>
+        <p class="mb-0">
+          Upload any existing art to keep it 100% the same while increasing resolution for print (2K or 4K).
+        </p>
+      </div>
+
+      <div class="p-4">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Existing artwork (required)</label>
+          <div class="upload-area" id="highResUploadArea">
+            <div class="upload-icon"><i class="fas fa-image"></i></div>
+            <h5 class="mb-1">Click to choose an image</h5>
+            <p class="text-muted mb-0">Any previously generated art works best</p>
+            <input type="file" id="highResInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="highResFileInfo" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center">
+              <span id="highResFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger" id="clearHighResBtn">Clear</button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small text-muted">Or paste image URL</label>
+            <input type="url" id="highResImageUrl" class="form-control form-control-sm" placeholder="https://example.com/art.png" />
+          </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-bold">Target resolution</label>
+            <select class="form-select" id="highResImageSize">
+              <option value="2K">High (2K)</option>
+              <option value="4K" selected>Print / Ultra (4K)</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold">Print size (optional)</label>
+            <select class="form-select" id="highResCanvasSize">
+              <option value="">Keep aspect only</option>
+              <option value="8x10">8×10</option>
+              <option value="11x14">11×14</option>
+              <option value="16x20">16×20</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold">DPI metadata</label>
+            <select class="form-select" id="highResDpi">
+              <option value="150">150 DPI</option>
+              <option value="300" selected>300 DPI</option>
+              <option value="600">600 DPI</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="button" class="convert-btn" id="generateHighResBtn">
+          <i class="fas fa-expand me-2"></i>Create High-Resolution Image
+        </button>
+
+        <div class="mt-3" id="highResProgress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0">Upscaling with Gemini (this can take longer)...</p>
+        </div>
+
+        <div class="status-message" id="highResStatus"></div>
+
+        <div class="file-info mt-3" id="highResResult" style="display: none;">
+          <h5 class="mb-2"><i class="fas fa-eye me-2"></i>Preview</h5>
+          <div class="row g-2 align-items-center">
+            <div class="col-md-6 text-center">
+              <img id="highResPreviewImage" class="preview-image" alt="High-res preview" />
+            </div>
+            <div class="col-md-6 text-center">
+              <p class="mb-2" id="highResResultMessage">High-resolution image ready!</p>
+              <a href="#" class="download-btn mt-1 btn" id="highResDownloadLink" download>
+                <i class="fas fa-download me-2"></i>Download Result
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Navigation functionality
     function switchTab(tab) {
@@ -1585,6 +1689,7 @@
       document.getElementById("referenceTab").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupTab").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdayTab").classList.toggle("active", tab === "birthday");
+      document.getElementById("highResTab").classList.toggle("active", tab === "highRes");
       
       // Show/hide sections
       document.getElementById("singleSection").classList.toggle("active", tab === "single");
@@ -1592,6 +1697,7 @@
       document.getElementById("referenceSection").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupSection").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdaySection").classList.toggle("active", tab === "birthday");
+      document.getElementById("highResSection").classList.toggle("active", tab === "highRes");
     }
 
     let currentFilename = null;
@@ -3169,6 +3275,108 @@ STRICT RULES:
 
     renderBirthdayParticipants();
     applyBirthdayStationPrompt("vangogh", true);
+
+    // ---- High Resolution / DPI upscale ----
+    let highResFile = null;
+    let highResOutputFilename = null;
+
+    const highResUploadArea = document.getElementById("highResUploadArea");
+    const highResInput = document.getElementById("highResInput");
+    const highResFileInfo = document.getElementById("highResFileInfo");
+    const highResFileName = document.getElementById("highResFileName");
+    const clearHighResBtn = document.getElementById("clearHighResBtn");
+    const generateHighResBtn = document.getElementById("generateHighResBtn");
+    const highResDownloadLink = document.getElementById("highResDownloadLink");
+
+    highResUploadArea.addEventListener("click", () => highResInput.click());
+    highResInput.addEventListener("change", () => {
+      const file = highResInput.files[0];
+      if (file) {
+        highResFile = file;
+        highResFileName.textContent = file.name;
+        highResFileInfo.style.display = "block";
+        highResUploadArea.style.display = "none";
+        document.getElementById("highResImageUrl").value = "";
+      }
+    });
+    clearHighResBtn.addEventListener("click", () => {
+      highResFile = null;
+      highResInput.value = "";
+      highResFileInfo.style.display = "none";
+      highResUploadArea.style.display = "block";
+    });
+
+    highResDownloadLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      const filename = highResDownloadLink.dataset.outputFilename || highResOutputFilename;
+      if (!filename) return;
+      const downloadUrl = "/download/" + encodeURIComponent(filename);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+
+    generateHighResBtn.addEventListener("click", async () => {
+      const statusEl = document.getElementById("highResStatus");
+      const imageUrl = document.getElementById("highResImageUrl").value.trim();
+      statusEl.style.display = "none";
+
+      if (!highResFile && !imageUrl) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Please upload an image or paste an image URL.";
+        statusEl.style.display = "block";
+        return;
+      }
+
+      const formData = new FormData();
+      if (highResFile) {
+        formData.append("image", highResFile);
+      } else {
+        formData.append("image_url", imageUrl);
+      }
+      formData.append("image_size", document.getElementById("highResImageSize").value);
+      formData.append("dpi", document.getElementById("highResDpi").value);
+      const canvasSize = document.getElementById("highResCanvasSize").value;
+      if (canvasSize) formData.append("canvas_size", canvasSize);
+
+      document.getElementById("highResProgress").style.display = "block";
+      document.getElementById("highResResult").style.display = "none";
+      generateHighResBtn.disabled = true;
+
+      try {
+        const response = await fetch("/upscale-image-web", { method: "POST", body: formData });
+        const data = await response.json();
+        document.getElementById("highResProgress").style.display = "none";
+        generateHighResBtn.disabled = false;
+
+        if (!data.success) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = data.error || "Upscale failed";
+          statusEl.style.display = "block";
+          return;
+        }
+
+        highResOutputFilename = data.output_filename;
+        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        document.getElementById("highResPreviewImage").src = url;
+        highResDownloadLink.dataset.outputFilename = data.output_filename;
+        document.getElementById("highResResultMessage").textContent =
+          data.message || "High-resolution image ready!";
+        document.getElementById("highResResult").style.display = "block";
+        statusEl.className = "status-message status-success";
+        statusEl.textContent = data.message || "Done!";
+        statusEl.style.display = "block";
+      } catch (err) {
+        document.getElementById("highResProgress").style.display = "none";
+        generateHighResBtn.disabled = false;
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Network error: " + err.message;
+        statusEl.style.display = "block";
+      }
+    });
   </script>
 </body>
 </html>

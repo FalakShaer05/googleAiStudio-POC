@@ -199,6 +199,29 @@ def build_background_orientation_prompt(bg_w: int, bg_h: int) -> str:
 - Keep the full background visible at its original proportions."""
 
 
+def normalize_image_size(image_size: Optional[str]) -> Optional[str]:
+    """
+    Normalize Gemini image_size values to uppercase K form: 1K, 2K, 4K.
+    Returns None for empty/invalid values so callers can keep the model default (1K).
+    """
+    if not image_size:
+        return None
+    normalized = str(image_size).strip().upper().replace(" ", "")
+    aliases = {
+        "1K": "1K",
+        "1": "1K",
+        "STANDARD": "1K",
+        "2K": "2K",
+        "2": "2K",
+        "HIGH": "2K",
+        "4K": "4K",
+        "4": "4K",
+        "ULTRA": "4K",
+        "PRINT": "4K",
+    }
+    return aliases.get(normalized)
+
+
 def _generate_content_image(
     client: genai.Client,
     model: str,
@@ -206,6 +229,7 @@ def _generate_content_image(
     seed: Optional[int] = None,
     temperature: Optional[float] = None,
     aspect_ratio: Optional[str] = None,
+    image_size: Optional[str] = None,
 ):
     """
     Call `client.models.generate_content` with an optional config to force image output.
@@ -221,16 +245,28 @@ def _generate_content_image(
               for all models/versions.
         temperature: Optional temperature (e.g. 0–2) for style/creativity control, passed like Google Imagen.
         aspect_ratio: Optional Gemini aspect ratio string (e.g. "3:4", "9:16") for output dimensions.
+        image_size: Optional Gemini resolution: "1K" (default), "2K", or "4K".
     """
     # If the SDK supports it, force image-only output for consistency.
     config = None
+    resolved_image_size = normalize_image_size(image_size)
     if types is not None and hasattr(types, "GenerateContentConfig"):
         config_kwargs = {"response_modalities": ["IMAGE"]}
-        if aspect_ratio and hasattr(types, "ImageConfig"):
+        if (aspect_ratio or resolved_image_size) and hasattr(types, "ImageConfig"):
+            image_config_kwargs = {}
+            if aspect_ratio:
+                image_config_kwargs["aspect_ratio"] = aspect_ratio
+            if resolved_image_size:
+                image_config_kwargs["image_size"] = resolved_image_size
             try:
-                config_kwargs["image_config"] = types.ImageConfig(aspect_ratio=aspect_ratio)
+                config_kwargs["image_config"] = types.ImageConfig(**image_config_kwargs)
             except (TypeError, AttributeError):
-                pass
+                # Older SDKs may not accept image_size — retry with aspect_ratio only.
+                if aspect_ratio:
+                    try:
+                        config_kwargs["image_config"] = types.ImageConfig(aspect_ratio=aspect_ratio)
+                    except (TypeError, AttributeError):
+                        pass
         if temperature is not None:
             try:
                 temp_value = float(temperature)
@@ -1477,6 +1513,7 @@ def generate_character_with_identity(
     station: Optional[str] = None,
     temperature: Optional[float] = None,
     logo_position: str = "top_right",
+    image_size: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
@@ -1920,6 +1957,7 @@ BACKGROUND:
             contents=[normalized_prompt, selfie_image],
             seed=seed,
             temperature=temperature,
+            image_size=image_size,
         )
 
         img = _extract_final_image_from_response(response)
@@ -2031,6 +2069,7 @@ def generate_character_composited_with_background(
     use_gemini_compositing: bool = True,
     station: Optional[str] = None,
     temperature: Optional[float] = None,
+    image_size: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate character and composite onto background.
@@ -2198,6 +2237,7 @@ Return a SINGLE final composited image ready for printing.
                 seed=seed,
                 temperature=temperature,
                 aspect_ratio=bg_aspect_ratio,
+                image_size=image_size,
             )
 
             img = _extract_final_image_from_response(response)
@@ -2698,6 +2738,111 @@ def generate_birthday_card(
 
     except Exception as e:
         print(f"generate_birthday_card error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e)
+
+
+def upscale_image_high_resolution(
+    image_path: str,
+    output_path: str,
+    image_size: str = "4K",
+    dpi: int = 300,
+    canvas_size: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """
+    Increase resolution/DPI of an existing artwork while keeping content identical.
+
+    Uses Gemini image editing with image_size (2K/4K) and a strict preserve prompt.
+    Optionally resizes to exact print pixel dimensions from canvas_size × dpi.
+    """
+    try:
+        if not os.path.exists(image_path):
+            return False, f"Image not found: {image_path}"
+
+        resolved_size = normalize_image_size(image_size) or "4K"
+        if resolved_size not in {"2K", "4K"}:
+            return False, "High-resolution upscale requires image_size of 2K or 4K"
+
+        source = Image.open(image_path)
+        if source.mode not in ("RGB", "RGBA"):
+            source = source.convert("RGB")
+        elif source.mode == "RGBA":
+            bg = Image.new("RGB", source.size, (255, 255, 255))
+            bg.paste(source, mask=source.split()[3])
+            source = bg
+
+        src_w, src_h = source.size
+        aspect_ratio = select_gemini_aspect_ratio(src_w, src_h)
+
+        canvas_note = ""
+        if canvas_size:
+            canvas_note = (
+                f" Target print size is {canvas_size} at {dpi} DPI — preserve the same aspect ratio."
+            )
+
+        prompt = (
+            "You are performing a HIGH-RESOLUTION / HIGH-DPI UPSCALE of the provided artwork.\n"
+            "CRITICAL RULES:\n"
+            "1. Keep the image 100% identical — same composition, colors, faces, clothing, "
+            "background, text, logos, brushwork, and every fine detail.\n"
+            "2. Do NOT restyle, reinterpret, redraw creatively, crop, or add/remove anything.\n"
+            "3. Only increase sharpness and pixel resolution for print quality.\n"
+            "4. Output a crisp, print-ready version of the EXACT same artwork.\n"
+            f"Input size: {src_w}x{src_h}px ({aspect_ratio}).{canvas_note}"
+        )
+
+        client = get_gemini_client()
+        normalized_prompt = normalize_prompt_for_consistency(prompt)
+        seed = generate_seed_from_inputs(image_path, resolved_size, str(dpi), canvas_size or "")
+
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=[normalized_prompt, source],
+            seed=seed,
+            temperature=0.1,
+            aspect_ratio=aspect_ratio,
+            image_size=resolved_size,
+        )
+
+        img = _extract_final_image_from_response(response)
+        if img is None:
+            return False, "Failed to generate high-resolution image from Gemini"
+
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
+        if canvas_size:
+            size_map = {
+                "8x10": (8, 10),
+                "11x14": (11, 14),
+                "16x20": (16, 20),
+            }
+            if canvas_size in size_map:
+                inches_w, inches_h = size_map[canvas_size]
+                target_w = int(inches_w * dpi)
+                target_h = int(inches_h * dpi)
+                # Match orientation of the source (portrait vs landscape)
+                if src_w > src_h and target_w < target_h:
+                    target_w, target_h = target_h, target_w
+                elif src_h > src_w and target_h < target_w:
+                    target_w, target_h = target_h, target_w
+                if img.size != (target_w, target_h):
+                    img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        img.save(output_path, "PNG", optimize=True, dpi=(dpi, dpi))
+        out_w, out_h = img.size
+        return (
+            True,
+            f"High-resolution image created ({resolved_size}, {out_w}x{out_h}px @ {dpi} DPI)",
+        )
+    except Exception as e:
+        print(f"upscale_image_high_resolution error: {e}")
         import traceback
         traceback.print_exc()
         return False, str(e)
