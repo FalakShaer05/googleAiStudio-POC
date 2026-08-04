@@ -1671,8 +1671,18 @@
             <div class="col-md-6 text-center">
               <p class="mb-2" id="highResResultMessage">High-resolution image ready!</p>
               <a href="#" class="download-btn mt-1 btn" id="highResDownloadLink" download>
-                <i class="fas fa-download me-2"></i>Download Result
+                <i class="fas fa-download me-2"></i>Download PNG
               </a>
+              <a href="#" class="download-btn mt-2 btn" id="highResEpsDownloadLink" download>
+                <i class="fas fa-file-export me-2"></i>Download EPS (Illustrator)
+              </a>
+              <a href="#" class="download-btn mt-2 btn" id="highResVectorDownloadLink" download>
+                <i class="fas fa-vector-square me-2"></i>Download Traced SVG
+              </a>
+              <p class="text-muted small mt-2 mb-0">
+                <strong>EPS</strong> = full-quality file for Illustrator/print.
+                <strong>Traced SVG</strong> = editable paths (simplified/posterized look).
+              </p>
             </div>
           </div>
         </div>
@@ -3287,6 +3297,8 @@ STRICT RULES:
     const clearHighResBtn = document.getElementById("clearHighResBtn");
     const generateHighResBtn = document.getElementById("generateHighResBtn");
     const highResDownloadLink = document.getElementById("highResDownloadLink");
+    const highResVectorDownloadLink = document.getElementById("highResVectorDownloadLink");
+    const highResEpsDownloadLink = document.getElementById("highResEpsDownloadLink");
 
     highResUploadArea.addEventListener("click", () => highResInput.click());
     highResInput.addEventListener("change", () => {
@@ -3317,6 +3329,61 @@ STRICT RULES:
       document.body.appendChild(a);
       a.click();
       a.remove();
+    });
+
+    async function downloadHighResVector(format, btn) {
+      const sourceFilename =
+        btn.dataset.outputFilename ||
+        highResDownloadLink.dataset.outputFilename ||
+        highResOutputFilename;
+      if (!sourceFilename) return;
+
+      const statusEl = document.getElementById("highResStatus");
+      const originalHtml = btn.innerHTML;
+      btn.style.pointerEvents = "none";
+      btn.innerHTML = '<span class="spinner me-2"></span>Tracing vector...';
+      statusEl.style.display = "none";
+
+      try {
+        const response = await fetch("/export-vector-web", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: sourceFilename, format: format }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || "Vector export failed");
+        }
+
+        const vectorFilename = data.output_filename;
+        const downloadUrl = data.local_path || "/download/" + encodeURIComponent(vectorFilename);
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = vectorFilename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        statusEl.className = "status-message status-success";
+        statusEl.textContent = data.message || ("Vector " + format.toUpperCase() + " ready!");
+        statusEl.style.display = "block";
+      } catch (err) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Vector download failed: " + (err.message || "Unknown error");
+        statusEl.style.display = "block";
+      } finally {
+        btn.style.pointerEvents = "";
+        btn.innerHTML = originalHtml;
+      }
+    }
+
+    highResVectorDownloadLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      downloadHighResVector("svg", highResVectorDownloadLink);
+    });
+    highResEpsDownloadLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      downloadHighResVector("eps", highResEpsDownloadLink);
     });
 
     generateHighResBtn.addEventListener("click", async () => {
@@ -3363,6 +3430,8 @@ STRICT RULES:
         const url = data.image_url || data.local_path || "/download/" + data.output_filename;
         document.getElementById("highResPreviewImage").src = url;
         highResDownloadLink.dataset.outputFilename = data.output_filename;
+        highResVectorDownloadLink.dataset.outputFilename = data.output_filename;
+        highResEpsDownloadLink.dataset.outputFilename = data.output_filename;
         document.getElementById("highResResultMessage").textContent =
           data.message || "High-resolution image ready!";
         document.getElementById("highResResult").style.display = "block";
