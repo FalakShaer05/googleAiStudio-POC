@@ -71,6 +71,163 @@ def _is_transient_gemini_error(exc: Exception) -> bool:
     return any(m in msg for m in transient_markers)
 
 
+def _usage_attr(usage, *names):
+    """Read a usage_metadata field across snake_case / camelCase / dict shapes."""
+    if usage is None:
+        return None
+    for name in names:
+        if isinstance(usage, dict) and name in usage:
+            value = usage.get(name)
+        else:
+            value = getattr(usage, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def extract_gemini_usage_metadata(response) -> Dict[str, Any]:
+    """
+    Extract token usage from a Gemini generate_content response.
+
+    Returns a plain dict suitable for logging / JSON. Missing fields are omitted.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        usage = getattr(response, "usageMetadata", None)
+    if usage is None:
+        return {}
+
+    result: Dict[str, Any] = {}
+    prompt = _usage_attr(usage, "prompt_token_count", "promptTokenCount")
+    candidates = _usage_attr(usage, "candidates_token_count", "candidatesTokenCount")
+    thoughts = _usage_attr(usage, "thoughts_token_count", "thoughtsTokenCount")
+    cached = _usage_attr(usage, "cached_content_token_count", "cachedContentTokenCount")
+    total = _usage_attr(usage, "total_token_count", "totalTokenCount")
+
+    if prompt is not None:
+        result["prompt_token_count"] = int(prompt)
+    if candidates is not None:
+        result["candidates_token_count"] = int(candidates)
+    if thoughts is not None:
+        result["thoughts_token_count"] = int(thoughts)
+    if cached is not None:
+        result["cached_content_token_count"] = int(cached)
+    if total is not None:
+        result["total_token_count"] = int(total)
+    elif any(k in result for k in ("prompt_token_count", "candidates_token_count", "thoughts_token_count")):
+        result["total_token_count"] = (
+            int(result.get("prompt_token_count") or 0)
+            + int(result.get("candidates_token_count") or 0)
+            + int(result.get("thoughts_token_count") or 0)
+        )
+
+    def _modality_details(details) -> list:
+        rows = []
+        for item in details or []:
+            modality = _usage_attr(item, "modality", "modality")
+            token_count = _usage_attr(item, "token_count", "tokenCount")
+            if modality is None and token_count is None:
+                continue
+            rows.append({
+                "modality": str(modality) if modality is not None else "UNKNOWN",
+                "token_count": int(token_count) if token_count is not None else 0,
+            })
+        return rows
+
+    prompt_details = _modality_details(
+        _usage_attr(usage, "prompt_tokens_details", "promptTokensDetails")
+    )
+    candidate_details = _modality_details(
+        _usage_attr(usage, "candidates_tokens_details", "candidatesTokensDetails")
+    )
+    if prompt_details:
+        result["prompt_tokens_details"] = prompt_details
+    if candidate_details:
+        result["candidates_tokens_details"] = candidate_details
+    return result
+
+
+def estimate_gemini_image_cost_usd(
+    model: str,
+    prompt_token_count: Optional[int] = None,
+    candidates_token_count: Optional[int] = None,
+) -> Optional[float]:
+    """
+    Rough USD estimate from official Gemini image output token rates.
+
+    Image output dominates cost. Text/thinking output is ignored unless present in
+    candidates_token_count (API usually reports image candidate tokens here).
+    """
+    model_l = (model or "").lower()
+    if "pro-image" in model_l:
+        input_per_million = 2.0
+        image_output_per_million = 120.0
+    elif "3.1-flash-image" in model_l or "flash-image" in model_l:
+        # Gemini 3.1 Flash Image ~$60/M image tokens; 2.5 Flash Image ~$30/M
+        input_per_million = 0.50
+        image_output_per_million = 30.0 if "2.5-flash-image" in model_l else 60.0
+    else:
+        input_per_million = 2.0
+        image_output_per_million = 120.0
+
+    if prompt_token_count is None and candidates_token_count is None:
+        return None
+
+    cost = 0.0
+    if prompt_token_count:
+        cost += (int(prompt_token_count) / 1_000_000.0) * input_per_million
+    if candidates_token_count:
+        cost += (int(candidates_token_count) / 1_000_000.0) * image_output_per_million
+    return round(cost, 6)
+
+
+def log_gemini_token_usage(
+    response,
+    *,
+    operation: str,
+    model: str,
+    image_size: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Print a structured token-consumption log for art generation / DPI enhancement.
+    Returns the extracted usage dict (may be empty if API omitted metadata).
+    """
+    usage = extract_gemini_usage_metadata(response)
+    prompt = usage.get("prompt_token_count")
+    candidates = usage.get("candidates_token_count")
+    thoughts = usage.get("thoughts_token_count")
+    total = usage.get("total_token_count")
+    est_cost = estimate_gemini_image_cost_usd(model, prompt, candidates)
+
+    size_label = image_size or "default(1K)"
+    details_bits = []
+    for key, label in (
+        ("prompt_tokens_details", "in"),
+        ("candidates_tokens_details", "out"),
+    ):
+        rows = usage.get(key) or []
+        if rows:
+            joined = ", ".join(f"{r['modality']}={r['token_count']}" for r in rows)
+            details_bits.append(f"{label}_modalities=[{joined}]")
+
+    cost_label = f"${est_cost:.4f}" if est_cost is not None else "n/a"
+    print(
+        f"📊 TOKEN USAGE [{operation}] model={model} image_size={size_label} | "
+        f"prompt={prompt if prompt is not None else 'n/a'} "
+        f"candidates={candidates if candidates is not None else 'n/a'} "
+        f"thoughts={thoughts if thoughts is not None else 'n/a'} "
+        f"total={total if total is not None else 'n/a'} | "
+        f"est_cost={cost_label}"
+        + (f" | {' '.join(details_bits)}" if details_bits else "")
+    )
+    if not usage:
+        print(
+            f"⚠️ TOKEN USAGE [{operation}] usage_metadata missing from Gemini response "
+            f"(model={model}, image_size={size_label})"
+        )
+    return usage
+
+
 def _iter_gemini_response_parts(response):
     """
     Normalize response parts across google-genai SDK versions.
@@ -230,6 +387,7 @@ def _generate_content_image(
     temperature: Optional[float] = None,
     aspect_ratio: Optional[str] = None,
     image_size: Optional[str] = None,
+    operation: str = "art_generation",
 ):
     """
     Call `client.models.generate_content` with an optional config to force image output.
@@ -246,6 +404,7 @@ def _generate_content_image(
         temperature: Optional temperature (e.g. 0–2) for style/creativity control, passed like Google Imagen.
         aspect_ratio: Optional Gemini aspect ratio string (e.g. "3:4", "9:16") for output dimensions.
         image_size: Optional Gemini resolution: "1K" (default), "2K", or "4K".
+        operation: Log label for token usage (e.g. art_generation, dpi_enhancement).
     """
     # If the SDK supports it, force image-only output for consistency.
     config = None
@@ -297,6 +456,15 @@ def _generate_content_image(
             # Some SDK versions don't accept `config=...`
             return client.models.generate_content(model=selected_model, contents=contents)
 
+    def _return_with_usage_log(response, used_model: str):
+        log_gemini_token_usage(
+            response,
+            operation=operation,
+            model=used_model,
+            image_size=resolved_image_size,
+        )
+        return response
+
     max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
     initial_delay_s = float(os.getenv("GEMINI_RETRY_INITIAL_DELAY_S", "1.0"))
     max_delay_s = float(os.getenv("GEMINI_RETRY_MAX_DELAY_S", "10.0"))
@@ -307,7 +475,7 @@ def _generate_content_image(
         try:
             if attempt > 0:
                 print(f"🔁 Gemini retry {attempt}/{max_retries} (model={model})")
-            return _call(model)
+            return _return_with_usage_log(_call(model), model)
         except Exception as e:
             last_exc = e
             if not _is_transient_gemini_error(e) or attempt >= max_retries:
@@ -327,7 +495,7 @@ def _generate_content_image(
             try:
                 if attempt > 0:
                     print(f"🔁 Gemini retry {attempt}/{max_retries} (model={fallback_model})")
-                return _call(fallback_model)
+                return _return_with_usage_log(_call(fallback_model), fallback_model)
             except Exception as e:
                 last_exc = e
                 if not _is_transient_gemini_error(e) or attempt >= max_retries:
@@ -910,6 +1078,7 @@ def generate_image_in_reference_style(
             contents=contents,
             seed=None,
             temperature=temperature,
+            operation="art_generation:reference",
         )
 
         img = _extract_final_image_from_response(response)
@@ -991,6 +1160,7 @@ def _generate_fifa_identity_portrait(
         seed=seed,
         temperature=temperature,
         aspect_ratio="3:4",
+        operation="art_generation:fifa_identity",
     )
     return _extract_final_image_from_response(response)
 
@@ -1424,6 +1594,7 @@ def generate_fifa_worldcup_card(
                 seed=None,
                 temperature=temperature,
                 aspect_ratio=aspect_ratio,
+                operation="art_generation:fifa_card",
             )
         else:
             user_image = _prepare_fifa_identity_photo(user_image_raw)
@@ -1475,6 +1646,7 @@ def generate_fifa_worldcup_card(
                 seed=seed + 1,
                 temperature=temperature,
                 aspect_ratio=aspect_ratio,
+                operation="art_generation:fifa_card",
             )
 
         img = _extract_final_image_from_response(response)
@@ -1958,6 +2130,7 @@ BACKGROUND:
             seed=seed,
             temperature=temperature,
             image_size=image_size,
+            operation="art_generation:character",
         )
 
         img = _extract_final_image_from_response(response)
@@ -2238,6 +2411,7 @@ Return a SINGLE final composited image ready for printing.
                 temperature=temperature,
                 aspect_ratio=bg_aspect_ratio,
                 image_size=image_size,
+                operation="art_generation:character_composite",
             )
 
             img = _extract_final_image_from_response(response)
@@ -2725,6 +2899,7 @@ def generate_birthday_card(
             seed=seed,
             temperature=gen_temperature,
             aspect_ratio="3:4",
+            operation="art_generation:celebration",
         )
 
         img = _extract_final_image_from_response(response)
@@ -2804,6 +2979,7 @@ def upscale_image_high_resolution(
             temperature=0.1,
             aspect_ratio=aspect_ratio,
             image_size=resolved_size,
+            operation="dpi_enhancement",
         )
 
         img = _extract_final_image_from_response(response)

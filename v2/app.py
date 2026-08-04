@@ -43,6 +43,7 @@ from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, BIRTHDAY_STATION_PREFILLED_PROMPTS
+from utils.vector_export import raster_to_vector
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for API access
@@ -1019,6 +1020,60 @@ def upscale_image_web():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/export-vector-web", methods=["POST"])
+def export_vector_web():
+    """
+    Export a high-res output for Adobe Illustrator.
+    - svg: auto-traced editable vector paths (posterized)
+    - eps: full-quality EPS with embedded image (correct appearance)
+    """
+    try:
+        if request.is_json:
+            data = request.get_json(silent=True) or {}
+            source_filename = (data.get("filename") or "").strip()
+            fmt = (data.get("format") or "svg").strip().lower()
+        else:
+            source_filename = (request.form.get("filename") or "").strip()
+            fmt = (request.form.get("format") or "svg").strip().lower()
+
+        if not source_filename:
+            return jsonify({"error": "filename is required"}), 400
+        if fmt not in {"eps", "svg"}:
+            return jsonify({"error": "format must be eps or svg"}), 400
+
+        source_secure = secure_filename(source_filename)
+        source_path = os.path.join(OUTPUT_FOLDER, source_secure)
+        if not os.path.exists(source_path):
+            return jsonify({"error": f"Source image not found: {source_secure}"}), 404
+
+        stem = os.path.splitext(source_secure)[0]
+        out_filename = generate_unique_filename(f"{stem}_vector.{fmt}", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = raster_to_vector(
+            image_path=source_path,
+            output_path=out_path,
+            fmt=fmt,
+        )
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        return jsonify(
+            {
+                "success": True,
+                "message": message,
+                "output_filename": out_filename,
+                "format": fmt,
+                "local_path": f"/download/{out_filename}",
+            }
+        )
+    except Exception as e:
+        import traceback
+        print("Error in export-vector-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/generate-characters-batch-web", methods=["POST"])
 def generate_characters_batch_web():
     """
@@ -1343,6 +1398,7 @@ Each character must appear exactly as they do in their original image, with no e
                 contents=contents,
                 seed=seed,
                 aspect_ratio=bg_aspect_ratio,
+                operation="art_generation:batch_composite",
             )
 
             composite = _extract_final_image_from_response(response)

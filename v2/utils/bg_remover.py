@@ -74,6 +74,7 @@ def remove_background_with_gemini_api(image_path: str) -> Optional[str]:
             model=get_gemini_image_model(),
             contents=[prompt, image],
             aspect_ratio=aspect_ratio,
+            operation="art_generation:bg_removal",
         )
         result = _extract_final_image_from_response(response)
         if result is None:
