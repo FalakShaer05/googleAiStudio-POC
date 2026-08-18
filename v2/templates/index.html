@@ -156,6 +156,12 @@
       position: relative;
       white-space: nowrap;
     }
+    a.nav-tab {
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
     .nav-tab:hover {
       background: rgba(102, 126, 234, 0.1);
     }
@@ -422,6 +428,9 @@
         <button class="nav-tab" id="highResTab" onclick="switchTab('highRes')">
           <i class="fas fa-expand-arrows-alt me-2"></i>High Res
         </button>
+        <a class="nav-tab" href="/creative-system">
+          <i class="fas fa-magic me-2"></i>Creative System
+        </a>
       </div>
     </div>
   </div>
