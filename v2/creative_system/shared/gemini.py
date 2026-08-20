@@ -477,11 +477,12 @@ def isolate_paper_background(img: Image.Image, crop: bool = True, pad: int = 8) 
     return isolate_word_hand_cutout(img, crop=crop, pad=pad)
 
 
-def obscure_style_letters(img: Image.Image) -> Image.Image:
+def obscure_style_letters(img: Image.Image, radius: int | None = None) -> Image.Image:
     """Keep silhouette and color masses; destroy readable reference vocabulary."""
     rgb = to_rgb(img)
     width, height = rgb.size
-    radius = max(10, min(width, height) // 50)
+    if radius is None:
+        radius = max(10, min(width, height) // 50)
     return rgb.filter(ImageFilter.GaussianBlur(radius=float(radius)))
 
 
@@ -496,6 +497,7 @@ def generate_composed_image(
     operation: str = "art_generation:creative",
     isolate_subject: bool = False,
     obscure_style_text: bool = False,
+    obscure_style_radius: Optional[int] = None,
     trailing_instruction: Optional[str] = None,
     clip_to_stencil: Optional[Image.Image] = None,
 ) -> Tuple[bool, str]:
@@ -520,7 +522,7 @@ def generate_composed_image(
             if isolate_subject:
                 style_image = isolate_word_hand_cutout(style_image, randomize_colors=False)
             if obscure_style_text:
-                style_image = obscure_style_letters(style_image)
+                style_image = obscure_style_letters(style_image, radius=obscure_style_radius)
             else:
                 style_image = to_rgb(style_image)
             contents.extend([

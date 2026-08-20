@@ -11,6 +11,7 @@ from utils.character_utils import generate_unique_filename
 
 from .blueprint import api_bp, bp
 from .shared.io import (
+    ALLOWED_AUDIO_EXTENSIONS,
     cleanup_paths,
     json_error,
     output_folder,
@@ -51,7 +52,7 @@ def _generate_impl():
     try:
         station_id = (request.form.get("station") or "").strip().lower()
         if station_id not in STATION_IDS:
-            return json_error("Invalid station. Choose one of the six creative stations.")
+            return json_error("Invalid station. Choose a valid creative station.")
 
         kwargs = {"station_id": station_id}
 
@@ -124,7 +125,20 @@ def _generate_impl():
                 return json_error("Pick a map location or upload a map screenshot with latitude and longitude")
             kwargs["map_image_path"] = map_path
 
-        out_filename = generate_unique_filename("creative.png", f"output_{station_id.replace('-', '_')}")
+        elif station_id == "audio-to-text":
+            kwargs["audio_path"] = save_named_upload(
+                "audio",
+                "cs_audio",
+                required=True,
+                allowed=ALLOWED_AUDIO_EXTENSIONS,
+                kind="audio",
+            )
+            temp_paths.append(kwargs["audio_path"])
+
+        if station_id == "audio-to-text":
+            out_filename = generate_unique_filename("creative.txt", f"output_{station_id.replace('-', '_')}")
+        else:
+            out_filename = generate_unique_filename("creative.png", f"output_{station_id.replace('-', '_')}")
         out_path = os.path.join(output_folder(), out_filename)
         kwargs["output_path"] = out_path
 
@@ -165,7 +179,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart
+        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, audio-to-text
     responses:
       200:
         description: Artwork generated

@@ -42,6 +42,12 @@ STATIONS = [
         "tagline": "A map of the place it all began.",
         "module": "graphic_heart",
     },
+    {
+        "id": "audio-to-text",
+        "label": "Audio to Text",
+        "tagline": "Upload a recording. Get a transcript.",
+        "module": "audio_to_text",
+    },
 ]
 
 STATION_IDS = {item["id"] for item in STATIONS}

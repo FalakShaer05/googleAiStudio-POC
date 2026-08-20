@@ -11,6 +11,7 @@
       <button type="button" class="nav-tab" data-tab="tracing-hand">Tracing Hand</button>
       <button type="button" class="nav-tab" data-tab="word-art-heart">Word Art Heart</button>
       <button type="button" class="nav-tab" data-tab="graphic-heart">Graphic Heart</button>
+      <button type="button" class="nav-tab" data-tab="audio-to-text">Audio to Text</button>
     </div>
   </div>
 </div>
@@ -171,8 +172,9 @@
     <div class="p-4">
       <form data-station-form="graphic-heart" enctype="multipart/form-data">
         <div class="mb-3">
-          <label class="form-label fw-bold">Map screenshot (optional if lat/long + Maps API key)</label>
+          <label class="form-label fw-bold">Map screenshot (used as the streets inside the heart)</label>
           <input type="file" class="form-control" name="map_image" accept="image/*" />
+          <div class="form-text">Upload a map of the place. If you skip this, lat/long can fetch a snapshot instead.</div>
         </div>
         <div class="row">
           <div class="col-md-6 mb-3">
@@ -193,6 +195,32 @@
           <input type="text" class="form-control" name="message" required placeholder="Where it all began" />
         </div>
         <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-audio-to-text">
+    <div class="header">
+      <h1 class="h3 mb-1">Audio to Text</h1>
+      <p class="mb-0">Upload a recording. Gemini transcribes speech from MP3, WebM, Opus, WAV, M4A, and similar formats.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="audio-to-text" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Audio (required)</label>
+          <input
+            type="file"
+            class="form-control"
+            name="audio"
+            accept="audio/*,audio/mpeg,audio/mp3,audio/webm,audio/opus,audio/ogg,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/aac,audio/flac,.mp3,.webm,.opus,.ogg,.wav,.m4a,.mp4,.aac,.flac,.aiff,.amr,.3gp"
+            required
+          />
+          <div class="form-text">Supported: MP3, WebM, Opus, OGG, WAV, M4A, MP4, AAC, FLAC, AIFF, AMR.</div>
+        </div>
+        <button type="submit" class="convert-btn">Transcribe</button>
         {% include "partials/form_result.html" %}
       </form>
     </div>

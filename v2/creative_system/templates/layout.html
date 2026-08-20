@@ -110,6 +110,18 @@
       border-radius: 20px;
       font-weight: 600;
     }
+    .cs-result-text {
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 420px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      font-size: 0.95rem;
+    }
     .chip-wrap { display: flex; flex-wrap: wrap; gap: 0.35rem; }
     .chip-wrap .form-check {
       margin: 0;
@@ -128,6 +140,6 @@
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen2"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen3"></script>
 </body>
 </html>

@@ -75,7 +75,8 @@
       submitBtn.dataset.idleLabel = submitBtn.dataset.idleLabel || submitBtn.textContent.trim();
       submitBtn.textContent = "Generating...";
     } else if (form.dataset.hasResult === "1") {
-      submitBtn.textContent = "Generate again";
+      const stationId = form.getAttribute("data-station-form");
+      submitBtn.textContent = stationId === "audio-to-text" ? "Transcribe again" : "Generate again";
     } else {
       submitBtn.textContent = submitBtn.dataset.idleLabel || "Generate";
     }
@@ -123,15 +124,37 @@
         throw new Error(data.error || "Generation failed");
       }
       const img = form.querySelector(".cs-result-image");
+      const textEl = form.querySelector(".cs-result-text");
       const download = form.querySelector(".cs-download");
       const message = form.querySelector(".cs-result-message");
-      const imageUrl = data.image_url || data.local_path || (cfg.downloadPrefix + data.output_filename);
-      if (img) img.src = cacheBust(imageUrl);
+      const isText = data.result_type === "text" || (data.output_filename || "").toLowerCase().endsWith(".txt");
+      if (isText) {
+        if (img) {
+          img.removeAttribute("src");
+          img.style.display = "none";
+        }
+        if (textEl) {
+          textEl.textContent = data.transcript || "";
+          textEl.style.display = "block";
+        }
+      } else {
+        const imageUrl = data.image_url || data.local_path || (cfg.downloadPrefix + data.output_filename);
+        if (textEl) {
+          textEl.textContent = "";
+          textEl.style.display = "none";
+        }
+        if (img) {
+          img.style.display = "";
+          img.src = cacheBust(imageUrl);
+        }
+      }
       if (download) {
         download.href = cfg.downloadPrefix + data.output_filename;
         download.setAttribute("download", data.output_filename);
       }
-      if (message) message.textContent = data.message || "Artwork generated successfully.";
+      if (message) {
+        message.textContent = data.message || (isText ? "Transcript generated successfully." : "Artwork generated successfully.");
+      }
       if (result) result.style.display = "block";
       form.dataset.hasResult = "1";
       if (status) {
