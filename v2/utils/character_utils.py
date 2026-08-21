@@ -46,6 +46,15 @@ def get_gemini_image_model() -> str:
     return os.getenv("GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
 
 
+def get_gemini_text_model() -> str:
+    """
+    Gemini model used for text tasks such as audio transcription.
+
+    Override via GEMINI_TEXT_MODEL when Google retires a default id.
+    """
+    return os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+
+
 def get_gemini_fallback_image_model() -> Optional[str]:
     """
     Optional fallback model id used when the primary model is temporarily unavailable.

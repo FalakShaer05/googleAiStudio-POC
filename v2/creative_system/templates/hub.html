@@ -1,0 +1,246 @@
+{% extends "layout.html" %}
+{% block title %}Creative System{% endblock %}
+{% block content %}
+<a class="corner-nav-btn" href="{{ url_for('index') }}">
+  <i class="fas fa-arrow-left"></i>Back to Home
+</a>
+
+<div class="container">
+  <div class="nav-tabs-container">
+    <div class="nav-tabs">
+      <button type="button" class="nav-tab active" data-tab="holding-hands">
+        <i class="fas fa-handshake me-1"></i>Holding Hands
+      </button>
+      <button type="button" class="nav-tab" data-tab="make-art-yours">
+        <i class="fas fa-paint-brush me-1"></i>Make Art Yours
+      </button>
+      <button type="button" class="nav-tab" data-tab="selfie-becoming">
+        <i class="fas fa-user-circle me-1"></i>Selfie Becoming
+      </button>
+      <button type="button" class="nav-tab" data-tab="tracing-hand">
+        <i class="fas fa-hand-paper me-1"></i>Tracing Hand
+      </button>
+      <button type="button" class="nav-tab" data-tab="word-art-heart">
+        <i class="fas fa-font me-1"></i>Word Art Heart
+      </button>
+      <button type="button" class="nav-tab" data-tab="graphic-heart">
+        <i class="fas fa-heart me-1"></i>Graphic Heart
+      </button>
+      <button type="button" class="nav-tab" data-tab="audio-to-text">
+        <i class="fas fa-microphone me-1"></i>Audio to Text
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section active" id="section-holding-hands">
+    <div class="header">
+      <h1 class="h3 mb-1">Holding Hands</h1>
+      <p class="mb-0">Two photos, two names, and a date. Gemini paints the keepsake.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="holding-hands" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Photo 1 (required)</label>
+          <input type="file" class="form-control" name="photo_a" accept="image/*" required />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Photo 2 (required)</label>
+          <input type="file" class="form-control" name="photo_b" accept="image/*" required />
+        </div>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Name 1</label>
+            <input type="text" class="form-control" name="name_a" required />
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Name 2</label>
+            <input type="text" class="form-control" name="name_b" required />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Date</label>
+          <input type="date" class="form-control" name="date" required />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Caption (optional)</label>
+          <input type="text" class="form-control" name="caption" />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-make-art-yours">
+    <div class="header">
+      <h1 class="h3 mb-1">Make Art Yours</h1>
+      <p class="mb-0">Upload artwork and a prompt. Gemini edits the image.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="make-art-yours" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Artwork (required)</label>
+          <input type="file" class="form-control" name="artwork" accept="image/*" required />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Prompt</label>
+          <textarea class="form-control" name="prompt" rows="4" required placeholder="Describe the changes to make..."></textarea>
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-selfie-becoming">
+    <div class="header">
+      <h1 class="h3 mb-1">Selfie Becoming</h1>
+      <p class="mb-0">Upload a selfie. Gemini converts it to a fading line-art portrait.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="selfie-becoming" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Selfie (required)</label>
+          <input type="file" class="form-control" name="selfie" accept="image/*" required />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-tracing-hand">
+    <div class="header">
+      <h1 class="h3 mb-1">Tracing Hand</h1>
+      <p class="mb-0">Upload a hand photo or tracing. Gemini fills that same outline with your words on a transparent background.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="tracing-hand" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Hand photo / scan (required)</label>
+          <input type="file" class="form-control" name="hand" accept="image/*" required />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Predefined words</label>
+          <div class="chip-wrap">
+            {% for word in word_chips["tracing-hand"] %}
+            <div class="form-check">
+              <input class="form-check-input word-chip" type="checkbox" value="{{ word }}" id="th-{{ loop.index }}" />
+              <label class="form-check-label" for="th-{{ loop.index }}">{{ word }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Custom words (comma-separated)</label>
+          <input type="text" class="form-control" name="custom_words" placeholder="family, love, happiness" />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-word-art-heart">
+    <div class="header">
+      <h1 class="h3 mb-1">Word Art — Heart</h1>
+      <p class="mb-0">Pick words. Gemini fills an anatomical heart as a dense colorful word cloud.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="word-art-heart" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Predefined words</label>
+          <div class="chip-wrap">
+            {% for word in word_chips["word-art-heart"] %}
+            <div class="form-check">
+              <input class="form-check-input word-chip" type="checkbox" value="{{ word }}" id="wh-{{ loop.index }}" />
+              <label class="form-check-label" for="wh-{{ loop.index }}">{{ word }}</label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Custom words (comma-separated)</label>
+          <input type="text" class="form-control" name="custom_words" placeholder="family, love, happiness" />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-graphic-heart">
+    <div class="header">
+      <h1 class="h3 mb-1">Graphic Heart</h1>
+      <p class="mb-0">Map image or lat/long, plus a message. Gemini makes a heart-shaped map print.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="graphic-heart" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Map screenshot (used as the streets inside the heart)</label>
+          <input type="file" class="form-control" name="map_image" accept="image/*" />
+          <div class="form-text">Upload a map of the place. If you skip this, lat/long can fetch a snapshot instead.</div>
+        </div>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Latitude</label>
+            <input type="text" class="form-control" name="latitude" placeholder="25.8014" />
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Longitude</label>
+            <input type="text" class="form-control" name="longitude" placeholder="-80.1994" />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Location label</label>
+          <input type="text" class="form-control" name="location_label" placeholder="WYNWOOD, FLORIDA" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Message</label>
+          <input type="text" class="form-control" name="message" required placeholder="Where it all began" />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-audio-to-text">
+    <div class="header">
+      <h1 class="h3 mb-1">Audio to Text</h1>
+      <p class="mb-0">Upload a recording. Gemini transcribes speech from MP3, WebM, Opus, WAV, M4A, and similar formats.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="audio-to-text" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Audio (required)</label>
+          <input
+            type="file"
+            class="form-control"
+            name="audio"
+            accept="audio/*,audio/mpeg,audio/mp3,audio/webm,audio/opus,audio/ogg,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/aac,audio/flac,.mp3,.webm,.opus,.ogg,.wav,.m4a,.mp4,.aac,.flac,.aiff,.amr,.3gp"
+            required
+          />
+          <div class="form-text">Supported: MP3, WebM, Opus, OGG, WAV, M4A, MP4, AAC, FLAC, AIFF, AMR.</div>
+        </div>
+        <button type="submit" class="convert-btn">Transcribe</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

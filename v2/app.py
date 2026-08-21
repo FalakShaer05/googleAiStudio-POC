@@ -44,6 +44,7 @@ from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, BIRTHDAY_STATION_PREFILLED_PROMPTS
 from utils.vector_export import raster_to_vector
+from creative_system import register_creative_system
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for API access
@@ -56,6 +57,7 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["OUTPUT_FOLDER"] = OUTPUT_FOLDER
+register_creative_system(app)
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}
 ALLOWED_LOGO_POSITIONS = {

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Creative System{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
+  <style>
+    body {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .nav-tabs-container {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto 0;
+      max-width: 780px;
+      overflow: hidden;
+    }
+    .nav-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      border-bottom: 2px solid #e9ecef;
+      background: #f8f9ff;
+      margin: 0;
+    }
+    .nav-tab {
+      flex: 1 1 140px;
+      padding: 0.75rem 0.5rem;
+      text-align: center;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: #667eea;
+      font-weight: 600;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.2rem;
+    }
+    .nav-tab i {
+      font-size: 0.75rem;
+      opacity: 0.9;
+    }
+    .nav-tab.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+    }
+    a.nav-tab {
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .main-container {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 20px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+      margin: 2rem auto;
+      max-width: 780px;
+    }
+    .content-section { display: none; }
+    .content-section.active { display: block; }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border-radius: 20px 20px 0 0;
+      padding: 1.75rem;
+      text-align: center;
+    }
+    .convert-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      color: #fff;
+      padding: 0.9rem 1.5rem;
+      border-radius: 25px;
+      font-weight: 600;
+      width: 100%;
+    }
+    .convert-btn:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+    .status-message {
+      display: none;
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+    }
+    .status-success { background: #d4edda; color: #155724; }
+    .status-error { background: #f8d7da; color: #721c24; }
+    .preview-image {
+      width: 100%;
+      max-height: 480px;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid #dee2e6;
+    }
+    #section-tracing-hand .preview-image {
+      background-color: #fff;
+      background-image:
+        linear-gradient(45deg, #e9ecef 25%, transparent 25%),
+        linear-gradient(-45deg, #e9ecef 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #e9ecef 75%),
+        linear-gradient(-45deg, transparent 75%, #e9ecef 75%);
+      background-size: 18px 18px;
+      background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+    }
+    .download-btn {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      border: none;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .cs-result-text {
+      display: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 420px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      font-size: 0.95rem;
+    }
+    .chip-wrap { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+    .chip-wrap .form-check {
+      margin: 0;
+      padding: 0.25rem 0.65rem 0.25rem 1.7rem;
+      background: #f8f9ff;
+      border-radius: 20px;
+      border: 1px solid #e9ecef;
+    }
+    .corner-nav-btn {
+      position: fixed;
+      top: 1.25rem;
+      right: 1.25rem;
+      z-index: 1000;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.7rem 1.15rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #667eea;
+      font-weight: 700;
+      font-size: 0.9rem;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .corner-nav-btn:hover {
+      color: #5a67d8;
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+    }
+    @media (max-width: 576px) {
+      .corner-nav-btn {
+        top: 0.75rem;
+        right: 0.75rem;
+        padding: 0.55rem 0.85rem;
+        font-size: 0.8rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  {% block content %}{% endblock %}
+  <script>
+    window.CREATIVE_SYSTEM = {
+      generateUrl: {{ url_for('creative_system.generate') | tojson }},
+      downloadPrefix: "/download/"
+    };
+  </script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen3"></script>
+</body>
+</html>
