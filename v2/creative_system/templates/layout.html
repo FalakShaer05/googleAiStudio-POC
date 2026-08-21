@@ -37,6 +37,14 @@
       color: #667eea;
       font-weight: 600;
       font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.2rem;
+    }
+    .nav-tab i {
+      font-size: 0.75rem;
+      opacity: 0.9;
     }
     .nav-tab.active {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -129,6 +137,37 @@
       background: #f8f9ff;
       border-radius: 20px;
       border: 1px solid #e9ecef;
+    }
+    .corner-nav-btn {
+      position: fixed;
+      top: 1.25rem;
+      right: 1.25rem;
+      z-index: 1000;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.7rem 1.15rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #667eea;
+      font-weight: 700;
+      font-size: 0.9rem;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .corner-nav-btn:hover {
+      color: #5a67d8;
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+    }
+    @media (max-width: 576px) {
+      .corner-nav-btn {
+        top: 0.75rem;
+        right: 0.75rem;
+        padding: 0.55rem 0.85rem;
+        font-size: 0.8rem;
+      }
     }
   </style>
 </head>

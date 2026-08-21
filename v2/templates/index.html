@@ -184,6 +184,37 @@
     .content-section.active {
       display: block;
     }
+    .corner-nav-btn {
+      position: fixed;
+      top: 1.25rem;
+      right: 1.25rem;
+      z-index: 1000;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.7rem 1.15rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.96);
+      color: #667eea;
+      font-weight: 700;
+      font-size: 0.9rem;
+      text-decoration: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .corner-nav-btn:hover {
+      color: #5a67d8;
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+    }
+    @media (max-width: 576px) {
+      .corner-nav-btn {
+        top: 0.75rem;
+        right: 0.75rem;
+        padding: 0.55rem 0.85rem;
+        font-size: 0.8rem;
+      }
+    }
     .batch-item {
       background: #f8f9ff;
       border: 2px solid #e9ecef;
@@ -406,6 +437,10 @@
   </style>
 </head>
 <body>
+  <a class="corner-nav-btn" href="/creative-system">
+    <i class="fas fa-magic"></i>Creative Studio
+  </a>
+
   <!-- Navigation Tabs -->
   <div class="container">
     <div class="nav-tabs-container">
@@ -428,9 +463,6 @@
         <button class="nav-tab" id="highResTab" onclick="switchTab('highRes')">
           <i class="fas fa-expand-arrows-alt me-2"></i>High Res
         </button>
-        <a class="nav-tab" href="/creative-system">
-          <i class="fas fa-magic me-2"></i>Creative System
-        </a>
       </div>
     </div>
   </div>
