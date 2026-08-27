@@ -135,6 +135,19 @@ def _generate_impl():
             )
             temp_paths.append(kwargs["audio_path"])
 
+        elif station_id == "audio-type":
+            kwargs["audio_path"] = save_named_upload(
+                "audio",
+                "cs_audio_type",
+                required=True,
+                allowed=ALLOWED_AUDIO_EXTENSIONS,
+                kind="audio",
+            )
+            temp_paths.append(kwargs["audio_path"])
+            kwargs["style"] = (request.form.get("style") or "rings").strip().lower()
+            if kwargs["style"] not in {"rings", "heart", "bars"}:
+                return json_error("Choose a visualization style: rings, heart, or bars")
+
         if station_id == "audio-to-text":
             out_filename = generate_unique_filename("creative.txt", f"output_{station_id.replace('-', '_')}")
         else:
@@ -179,7 +192,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, audio-to-text
+        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, audio-to-text, audio-type
     responses:
       200:
         description: Artwork generated

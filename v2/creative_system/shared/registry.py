@@ -48,6 +48,12 @@ STATIONS = [
         "tagline": "Upload a recording. Get a transcript.",
         "module": "audio_to_text",
     },
+    {
+        "id": "audio-type",
+        "label": "Audio Type",
+        "tagline": "A recording mapped into neon waveform art.",
+        "module": "audio_type",
+    },
 ]
 
 STATION_IDS = {item["id"] for item in STATIONS}

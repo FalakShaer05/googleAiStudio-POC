@@ -111,7 +111,13 @@
 
     setBusy(form, submitBtn, true);
     if (status) status.style.display = "none";
-    if (progress) progress.style.display = "block";
+    if (progress) {
+      const note = progress.querySelector("p");
+      if (note) {
+        note.textContent = form.getAttribute("data-progress") || "Generating with Gemini...";
+      }
+      progress.style.display = "block";
+    }
 
     try {
       const response = await fetch(cfg.generateUrl, {

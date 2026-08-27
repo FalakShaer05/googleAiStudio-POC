@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libpng-dev \
     curl \
+    ffmpeg \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
