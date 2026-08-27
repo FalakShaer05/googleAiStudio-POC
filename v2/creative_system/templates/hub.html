@@ -29,6 +29,9 @@
       <button type="button" class="nav-tab" data-tab="audio-to-text">
         <i class="fas fa-microphone me-1"></i>Audio to Text
       </button>
+      <button type="button" class="nav-tab" data-tab="audio-type">
+        <i class="fas fa-wave-square me-1"></i>Audio Type
+      </button>
     </div>
   </div>
 </div>
@@ -238,6 +241,61 @@
           <div class="form-text">Supported: MP3, WebM, Opus, OGG, WAV, M4A, MP4, AAC, FLAC, AIFF, AMR.</div>
         </div>
         <button type="submit" class="convert-btn">Transcribe</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-audio-type">
+    <div class="header">
+      <h1 class="h3 mb-1">Audio Type</h1>
+      <p class="mb-0">Upload a recording and pick a format. Spoken words from the voice are drawn onto that art.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="audio-type" data-progress="Transcribing and painting type..." enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Audio (required)</label>
+          <input
+            type="file"
+            class="form-control"
+            name="audio"
+            accept="audio/*,audio/mpeg,audio/mp3,audio/webm,audio/opus,audio/ogg,audio/wav,audio/x-wav,audio/mp4,audio/m4a,audio/aac,audio/flac,.mp3,.webm,.opus,.ogg,.wav,.m4a,.mp4,.aac,.flac,.aiff,.amr,.3gp"
+            required
+          />
+          <div class="form-text">Spoken words are taken from the recording and drawn onto the selected art. Supported: MP3, WebM, Opus, OGG, WAV, M4A, MP4, AAC, FLAC, AIFF, AMR.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Format</label>
+          <div class="style-picker">
+            <label class="style-card">
+              <input type="radio" name="style" value="rings" required checked />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/audio-type-rings.png') }}?v=arts3"
+                alt="Circular rings format"
+              />
+              <span>Circular rings</span>
+            </label>
+            <label class="style-card">
+              <input type="radio" name="style" value="heart" />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/audio-type-heart.png') }}?v=arts3"
+                alt="Wave heart format"
+              />
+              <span>Wave heart</span>
+            </label>
+            <label class="style-card">
+              <input type="radio" name="style" value="bars" />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/audio-type-bars.png') }}?v=arts3"
+                alt="Type waveform format"
+              />
+              <span>Type waveform</span>
+            </label>
+          </div>
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
         {% include "partials/form_result.html" %}
       </form>
     </div>

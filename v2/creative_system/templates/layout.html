@@ -110,6 +110,62 @@
       background-size: 18px 18px;
       background-position: 0 0, 0 9px, 9px -9px, -9px 0;
     }
+    #section-audio-type .preview-image {
+      background: #000;
+      border-color: #111;
+    }
+    .style-picker {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+    .style-card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      margin: 0;
+      padding: 0.4rem;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      background: #111;
+      cursor: pointer;
+      color: #f8f9fa;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-align: center;
+    }
+    .style-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .style-card img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: cover;
+      border-radius: 8px;
+      background: #000;
+    }
+    .style-card span {
+      padding-bottom: 0.15rem;
+    }
+    .style-card:has(input:checked) {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.25);
+      color: #4c51bf;
+      background: #f8f9ff;
+    }
+    .style-card:has(input:checked) span {
+      color: #4c51bf;
+    }
+    @media (max-width: 576px) {
+      .style-picker {
+        grid-template-columns: 1fr;
+      }
+      .style-card img {
+        aspect-ratio: 16 / 9;
+      }
+    }
     .download-btn {
       background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
       border: none;
@@ -179,6 +235,6 @@
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen3"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen4"></script>
 </body>
 </html>
