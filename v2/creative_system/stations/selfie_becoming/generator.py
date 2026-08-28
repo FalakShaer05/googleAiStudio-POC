@@ -1,5 +1,5 @@
 from ...shared.gemini import generate_composed_image, load_rgb, style_target_path
-from .prompts import build_prompt
+from .prompts import BACKGROUND_LOCK, STYLE_INSTRUCTION, build_prompt
 
 
 def generate(output_path: str, selfie_path: str, **_kwargs):
@@ -14,7 +14,10 @@ def generate(output_path: str, selfie_path: str, **_kwargs):
             ),
         ],
         style_target=style_target_path("selfie-becoming"),
+        style_instruction=STYLE_INSTRUCTION,
         aspect_ratio="3:4",
         temperature=0.55,
         operation="art_generation:creative:selfie-becoming",
+        isolate_line_art=True,
+        trailing_instruction=BACKGROUND_LOCK,
     )
