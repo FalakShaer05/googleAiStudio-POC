@@ -477,6 +477,119 @@ def isolate_paper_background(img: Image.Image, crop: bool = True, pad: int = 8) 
     return isolate_word_hand_cutout(img, crop=crop, pad=pad)
 
 
+def _is_line_art_paper_pixel(r: int, g: int, b: int, a: int = 255) -> bool:
+    """Beige/cream/off-white/white page — not gray or black ink."""
+    if a < 16:
+        return True
+    lum = (r + g + b) / 3.0
+    sat = max(r, g, b) - min(r, g, b)
+    warm = (r - b >= 8) and (g - b >= 3)
+    if warm and lum >= 175 and sat <= 90:
+        return True
+    if lum >= 242 and sat <= 22:
+        return True
+    return False
+
+
+def _line_art_checker_mask(lum, sat):
+    """Baked transparency-preview checker (fine B/W dither or gray squares)."""
+    h, w = lum.shape
+    empty = np.zeros((h, w), dtype=bool)
+    if h < 3 or w < 3:
+        return empty
+
+    p00 = lum[:-1, :-1]
+    p01 = lum[:-1, 1:]
+    p10 = lum[1:, :-1]
+    p11 = lum[1:, 1:]
+    contrast = 70
+    diag_a = (p00 > p01 + contrast) & (p00 > p10 + contrast) & (p11 > p01 + contrast) & (p11 > p10 + contrast)
+    diag_b = (p01 > p00 + contrast) & (p10 > p00 + contrast) & (p01 > p11 + contrast) & (p10 > p11 + contrast)
+    fine = np.zeros((h, w), dtype=bool)
+    pair = diag_a | diag_b
+    fine[:-1, :-1] |= pair
+    fine[:-1, 1:] |= pair
+    fine[1:, :-1] |= pair
+    fine[1:, 1:] |= pair
+
+    period = np.zeros((h, w), dtype=bool)
+    for step in (1, 2, 4, 8):
+        if w <= 2 * step or h <= 2 * step:
+            continue
+        h_same = np.abs(lum[:, 2 * step:] - lum[:, :-2 * step]) < 32
+        h_flip = np.abs(lum[:, step:-step] - lum[:, :-2 * step]) > 70
+        v_same = np.abs(lum[2 * step:, :] - lum[:-2 * step, :]) < 32
+        v_flip = np.abs(lum[step:-step, :] - lum[:-2 * step, :]) > 70
+        hchk = np.zeros((h, w), dtype=bool)
+        vchk = np.zeros((h, w), dtype=bool)
+        hchk[:, step:-step] = h_same & h_flip
+        vchk[step:-step, :] = v_same & v_flip
+        period |= hchk & vchk
+
+    detected = (fine | period) & (sat <= 28)
+    if float(detected.mean()) < 0.06:
+        return empty
+    return detected
+
+
+def isolate_line_art_cutout(img: Image.Image) -> Image.Image:
+    """
+    Turn a white/beige/checkerboard line drawing into black ink with real alpha.
+
+    Darkness becomes opacity so anti-aliased strokes and the becoming fade
+    composite cleanly. Does not crop; the 3:4 canvas stays intact.
+    """
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    if w < 2 or h < 2:
+        return rgba
+
+    if NUMPY_AVAILABLE:
+        arr = np.array(rgba)
+        r = arr[:, :, 0].astype(np.float32)
+        g = arr[:, :, 1].astype(np.float32)
+        b = arr[:, :, 2].astype(np.float32)
+        a = arr[:, :, 3].astype(np.float32)
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+        warm = ((r - b) >= 8) & ((g - b) >= 3)
+        paper = (
+            ((warm) & (lum >= 175) & (sat <= 90))
+            | ((lum >= 242) & (sat <= 22))
+            | (a < 16)
+            | _line_art_checker_mask(lum, sat)
+        )
+        lum = np.where(paper, 255.0, lum)
+
+        border = np.concatenate([
+            lum[0, :], lum[-1, :], lum[:, 0], lum[:, -1],
+            lum[min(4, h - 1), :], lum[max(0, h - 5), :],
+        ])
+        paper_ref = float(np.percentile(border, 92))
+        paper_ref = max(paper_ref, 240.0)
+        darkness = np.clip(paper_ref - lum, 0.0, 255.0)
+        darkness = np.where(darkness < 10.0, 0.0, darkness)
+        alpha = np.clip(darkness * (255.0 / max(paper_ref - 18.0, 1.0)), 0.0, 255.0)
+
+        out = np.zeros_like(arr)
+        out[:, :, 3] = alpha.astype(np.uint8)
+        if (out[:, :, 3] > 16).mean() < 0.005:
+            return rgba
+        return Image.fromarray(out, "RGBA")
+
+    pixels = rgba.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            if _is_line_art_paper_pixel(r, g, b, a):
+                pixels[x, y] = (0, 0, 0, 0)
+                continue
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            alpha = int(max(0.0, min(255.0, (245.0 - lum) * (255.0 / 227.0))))
+            pixels[x, y] = (0, 0, 0, alpha if alpha >= 10 else 0)
+    return rgba
+
+
 def obscure_style_letters(img: Image.Image, radius: int | None = None) -> Image.Image:
     """Keep silhouette and color masses; destroy readable reference vocabulary."""
     rgb = to_rgb(img)
@@ -496,6 +609,7 @@ def generate_composed_image(
     temperature: float = 0.8,
     operation: str = "art_generation:creative",
     isolate_subject: bool = False,
+    isolate_line_art: bool = False,
     obscure_style_text: bool = False,
     obscure_style_radius: Optional[int] = None,
     trailing_instruction: Optional[str] = None,
@@ -521,6 +635,8 @@ def generate_composed_image(
             style_image = Image.open(style_target)
             if isolate_subject:
                 style_image = isolate_word_hand_cutout(style_image, randomize_colors=False)
+            if isolate_line_art:
+                style_image = isolate_line_art_cutout(style_image)
             if obscure_style_text:
                 style_image = obscure_style_letters(style_image, radius=obscure_style_radius)
             else:
@@ -552,6 +668,8 @@ def generate_composed_image(
             img = clip_image_to_stencil(img, clip_to_stencil)
         if isolate_subject:
             img = isolate_word_hand_cutout(img, randomize_colors=True)
+        elif isolate_line_art:
+            img = isolate_line_art_cutout(img)
         elif img.mode not in ("RGB", "RGBA"):
             img = img.convert("RGB")
         img.save(output_path, format="PNG", optimize=True)
