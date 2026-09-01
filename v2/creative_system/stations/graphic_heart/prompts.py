@@ -1,12 +1,28 @@
+ART_COLOR = "#AF3329"
+TEXT_COLOR = "#33363F"
+
 STYLE_INSTRUCTION = (
     "LAYOUT AND PALETTE TARGET only (blurred on purpose). "
-    "Copy the overall composition: large heart in the upper half, cream paper, "
-    "rust-red/cream two-tone graphic style, centered typography stack under the heart, "
-    "thin rust rule, tiny heart icon at the bottom. "
+    "Copy the overall composition: a VERY LARGE heart dominating the upper ~60% of the frame, cream paper, "
+    f"two-tone graphic style ({ART_COLOR} city blocks on cream streets), compact typography stack tucked under the heart, "
+    f"a short hand-painted {ART_COLOR} brush-stroke divider with generous breathing room above and below, "
+    f"tiny {ART_COLOR} heart icon at the bottom. "
+    "Typography on the reference: large flowing signature script title, "
+    "smaller semi-bold all-caps sans-serif location with wide letter-spacing, "
+    "semi-bold sans-serif coordinates in art red. "
     "IGNORE every street, highway, pin location, and every word printed on this reference. "
     "Those belong to a different sample place. Streets, pin, and labels come only from the "
     "user map images and the text prompt."
 )
+
+
+def layout_lock() -> str:
+    return (
+        "LAYOUT LOCK: Heart must be very large (~60% of frame height). "
+        "Title script must be large and prominent. "
+        "Divider must be a short hand-painted brush stroke with clear space above and below — not a thin straight line. "
+        "Location text must be smaller than the title and semi-bold. Coordinates must be semi-bold."
+    )
 
 
 def map_lock() -> str:
@@ -23,8 +39,12 @@ def build_prompt(message: str, location_label: str, latitude: float | None, long
         lat_hem = "N" if latitude >= 0 else "S"
         lng_hem = "E" if longitude >= 0 else "W"
         coords = f"{abs(latitude):.4f}° {lat_hem}, {abs(longitude):.4f}° {lng_hem}"
-    location = (location_label or "THE PLACE").strip().upper()
-    coord_line = f'Third line: "{coords}" in smaller dark red/brown sans-serif.' if coords else "Omit a coordinate line if none were provided."
+    location = (location_label or "WYNWOOD, FLORIDA").strip().upper()
+    coord_block = (
+        f'3. Coordinates: "{coords}"'
+        if coords
+        else "3. Omit the coordinates line."
+    )
     return f"""Create a square keepsake print: a HEART-SHAPED stylized city map with typography beneath.
 
 MAP SOURCE (mandatory):
@@ -33,17 +53,30 @@ MAP SOURCE (mandatory):
 - The last image is a blurred layout sample of a DIFFERENT place. Do not copy its streets, pin, or text.
 
 MAP TREATMENT:
-- Crop/mask IMAGE 1 into a large heart shape in the upper half of a cream square.
-- Restyle as high-contrast two-tone graphics: muted rust-red city blocks, off-white/cream streets.
+- Crop/mask IMAGE 1 into a VERY LARGE heart shape — roughly 55–65% of the canvas height, wide and dominant in the upper portion with modest top margin only.
+- The heart should feel substantially bigger than a medium-sized heart; maximize map area inside the heart.
+- Restyle as high-contrast two-tone graphics: city blocks filled {ART_COLOR}, off-white/cream streets and background.
 - Place a solid black location-pin icon at the marker already on IMAGE 1 (or at the visual center of IMAGE 1 if there is no marker).
 - Do not keep Google UI, logos, compass, or the original full-color basemap look.
 
-TEXT (centered under the heart, in this exact order — use these strings, not the sample's text):
-- Top line, elegant black cursive: "{message}"
-- A thin rust-red horizontal rule
-- Next line, black wide-tracked all-caps sans-serif: "{location}"
-- {coord_line}
-- A small solid red heart icon at the bottom center.
+EXACT TEXT TO RENDER (print only these strings — never add font names, style labels, or extra words):
+1. Title: "{message}"
+2. Location: "{location}"
+{coord_block}
 
-No extra slogans. No "Graphic Heart" logo. No Next button. No city-skyline UI chrome.
+LAYOUT (match the reference proportions):
+- Heart occupies most of the upper frame; text block sits in the lower third, centered.
+- Title sits close beneath the heart point with comfortable but not excessive gap.
+- Brush-stroke divider: short (~30–40% of text width), hand-painted look, NOT a thin geometric line.
+- Add clear vertical spacing above AND below the brush stroke (roughly equal padding on both sides).
+- Location and coordinates sit closer together below the divider; bottom heart icon with modest margin beneath coordinates.
+
+TYPOGRAPHY (style only — do NOT print any of these descriptions as visible text):
+- Title line: large elegant handwritten signature script — noticeably bigger than all other text, weight 400, color {TEXT_COLOR}
+- Divider: short {ART_COLOR} brush-stroke mark with organic tapered edges, generous whitespace above and below
+- Location line: smaller geometric sans-serif, uppercase, wide letter-spacing, semi-bold (weight 600), color {TEXT_COLOR}
+- Coordinates line: clean sans-serif, semi-bold (weight 600), moderate letter-spacing, color {ART_COLOR}
+- Small solid {ART_COLOR} heart icon at the bottom center
+
+No extra slogans. No font names on the artwork. No "Graphic Heart" logo. No Next button. No city-skyline UI chrome.
 OUTPUT: square 1:1 finished print on textured off-white paper."""

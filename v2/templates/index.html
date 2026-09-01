@@ -131,27 +131,29 @@
       border-radius: 20px;
       box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
       margin: 2rem auto 0;
-      max-width: 780px;
+      max-width: 1100px;
       padding: 0;
       overflow: hidden;
     }
     .nav-tabs {
       display: flex;
+      flex-wrap: wrap;
       border-bottom: 2px solid #e9ecef;
       background: #f8f9ff;
       margin: 0;
       padding: 0;
     }
     .nav-tab {
-      flex: 1;
-      padding: 0.85rem 0.6rem;
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 0.75rem 0.45rem;
       text-align: center;
       cursor: pointer;
       border: none;
       background: transparent;
       color: #667eea;
       font-weight: 600;
-      font-size: 0.82rem;
+      font-size: 0.74rem;
       transition: all 0.3s ease;
       position: relative;
       white-space: nowrap;
@@ -434,6 +436,78 @@
       cursor: not-allowed;
       transform: none;
     }
+    .art-type-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.75rem;
+    }
+    #printReadySection.main-container {
+      max-width: 960px;
+    }
+    .print-spec-preview {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 10px;
+      padding: 1rem 1.15rem;
+      font-size: 0.9rem;
+      color: #212529;
+      line-height: 1.5;
+    }
+    .print-spec-preview .spec-title {
+      font-weight: 700;
+      font-size: 1rem;
+      color: #212529;
+      margin-bottom: 0.65rem;
+    }
+    .print-spec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    .print-spec-table th,
+    .print-spec-table td {
+      padding: 0.45rem 0.6rem;
+      border-bottom: 1px solid #e9ecef;
+      text-align: left;
+      color: #212529;
+    }
+    .print-spec-table th {
+      font-weight: 600;
+      background: #f8f9ff;
+      color: #495057;
+      width: 38%;
+    }
+    .print-spec-table tr:last-child th,
+    .print-spec-table tr:last-child td {
+      border-bottom: none;
+    }
+    .print-spec-formats {
+      font-size: 0.85rem;
+      color: #495057;
+      margin-top: 0.65rem;
+    }
+    .export-format-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+    .export-format-row .form-select {
+      flex: 1 1 160px;
+      min-width: 140px;
+    }
+    .export-format-row .download-btn {
+      flex: 0 0 auto;
+      width: auto;
+      min-width: 140px;
+      margin-top: 0 !important;
+    }
+    .export-format-hint {
+      font-size: 0.8rem;
+      color: #6c757d;
+      margin-top: 0.45rem;
+      text-align: left;
+    }
   </style>
 </head>
 <body>
@@ -462,6 +536,9 @@
         </button>
         <button class="nav-tab" id="highResTab" onclick="switchTab('highRes')">
           <i class="fas fa-expand-arrows-alt me-2"></i>High Res
+        </button>
+        <button class="nav-tab" id="printReadyTab" onclick="switchTab('printReady')">
+          <i class="fas fa-print me-2"></i>Print Ready
         </button>
       </div>
     </div>
@@ -1711,19 +1788,120 @@
             </div>
             <div class="col-md-6 text-center">
               <p class="mb-2" id="highResResultMessage">High-resolution image ready!</p>
-              <a href="#" class="download-btn mt-1 btn" id="highResDownloadLink" download>
-                <i class="fas fa-download me-2"></i>Download PNG
-              </a>
-              <a href="#" class="download-btn mt-2 btn" id="highResEpsDownloadLink" download>
-                <i class="fas fa-file-export me-2"></i>Download EPS (Illustrator)
-              </a>
-              <a href="#" class="download-btn mt-2 btn" id="highResVectorDownloadLink" download>
-                <i class="fas fa-vector-square me-2"></i>Download Traced SVG
-              </a>
-              <p class="text-muted small mt-2 mb-0">
-                <strong>EPS</strong> = full-quality file for Illustrator/print.
-                <strong>Traced SVG</strong> = editable paths (simplified/posterized look).
+              <label class="form-label fw-bold small mb-1" for="highResFormat">Download format</label>
+              <div class="export-format-row justify-content-center">
+                <select class="form-select form-select-sm" id="highResFormat">
+                  <option value="png">PNG</option>
+                  <option value="tiff">TIFF</option>
+                  <option value="pdf">PDF</option>
+                  <option value="svg">SVG (traced vector)</option>
+                  <option value="eps">EPS (Illustrator)</option>
+                </select>
+                <button type="button" class="download-btn btn" id="highResExportBtn">
+                  <i class="fas fa-download me-2"></i>Download
+                </button>
+              </div>
+              <p class="export-format-hint mb-0">
+                PNG, TIFF, and PDF keep full image quality. SVG uses auto-traced paths. EPS embeds the full raster for Illustrator.
               </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Print Ready (type-based PPI) Section -->
+  <div class="container">
+    <div class="main-container content-section" id="printReadySection">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-print me-2"></i>Print Ready / PPI
+        </h1>
+        <p class="mb-0">
+          Upscale artwork to exact merch print specs. Select product type and size — output uses the recommended PPI pixel dimensions.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold" for="printReadyMerchType">Merch type</label>
+            <select class="form-select" id="printReadyMerchType">
+              <option value="">Loading...</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold" for="printReadyVariant">Product size</label>
+            <select class="form-select" id="printReadyVariant">
+              <option value="">Select merch type first</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="print-spec-preview mb-3" id="printReadySpecPreview">
+          Select a merch type and product size to see print specifications.
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold" for="printReadyOutputFormat">Download format</label>
+            <select class="form-select" id="printReadyOutputFormat">
+              <option value="png">PNG</option>
+              <option value="tiff">TIFF</option>
+              <option value="pdf">PDF</option>
+              <option value="svg">SVG (traced vector)</option>
+              <option value="eps">EPS (Illustrator)</option>
+            </select>
+            <div class="form-text">Generation always saves PNG for testing. Download converts to your chosen format.</div>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Existing artwork (required)</label>
+          <div class="upload-area" id="printReadyUploadArea">
+            <div class="upload-icon"><i class="fas fa-image"></i></div>
+            <h5 class="mb-1">Click to choose an image</h5>
+            <p class="text-muted mb-0">Upload the artwork you want sized for print</p>
+            <input type="file" id="printReadyInput" class="file-input" accept="image/*" />
+          </div>
+          <div class="file-info mt-2" id="printReadyFileInfo" style="display: none;">
+            <div class="d-flex justify-content-between align-items-center">
+              <span id="printReadyFileName"></span>
+              <button type="button" class="btn btn-sm btn-outline-danger" id="clearPrintReadyBtn">Clear</button>
+            </div>
+          </div>
+          <div class="mt-2">
+            <label class="form-label small text-muted">Or paste image URL</label>
+            <input type="url" id="printReadyImageUrl" class="form-control form-control-sm" placeholder="https://example.com/art.png" />
+          </div>
+        </div>
+
+        <button type="button" class="convert-btn" id="generatePrintReadyBtn">
+          <i class="fas fa-print me-2"></i>Create Print-Ready Image
+        </button>
+
+        <div class="mt-3" id="printReadyProgress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0">Sizing artwork to print specs (preserving original pixels)...</p>
+        </div>
+
+        <div class="status-message" id="printReadyStatus"></div>
+
+        <div class="file-info mt-3" id="printReadyResult" style="display: none;">
+          <h5 class="mb-2"><i class="fas fa-eye me-2"></i>Preview</h5>
+          <div class="row g-2 align-items-center">
+            <div class="col-md-6 text-center">
+              <img id="printReadyPreviewImage" class="preview-image" alt="Print-ready preview" />
+            </div>
+            <div class="col-md-6 text-center">
+              <p class="mb-2" id="printReadyResultMessage">Print-ready image created!</p>
+              <p class="small text-muted mb-2" id="printReadyPngNote">PNG master file saved.</p>
+              <button type="button" class="download-btn btn" id="printReadyExportBtn">
+                <i class="fas fa-download me-2"></i>Download
+              </button>
             </div>
           </div>
         </div>
@@ -1741,6 +1919,7 @@
       document.getElementById("fifaWorldcupTab").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdayTab").classList.toggle("active", tab === "birthday");
       document.getElementById("highResTab").classList.toggle("active", tab === "highRes");
+      document.getElementById("printReadyTab").classList.toggle("active", tab === "printReady");
       
       // Show/hide sections
       document.getElementById("singleSection").classList.toggle("active", tab === "single");
@@ -1749,6 +1928,7 @@
       document.getElementById("fifaWorldcupSection").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdaySection").classList.toggle("active", tab === "birthday");
       document.getElementById("highResSection").classList.toggle("active", tab === "highRes");
+      document.getElementById("printReadySection").classList.toggle("active", tab === "printReady");
     }
 
     let currentFilename = null;
@@ -3327,6 +3507,76 @@ STRICT RULES:
     renderBirthdayParticipants();
     applyBirthdayStationPrompt("vangogh", true);
 
+    async function exportOutputFile(sourceFilename, format, statusEl, btn) {
+      if (!sourceFilename) return;
+
+      if (format === "png") {
+        const downloadUrl = "/download/" + encodeURIComponent(sourceFilename);
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = sourceFilename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (statusEl) {
+          statusEl.className = "status-message status-success";
+          statusEl.textContent = "PNG download started.";
+          statusEl.style.display = "block";
+        }
+        return;
+      }
+
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML =
+        '<span class="spinner me-2"></span>Preparing ' + format.toUpperCase() + "...";
+      if (statusEl) statusEl.style.display = "none";
+
+      try {
+        const response = await fetch("/export-vector-web", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: sourceFilename, format: format }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || "Export failed");
+        }
+
+        const outFilename = data.output_filename;
+        const downloadUrl = data.local_path || "/download/" + encodeURIComponent(outFilename);
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = outFilename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+
+        if (statusEl) {
+          statusEl.className = "status-message status-success";
+          statusEl.textContent = data.message || format.toUpperCase() + " ready!";
+          statusEl.style.display = "block";
+        }
+      } catch (err) {
+        if (statusEl) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = "Download failed: " + (err.message || "Unknown error");
+          statusEl.style.display = "block";
+        }
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+
+    function syncRecommendedExportFormat(profile, formatSelect) {
+      if (!profile || !formatSelect) return;
+      const recommended = (profile.file_formats || []).map((f) => f.toLowerCase());
+      const pick =
+        ["png", "tiff", "pdf", "svg", "eps"].find((f) => recommended.includes(f)) || "png";
+      formatSelect.value = pick;
+    }
+
     // ---- High Resolution / DPI upscale ----
     let highResFile = null;
     let highResOutputFilename = null;
@@ -3337,9 +3587,8 @@ STRICT RULES:
     const highResFileName = document.getElementById("highResFileName");
     const clearHighResBtn = document.getElementById("clearHighResBtn");
     const generateHighResBtn = document.getElementById("generateHighResBtn");
-    const highResDownloadLink = document.getElementById("highResDownloadLink");
-    const highResVectorDownloadLink = document.getElementById("highResVectorDownloadLink");
-    const highResEpsDownloadLink = document.getElementById("highResEpsDownloadLink");
+    const highResFormat = document.getElementById("highResFormat");
+    const highResExportBtn = document.getElementById("highResExportBtn");
 
     highResUploadArea.addEventListener("click", () => highResInput.click());
     highResInput.addEventListener("change", () => {
@@ -3359,72 +3608,13 @@ STRICT RULES:
       highResUploadArea.style.display = "block";
     });
 
-    highResDownloadLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      const filename = highResDownloadLink.dataset.outputFilename || highResOutputFilename;
-      if (!filename) return;
-      const downloadUrl = "/download/" + encodeURIComponent(filename);
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    });
-
-    async function downloadHighResVector(format, btn) {
-      const sourceFilename =
-        btn.dataset.outputFilename ||
-        highResDownloadLink.dataset.outputFilename ||
-        highResOutputFilename;
-      if (!sourceFilename) return;
-
-      const statusEl = document.getElementById("highResStatus");
-      const originalHtml = btn.innerHTML;
-      btn.style.pointerEvents = "none";
-      btn.innerHTML = '<span class="spinner me-2"></span>Tracing vector...';
-      statusEl.style.display = "none";
-
-      try {
-        const response = await fetch("/export-vector-web", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: sourceFilename, format: format }),
-        });
-        const data = await response.json();
-        if (!data.success) {
-          throw new Error(data.error || "Vector export failed");
-        }
-
-        const vectorFilename = data.output_filename;
-        const downloadUrl = data.local_path || "/download/" + encodeURIComponent(vectorFilename);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = vectorFilename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-
-        statusEl.className = "status-message status-success";
-        statusEl.textContent = data.message || ("Vector " + format.toUpperCase() + " ready!");
-        statusEl.style.display = "block";
-      } catch (err) {
-        statusEl.className = "status-message status-error";
-        statusEl.textContent = "Vector download failed: " + (err.message || "Unknown error");
-        statusEl.style.display = "block";
-      } finally {
-        btn.style.pointerEvents = "";
-        btn.innerHTML = originalHtml;
-      }
-    }
-
-    highResVectorDownloadLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      downloadHighResVector("svg", highResVectorDownloadLink);
-    });
-    highResEpsDownloadLink.addEventListener("click", (e) => {
-      e.preventDefault();
-      downloadHighResVector("eps", highResEpsDownloadLink);
+    highResExportBtn.addEventListener("click", () => {
+      exportOutputFile(
+        highResOutputFilename,
+        highResFormat.value,
+        document.getElementById("highResStatus"),
+        highResExportBtn
+      );
     });
 
     generateHighResBtn.addEventListener("click", async () => {
@@ -3470,9 +3660,6 @@ STRICT RULES:
         highResOutputFilename = data.output_filename;
         const url = data.image_url || data.local_path || "/download/" + data.output_filename;
         document.getElementById("highResPreviewImage").src = url;
-        highResDownloadLink.dataset.outputFilename = data.output_filename;
-        highResVectorDownloadLink.dataset.outputFilename = data.output_filename;
-        highResEpsDownloadLink.dataset.outputFilename = data.output_filename;
         document.getElementById("highResResultMessage").textContent =
           data.message || "High-resolution image ready!";
         document.getElementById("highResResult").style.display = "block";
@@ -3487,6 +3674,230 @@ STRICT RULES:
         statusEl.style.display = "block";
       }
     });
+
+    // ---- Print Ready (merch PPI upscale) ----
+    let printReadyProfiles = [];
+    let printReadySelectedType = "tshirts";
+    let printReadySelectedVariant = "";
+    let printReadyFile = null;
+    let printReadyOutputFilename = null;
+
+    const printReadyMerchType = document.getElementById("printReadyMerchType");
+    const printReadyVariant = document.getElementById("printReadyVariant");
+    const printReadyUploadArea = document.getElementById("printReadyUploadArea");
+    const printReadyInput = document.getElementById("printReadyInput");
+    const printReadyFileInfo = document.getElementById("printReadyFileInfo");
+    const printReadyFileName = document.getElementById("printReadyFileName");
+    const clearPrintReadyBtn = document.getElementById("clearPrintReadyBtn");
+    const generatePrintReadyBtn = document.getElementById("generatePrintReadyBtn");
+    const printReadyOutputFormat = document.getElementById("printReadyOutputFormat");
+    const printReadyExportBtn = document.getElementById("printReadyExportBtn");
+    const printReadySpecPreview = document.getElementById("printReadySpecPreview");
+    const printReadyPngNote = document.getElementById("printReadyPngNote");
+
+    function getPrintReadyProfile(typeId) {
+      return printReadyProfiles.find((p) => p.id === typeId) || printReadyProfiles[0];
+    }
+
+    function getPrintReadyVariant(profile, variantId) {
+      if (!profile) return null;
+      return profile.variants.find((v) => v.id === variantId) || profile.variants[0] || null;
+    }
+
+    function updatePrintReadySpecPreview(profile, variant) {
+      if (!profile || !variant) {
+        printReadySpecPreview.textContent = "Select a merch type and product size to see print specifications.";
+        return;
+      }
+      printReadySpecPreview.innerHTML =
+        `<div class="spec-title">${profile.label} — ${variant.size_label}</div>` +
+        `<table class="print-spec-table">` +
+        `<tr><th>Max print area</th><td>${variant.print_area}</td></tr>` +
+        `<tr><th>Recommended pixels</th><td>${variant.pixels_label}</td></tr>` +
+        `<tr><th>PPI</th><td>${variant.ppi} PPI</td></tr>` +
+        `<tr><th>Processing</th><td>${variant.resize_method || "Original preserved (pixel resize)"}</td></tr>` +
+        `</table>`;
+      syncRecommendedExportFormat(profile, printReadyOutputFormat);
+      updatePrintReadyDownloadLabel();
+    }
+
+    function populatePrintReadyVariants(profile) {
+      printReadyVariant.innerHTML = "";
+      if (!profile || !profile.variants.length) {
+        printReadyVariant.innerHTML = '<option value="">No sizes available</option>';
+        printReadySelectedVariant = "";
+        updatePrintReadySpecPreview(null, null);
+        return;
+      }
+      profile.variants.forEach((variant, index) => {
+        const opt = document.createElement("option");
+        opt.value = variant.id;
+        opt.textContent = variant.size_label + " — " + variant.pixels_label;
+        if (index === 0) opt.selected = true;
+        printReadyVariant.appendChild(opt);
+      });
+      printReadySelectedVariant = profile.variants[0].id;
+      updatePrintReadySpecPreview(profile, profile.variants[0]);
+    }
+
+    function applyPrintReadyMerchType(typeId) {
+      const profile = getPrintReadyProfile(typeId);
+      if (!profile) return;
+      printReadySelectedType = profile.id;
+      printReadyMerchType.value = profile.id;
+      populatePrintReadyVariants(profile);
+    }
+
+    function renderPrintReadyMerchTypes() {
+      printReadyMerchType.innerHTML = "";
+      if (!printReadyProfiles.length) {
+        printReadyMerchType.innerHTML = '<option value="">Could not load merch types</option>';
+        return;
+      }
+      printReadyProfiles.forEach((profile) => {
+        const opt = document.createElement("option");
+        opt.value = profile.id;
+        opt.textContent = profile.label;
+        printReadyMerchType.appendChild(opt);
+      });
+      applyPrintReadyMerchType(printReadySelectedType);
+    }
+
+    async function loadPrintReadyProfiles() {
+      try {
+        const response = await fetch("/type-resolution-profiles");
+        const data = await response.json();
+        printReadyProfiles = data.profiles || [];
+        renderPrintReadyMerchTypes();
+      } catch (err) {
+        printReadyMerchType.innerHTML =
+          '<option value="">Failed to load: ' + err.message + "</option>";
+      }
+    }
+
+    printReadyMerchType.addEventListener("change", () => {
+      applyPrintReadyMerchType(printReadyMerchType.value);
+    });
+
+    printReadyVariant.addEventListener("change", () => {
+      printReadySelectedVariant = printReadyVariant.value;
+      const profile = getPrintReadyProfile(printReadySelectedType);
+      const variant = getPrintReadyVariant(profile, printReadySelectedVariant);
+      updatePrintReadySpecPreview(profile, variant);
+    });
+
+    printReadyUploadArea.addEventListener("click", () => printReadyInput.click());
+    printReadyInput.addEventListener("change", () => {
+      const file = printReadyInput.files[0];
+      if (file) {
+        printReadyFile = file;
+        printReadyFileName.textContent = file.name;
+        printReadyFileInfo.style.display = "block";
+        printReadyUploadArea.style.display = "none";
+        document.getElementById("printReadyImageUrl").value = "";
+      }
+    });
+    clearPrintReadyBtn.addEventListener("click", () => {
+      printReadyFile = null;
+      printReadyInput.value = "";
+      printReadyFileInfo.style.display = "none";
+      printReadyUploadArea.style.display = "block";
+    });
+
+    function updatePrintReadyDownloadLabel() {
+      if (!printReadyOutputFormat || !printReadyExportBtn) return;
+      printReadyExportBtn.innerHTML =
+        '<i class="fas fa-download me-2"></i>Download ' +
+        printReadyOutputFormat.value.toUpperCase();
+    }
+
+    printReadyExportBtn.addEventListener("click", () => {
+      exportOutputFile(
+        printReadyOutputFilename,
+        printReadyOutputFormat.value,
+        document.getElementById("printReadyStatus"),
+        printReadyExportBtn
+      );
+    });
+
+    printReadyOutputFormat.addEventListener("change", updatePrintReadyDownloadLabel);
+
+    generatePrintReadyBtn.addEventListener("click", async () => {
+      const statusEl = document.getElementById("printReadyStatus");
+      const imageUrl = document.getElementById("printReadyImageUrl").value.trim();
+      statusEl.style.display = "none";
+
+      if (!printReadyFile && !imageUrl) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Please upload an image or paste an image URL.";
+        statusEl.style.display = "block";
+        return;
+      }
+
+      if (!printReadySelectedVariant) {
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Please select a merch type and product size.";
+        statusEl.style.display = "block";
+        return;
+      }
+
+      const profile = getPrintReadyProfile(printReadySelectedType);
+      const variant = getPrintReadyVariant(profile, printReadySelectedVariant);
+
+      const formData = new FormData();
+      if (printReadyFile) {
+        formData.append("image", printReadyFile);
+      } else {
+        formData.append("image_url", imageUrl);
+      }
+      formData.append("art_type", printReadySelectedType);
+      formData.append("variant_id", printReadySelectedVariant);
+      if (variant) {
+        formData.append("ppi", String(variant.ppi));
+      }
+
+      document.getElementById("printReadyProgress").style.display = "block";
+      document.getElementById("printReadyResult").style.display = "none";
+      generatePrintReadyBtn.disabled = true;
+
+      try {
+        const response = await fetch("/upscale-type-web", { method: "POST", body: formData });
+        const data = await response.json();
+        document.getElementById("printReadyProgress").style.display = "none";
+        generatePrintReadyBtn.disabled = false;
+
+        if (!data.success) {
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = data.error || "Print-ready upscale failed";
+          statusEl.style.display = "block";
+          return;
+        }
+
+        printReadyOutputFilename = data.output_filename;
+        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        document.getElementById("printReadyPreviewImage").src = url;
+        document.getElementById("printReadyResultMessage").textContent =
+          data.message || "Print-ready PNG created!";
+        if (printReadyPngNote) {
+          const dlFormat = printReadyOutputFormat.value.toUpperCase();
+          printReadyPngNote.textContent =
+            "PNG master saved. Click Download to get " + dlFormat + ".";
+        }
+        updatePrintReadyDownloadLabel();
+        document.getElementById("printReadyResult").style.display = "block";
+        statusEl.className = "status-message status-success";
+        statusEl.textContent = data.message || "Done!";
+        statusEl.style.display = "block";
+      } catch (err) {
+        document.getElementById("printReadyProgress").style.display = "none";
+        generatePrintReadyBtn.disabled = false;
+        statusEl.className = "status-message status-error";
+        statusEl.textContent = "Network error: " + err.message;
+        statusEl.style.display = "block";
+      }
+    });
+
+    loadPrintReadyProfiles();
   </script>
 </body>
 </html>
