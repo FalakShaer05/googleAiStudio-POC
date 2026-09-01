@@ -3032,3 +3032,68 @@ def upscale_image_high_resolution(
         traceback.print_exc()
         return False, str(e)
 
+
+def upscale_image_type_resolution(
+    image_path: str,
+    output_path: str,
+    art_type: str = "tshirts",
+    variant_id: Optional[str] = None,
+    image_size: Optional[str] = None,
+    ppi: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """
+    Merch-type print-ready resize using exact PPI pixel dimensions.
+
+    Does NOT send art through Gemini — only scales the original pixels to the
+    target print canvas so line work, text, and logos stay unchanged.
+    """
+    from utils.print_resolution import (
+        get_art_type_profile,
+        get_target_pixels_for_variant,
+        normalize_art_type,
+        resize_preserving_art,
+        validate_variant,
+    )
+
+    try:
+        if not os.path.exists(image_path):
+            return False, f"Image not found: {image_path}"
+
+        resolved_type = normalize_art_type(art_type)
+        profile = get_art_type_profile(resolved_type)
+
+        ok, err = validate_variant(resolved_type, variant_id or "")
+        if not ok:
+            return False, err
+
+        source = Image.open(image_path)
+        src_w, src_h = source.size
+
+        target_w, target_h, variant_ppi, variant = get_target_pixels_for_variant(
+            resolved_type, variant_id or "", src_w, src_h
+        )
+        resolved_ppi = ppi if ppi is not None else variant_ppi
+
+        img = resize_preserving_art(source, target_w, target_h)
+        if img.mode == "RGBA":
+            img = img.convert("RGB")
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        img.save(output_path, "PNG", optimize=True, dpi=(resolved_ppi, resolved_ppi))
+        out_w, out_h = img.size
+        type_label = profile["label"]
+        size_label = variant["size_label"]
+        return (
+            True,
+            f"Print-ready {type_label} ({size_label}): {out_w:,}×{out_h:,} px @ "
+            f"{resolved_ppi} PPI — original art preserved",
+        )
+    except Exception as e:
+        print(f"upscale_image_type_resolution error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, str(e)
+

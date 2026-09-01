@@ -37,13 +37,15 @@ from utils.character_utils import (
     generate_fifa_worldcup_card,
     generate_birthday_card,
     upscale_image_high_resolution,
+    upscale_image_type_resolution,
     normalize_image_size,
 )
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, BIRTHDAY_STATION_PREFILLED_PROMPTS
-from utils.vector_export import raster_to_vector
+from utils.vector_export import export_image_format, SUPPORTED_EXPORT_FORMATS
+from utils.print_resolution import list_profiles_for_api, normalize_art_type
 from creative_system import register_creative_system
 
 app = Flask(__name__)
@@ -1022,12 +1024,99 @@ def upscale_image_web():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/type-resolution-profiles", methods=["GET"])
+def type_resolution_profiles():
+    """Return merch print profiles for the Print Ready tab (PPI + pixel dimensions per product)."""
+    return jsonify({"profiles": list_profiles_for_api()})
+
+
+@app.route("/upscale-type-web", methods=["POST"])
+def upscale_type_web():
+    """
+    Type-aware print-ready upscale: art type selects resolution profile; uses PPI not DPI.
+    """
+    image_path = None
+    try:
+        image_file = request.files.get("image")
+        image_url = request.form.get("image_url", "").strip()
+
+        if not image_file and not image_url:
+            return jsonify({"error": "Either image file or image_url is required"}), 400
+        if image_file and image_url:
+            return jsonify({"error": "Provide either image file or image_url, not both"}), 400
+
+        art_type = normalize_art_type(request.form.get("art_type", "tshirts"))
+        variant_id = request.form.get("variant_id", "").strip()
+        if not variant_id:
+            return jsonify({"error": "variant_id (product size) is required"}), 400
+
+        image_size_raw = request.form.get("image_size", "").strip()
+        image_size = _parse_image_size_form_value(image_size_raw) if image_size_raw else None
+        if image_size and image_size not in {"2K", "4K"}:
+            return jsonify({"error": "image_size must be 2K or 4K for print-ready upscale"}), 400
+
+        ppi_raw = request.form.get("ppi", "").strip()
+        ppi = int(ppi_raw) if ppi_raw else None
+        if ppi is not None and (ppi < 72 or ppi > 600):
+            return jsonify({"error": "ppi must be between 72 and 600"}), 400
+
+        if image_file and image_file.filename:
+            if not allowed_file(image_file.filename):
+                return jsonify({"error": "Invalid image file type"}), 400
+            image_filename = generate_unique_filename(image_file.filename, "upscale_type_src")
+            image_path = os.path.join(UPLOAD_FOLDER, image_filename)
+            image_file.save(image_path)
+        else:
+            image_path = download_image_from_url(image_url, UPLOAD_FOLDER)
+            if not image_path:
+                return jsonify({"error": "Failed to download image from URL"}), 400
+
+        out_filename = generate_unique_filename("print_ready.png", "output")
+        out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        success, message = upscale_image_type_resolution(
+            image_path=image_path,
+            output_path=out_path,
+            art_type=art_type,
+            variant_id=variant_id,
+            image_size=image_size,
+            ppi=ppi,
+        )
+
+        cleanup_file(image_path)
+
+        if not success:
+            return jsonify({"success": False, "error": message}), 500
+
+        cloudfront_url = upload_image_to_s3(out_path)
+        info = get_image_info(out_path)
+        response_data = {
+            "success": True,
+            "message": message,
+            "output_filename": out_filename,
+            "local_path": f"/outputs/{out_filename}",
+            "art_type": art_type,
+            "variant_id": variant_id,
+            "ppi": ppi,
+            "image_size": image_size,
+            "image_info": info,
+        }
+        if cloudfront_url:
+            response_data["image_url"] = cloudfront_url
+        return jsonify(response_data)
+    except Exception as e:
+        cleanup_file(image_path)
+        import traceback
+        print("Error in upscale-type-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/export-vector-web", methods=["POST"])
 def export_vector_web():
     """
-    Export a high-res output for Adobe Illustrator.
-    - svg: auto-traced editable vector paths (posterized)
-    - eps: full-quality EPS with embedded image (correct appearance)
+    Export an output image to a print/download format.
+    Supports: png, tiff, pdf, svg (traced), eps (embedded raster).
     """
     try:
         if request.is_json:
@@ -1038,10 +1127,18 @@ def export_vector_web():
             source_filename = (request.form.get("filename") or "").strip()
             fmt = (request.form.get("format") or "svg").strip().lower()
 
+        if fmt == "tif":
+            fmt = "tiff"
+
         if not source_filename:
             return jsonify({"error": "filename is required"}), 400
-        if fmt not in {"eps", "svg"}:
-            return jsonify({"error": "format must be eps or svg"}), 400
+        if fmt not in SUPPORTED_EXPORT_FORMATS:
+            return jsonify(
+                {
+                    "error": "format must be one of: "
+                    + ", ".join(sorted(SUPPORTED_EXPORT_FORMATS))
+                }
+            ), 400
 
         source_secure = secure_filename(source_filename)
         source_path = os.path.join(OUTPUT_FOLDER, source_secure)
@@ -1049,10 +1146,10 @@ def export_vector_web():
             return jsonify({"error": f"Source image not found: {source_secure}"}), 404
 
         stem = os.path.splitext(source_secure)[0]
-        out_filename = generate_unique_filename(f"{stem}_vector.{fmt}", "output")
+        out_filename = generate_unique_filename(f"{stem}_export.{fmt}", "output")
         out_path = os.path.join(OUTPUT_FOLDER, out_filename)
 
-        success, message = raster_to_vector(
+        success, message = export_image_format(
             image_path=source_path,
             output_path=out_path,
             fmt=fmt,

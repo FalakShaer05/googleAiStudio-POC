@@ -1,5 +1,5 @@
 from ...shared.gemini import generate_composed_image, load_rgb, style_target_path
-from .prompts import STYLE_INSTRUCTION, build_prompt, map_lock
+from .prompts import ART_COLOR, STYLE_INSTRUCTION, build_prompt, layout_lock, map_lock
 
 
 def generate(
@@ -14,7 +14,7 @@ def generate(
     user_map = load_rgb(map_image_path)
     map_role = (
         "USER MAP SNAPSHOT — this is the ONLY street grid allowed inside the heart. "
-        "Trace these roads, blocks, interchanges, water, and parks. Recolor to rust-red / cream. "
+        f"Trace these roads, blocks, interchanges, water, and parks. Recolor to {ART_COLOR} blocks on cream streets. "
         "Keep any existing pin in the same relative spot. Do not replace this geography with the sample print."
     )
     return generate_composed_image(
@@ -31,5 +31,5 @@ def generate(
         operation="art_generation:creative:graphic-heart",
         obscure_style_text=True,
         obscure_style_radius=56,
-        trailing_instruction=map_lock(),
+        trailing_instruction=map_lock() + " " + layout_lock(),
     )
