@@ -3507,22 +3507,35 @@ STRICT RULES:
     renderBirthdayParticipants();
     applyBirthdayStationPrompt("vangogh", true);
 
-    async function exportOutputFile(sourceFilename, format, statusEl, btn) {
-      if (!sourceFilename) return;
-
-      if (format === "png") {
-        const downloadUrl = "/download/" + encodeURIComponent(sourceFilename);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = sourceFilename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+    function triggerCdnDownload(cdnUrl, filename, statusEl) {
+      if (!cdnUrl) {
         if (statusEl) {
-          statusEl.className = "status-message status-success";
-          statusEl.textContent = "PNG download started.";
+          statusEl.className = "status-message status-error";
+          statusEl.textContent = "CDN download URL not available.";
           statusEl.style.display = "block";
         }
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = cdnUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      if (filename) a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      if (statusEl) {
+        statusEl.className = "status-message status-success";
+        statusEl.textContent = "Download started from CDN.";
+        statusEl.style.display = "block";
+      }
+    }
+
+    async function exportOutputFile(sourceFilename, format, statusEl, btn, sourceUrl) {
+      if (!sourceFilename && !sourceUrl) return;
+
+      if (format === "png" && sourceUrl) {
+        triggerCdnDownload(sourceUrl, sourceFilename, statusEl);
         return;
       }
 
@@ -3536,26 +3549,25 @@ STRICT RULES:
         const response = await fetch("/export-vector-web", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: sourceFilename, format: format }),
+          body: JSON.stringify({
+            filename: sourceFilename,
+            format: format,
+            source_url: sourceUrl || "",
+          }),
         });
         const data = await response.json();
-        if (!data.success) {
+        if (!response.ok || !data.success) {
           throw new Error(data.error || "Export failed");
         }
 
-        const outFilename = data.output_filename;
-        const downloadUrl = data.local_path || "/download/" + encodeURIComponent(outFilename);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = outFilename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        const downloadUrl = data.download_url || data.image_url;
+        if (!downloadUrl) {
+          throw new Error("CDN download URL missing from server response.");
+        }
 
-        if (statusEl) {
-          statusEl.className = "status-message status-success";
-          statusEl.textContent = data.message || format.toUpperCase() + " ready!";
-          statusEl.style.display = "block";
+        triggerCdnDownload(downloadUrl, data.output_filename, statusEl);
+        if (statusEl && data.message) {
+          statusEl.textContent = data.message;
         }
       } catch (err) {
         if (statusEl) {
@@ -3580,6 +3592,7 @@ STRICT RULES:
     // ---- High Resolution / DPI upscale ----
     let highResFile = null;
     let highResOutputFilename = null;
+    let highResOutputUrl = null;
 
     const highResUploadArea = document.getElementById("highResUploadArea");
     const highResInput = document.getElementById("highResInput");
@@ -3613,7 +3626,8 @@ STRICT RULES:
         highResOutputFilename,
         highResFormat.value,
         document.getElementById("highResStatus"),
-        highResExportBtn
+        highResExportBtn,
+        highResOutputUrl
       );
     });
 
@@ -3658,7 +3672,8 @@ STRICT RULES:
         }
 
         highResOutputFilename = data.output_filename;
-        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        highResOutputUrl = data.download_url || data.image_url || null;
+        const url = highResOutputUrl || data.local_path || "/download/" + data.output_filename;
         document.getElementById("highResPreviewImage").src = url;
         document.getElementById("highResResultMessage").textContent =
           data.message || "High-resolution image ready!";
@@ -3681,6 +3696,7 @@ STRICT RULES:
     let printReadySelectedVariant = "";
     let printReadyFile = null;
     let printReadyOutputFilename = null;
+    let printReadyOutputUrl = null;
 
     const printReadyMerchType = document.getElementById("printReadyMerchType");
     const printReadyVariant = document.getElementById("printReadyVariant");
@@ -3816,7 +3832,8 @@ STRICT RULES:
         printReadyOutputFilename,
         printReadyOutputFormat.value,
         document.getElementById("printReadyStatus"),
-        printReadyExportBtn
+        printReadyExportBtn,
+        printReadyOutputUrl
       );
     });
 
@@ -3874,7 +3891,8 @@ STRICT RULES:
         }
 
         printReadyOutputFilename = data.output_filename;
-        const url = data.image_url || data.local_path || "/download/" + data.output_filename;
+        printReadyOutputUrl = data.download_url || data.image_url || null;
+        const url = printReadyOutputUrl || data.local_path || "/download/" + data.output_filename;
         document.getElementById("printReadyPreviewImage").src = url;
         document.getElementById("printReadyResultMessage").textContent =
           data.message || "Print-ready PNG created!";
