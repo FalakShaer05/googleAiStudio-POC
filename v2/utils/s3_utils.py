@@ -8,13 +8,18 @@ import tempfile
 from typing import Optional, List
 
 
-def upload_image_to_s3(image_path: str, prefix: Optional[str] = None) -> Optional[str]:
+def upload_image_to_s3(
+    image_path: str,
+    prefix: Optional[str] = None,
+    as_attachment: bool = False,
+) -> Optional[str]:
     """
     Upload an image to S3 and return the CloudFront URL.
     
     Args:
         image_path: Path to the local image file
         prefix: Optional S3 prefix/folder (defaults to S3_PREFIX env var or 'converted/')
+        as_attachment: When True, sets Content-Disposition for browser downloads via CDN
         
     Returns:
         str: CloudFront URL of the uploaded image, or None if upload failed
@@ -71,17 +76,27 @@ def upload_image_to_s3(image_path: str, prefix: Optional[str] = None) -> Optiona
             '.jpeg': 'image/jpeg',
             '.png': 'image/png',
             '.gif': 'image/gif',
-            '.webp': 'image/webp'
+            '.webp': 'image/webp',
+            '.svg': 'image/svg+xml',
+            '.pdf': 'application/pdf',
+            '.tif': 'image/tiff',
+            '.tiff': 'image/tiff',
+            '.eps': 'application/postscript',
+            '.zip': 'application/zip',
         }
-        content_type = content_type_map.get(ext_lower, 'image/jpeg')
+        content_type = content_type_map.get(ext_lower, 'application/octet-stream')
         
+        extra_args = {'ContentType': content_type}
+        if as_attachment:
+            extra_args['ContentDisposition'] = f'attachment; filename="{filename}"'
+
         # Upload to S3
         print(f"📤 Uploading image to S3: s3://{s3_bucket}/{s3_key}")
         s3_client.upload_file(
             image_path,
             s3_bucket,
             s3_key,
-            ExtraArgs={'ContentType': content_type}
+            ExtraArgs=extra_args,
         )
         
         # Construct CloudFront URL

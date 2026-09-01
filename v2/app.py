@@ -1015,6 +1015,7 @@ def upscale_image_web():
         }
         if cloudfront_url:
             response_data["image_url"] = cloudfront_url
+            response_data["download_url"] = cloudfront_url
         return jsonify(response_data)
     except Exception as e:
         cleanup_file(image_path)
@@ -1103,6 +1104,7 @@ def upscale_type_web():
         }
         if cloudfront_url:
             response_data["image_url"] = cloudfront_url
+            response_data["download_url"] = cloudfront_url
         return jsonify(response_data)
     except Exception as e:
         cleanup_file(image_path)
@@ -1117,15 +1119,21 @@ def export_vector_web():
     """
     Export an output image to a print/download format.
     Supports: png, tiff, pdf, svg (traced), eps (embedded raster).
+
+    Returns JSON with a CloudFront download_url (required for ECS multi-instance deployments).
     """
+    source_path = None
+    downloaded_temp = False
     try:
         if request.is_json:
             data = request.get_json(silent=True) or {}
             source_filename = (data.get("filename") or "").strip()
             fmt = (data.get("format") or "svg").strip().lower()
+            source_url = (data.get("source_url") or "").strip()
         else:
             source_filename = (request.form.get("filename") or "").strip()
             fmt = (request.form.get("format") or "svg").strip().lower()
+            source_url = (request.form.get("source_url") or "").strip()
 
         if fmt == "tif":
             fmt = "tiff"
@@ -1143,7 +1151,20 @@ def export_vector_web():
         source_secure = secure_filename(source_filename)
         source_path = os.path.join(OUTPUT_FOLDER, source_secure)
         if not os.path.exists(source_path):
-            return jsonify({"error": f"Source image not found: {source_secure}"}), 404
+            if source_url:
+                source_path = download_image_from_url(source_url, UPLOAD_FOLDER)
+                downloaded_temp = bool(source_path)
+                if not source_path:
+                    return jsonify({"error": "Failed to fetch source image from URL"}), 400
+            else:
+                return jsonify(
+                    {
+                        "error": (
+                            f"Source image not found: {source_secure}. "
+                            "Regenerate or pass source_url from the preview URL."
+                        )
+                    }
+                ), 404
 
         stem = os.path.splitext(source_secure)[0]
         out_filename = generate_unique_filename(f"{stem}_export.{fmt}", "output")
@@ -1157,13 +1178,26 @@ def export_vector_web():
         if not success:
             return jsonify({"success": False, "error": message}), 500
 
+        cloudfront_url = upload_image_to_s3(out_path, as_attachment=True)
+        if not cloudfront_url:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": (
+                        "Export succeeded but CDN upload failed. "
+                        "Verify S3_BUCKET, AWS credentials, and CLOUDFRONT_URL."
+                    ),
+                }
+            ), 503
+
         return jsonify(
             {
                 "success": True,
                 "message": message,
                 "output_filename": out_filename,
                 "format": fmt,
-                "local_path": f"/download/{out_filename}",
+                "download_url": cloudfront_url,
+                "image_url": cloudfront_url,
             }
         )
     except Exception as e:
@@ -1171,6 +1205,9 @@ def export_vector_web():
         print("Error in export-vector-web:", e)
         print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+    finally:
+        if downloaded_temp and source_path:
+            cleanup_file(source_path)
 
 
 @app.route("/generate-characters-batch-web", methods=["POST"])
@@ -1975,14 +2012,15 @@ def download_file(filename):
     """Download a file from the outputs folder or temp directory (for zip files)"""
     filename_secure = secure_filename(filename)
     file_path = os.path.join(OUTPUT_FOLDER, filename_secure)
-    
-    # If it's a zip file, check temp directory too
-    if not os.path.exists(file_path) and filename_secure.endswith('.zip'):
-        import tempfile
-        temp_path = os.path.join(tempfile.gettempdir(), filename_secure)
-        if os.path.exists(temp_path):
-            return send_file(temp_path, as_attachment=True, download_name=filename_secure)
-    
+
+    if not os.path.exists(file_path):
+        if filename_secure.endswith(".zip"):
+            import tempfile
+            temp_path = os.path.join(tempfile.gettempdir(), filename_secure)
+            if os.path.exists(temp_path):
+                return send_file(temp_path, as_attachment=True, download_name=filename_secure)
+        return jsonify({"error": f"File not found: {filename_secure}"}), 404
+
     return send_from_directory(OUTPUT_FOLDER, filename_secure, as_attachment=True)
 
 
