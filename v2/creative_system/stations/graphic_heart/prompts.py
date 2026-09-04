@@ -33,12 +33,16 @@ def map_lock() -> str:
     )
 
 
+def format_coords(latitude: float | None, longitude: float | None) -> str:
+    if latitude is None or longitude is None:
+        return ""
+    lat_hem = "N" if latitude >= 0 else "S"
+    lng_hem = "E" if longitude >= 0 else "W"
+    return f"{abs(latitude):.4f}° {lat_hem}, {abs(longitude):.4f}° {lng_hem}"
+
+
 def build_prompt(message: str, location_label: str, latitude: float | None, longitude: float | None) -> str:
-    coords = ""
-    if latitude is not None and longitude is not None:
-        lat_hem = "N" if latitude >= 0 else "S"
-        lng_hem = "E" if longitude >= 0 else "W"
-        coords = f"{abs(latitude):.4f}° {lat_hem}, {abs(longitude):.4f}° {lng_hem}"
+    coords = format_coords(latitude, longitude)
     location = (location_label or "WYNWOOD, FLORIDA").strip().upper()
     coord_block = (
         f'3. Coordinates: "{coords}"'
