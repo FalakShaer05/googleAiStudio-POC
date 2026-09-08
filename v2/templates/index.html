@@ -855,7 +855,7 @@
         <!-- Step 1: Upload Background (Optional) -->
         <div class="mb-4 p-3" style="background: #f8f9ff; border-radius: 12px; border: 2px solid #e9ecef;">
           <h5 class="mb-3"><i class="fas fa-image me-2"></i>Step 1: Upload Background (Optional)</h5>
-          <p class="text-muted small mb-3">Upload a background image now. All generated characters will be placed on this background.</p>
+          <p class="text-muted small mb-3">Optional. If you skip this, characters can still be composited onto a plain white canvas.</p>
           
           <div class="mb-3">
             <div class="upload-area" onclick="document.getElementById('batchBgInput').click()">
@@ -919,11 +919,11 @@
 
         <div id="batchResults" class="mt-3"></div>
 
-        <!-- Step 3: Composite on Background (if background was uploaded) -->
+        <!-- Step 3: Composite characters (background optional) -->
         <div id="compositeSection" class="mt-4" style="display: none;">
           <hr class="my-4">
-          <h5 class="mb-3"><i class="fas fa-layer-group me-2"></i>Step 3: Composite All Characters on Background</h5>
-          <p class="text-muted small mb-3">Your background has been uploaded. Adjust settings and composite all characters.</p>
+          <h5 class="mb-3"><i class="fas fa-layer-group me-2"></i>Step 3: Composite All Characters</h5>
+          <p class="text-muted small mb-3">Adjust settings and composite all characters. If no background was uploaded, a plain white canvas is used.</p>
 
           <!-- Compositing Prompt -->
           <div class="mb-3">
@@ -2466,7 +2466,7 @@ STRICT RULES:
         showBatchStatus(data.message, false);
         renderBatchResults(data.results);
         
-        // Show compositing section if there are successful results and background was uploaded
+        // Show compositing section if there are successful results (background is optional)
         const successfulResults = data.results.filter(r => r.success);
         if (successfulResults.length > 0) {
           // Prefer S3/CloudFront URLs; fall back to local paths if needed
@@ -2475,10 +2475,10 @@ STRICT RULES:
             .filter(u => !!u);
           generatedCharacterFilenames = successfulResults.map(r => r.output_filename);
 
-          if (generatedCharacterUrls.length > 0 && (batchBackgroundUrl || batchBackgroundFilename)) {
+          if (generatedCharacterUrls.length > 0) {
             document.getElementById("compositeSection").style.display = "block";
-            // Preload default compositing prompt
-            const defaultPrompt = `Use the attached background exactly as it is — same colors, shapes, and watercolor effect.
+            const hasBackground = !!(batchBackgroundUrl || batchBackgroundFilename);
+            const defaultPromptWithBg = `Use the attached background exactly as it is — same colors, shapes, and watercolor effect.
 Do not change or redraw the background.
 
 CRITICAL CHARACTER PRESERVATION:
@@ -2500,7 +2500,28 @@ STRICT RULES:
 ✅ Do NOT add any extra objects, equipment, or elements.
 ✅ Each character keeps ONLY what they had in their original image.
 ✅ Only adjust positioning and size slightly to blend them naturally.`;
-            document.getElementById("compositePrompt").value = defaultPrompt;
+            const defaultPromptNoBg = `Arrange all attached character images onto a clean plain white canvas.
+Do not invent scenery, textures, or extra background elements.
+
+CRITICAL CHARACTER PRESERVATION:
+- Keep each person EXACTLY as they appear in their original image.
+- Each character must maintain their EXACT face, pose, outfit, colors, and equipment from their original image.
+- Do NOT add any extra objects, equipment, or elements to any character.
+- Do NOT mix equipment between characters.
+- Do NOT add any new sports equipment, balls, or objects that were not in the original character images.
+
+CHARACTER PLACEMENT:
+- Place the characters naturally in a group composition.
+- Make the parents slightly larger than the children for natural proportions.
+- Position characters so they don't overlap inappropriately.
+
+STRICT RULES:
+✅ Keep the canvas a plain white background.
+✅ Do not add, remove, or alter any person.
+✅ Do NOT add any extra objects, equipment, or elements.
+✅ Each character keeps ONLY what they had in their original image.
+✅ Only adjust positioning and size slightly so they fit together naturally.`;
+            document.getElementById("compositePrompt").value = hasBackground ? defaultPromptWithBg : defaultPromptNoBg;
           }
         }
 
@@ -2574,11 +2595,6 @@ STRICT RULES:
     document.getElementById("compositeBtn").addEventListener("click", async () => {
       if (generatedCharacterUrls.length === 0) {
         showCompositeStatus("No characters to composite. Please generate characters first.", true);
-        return;
-      }
-
-      if (!batchBackgroundUrl && !batchBackgroundFilename) {
-        showCompositeStatus("Please upload a background first in Step 1", true);
         return;
       }
 

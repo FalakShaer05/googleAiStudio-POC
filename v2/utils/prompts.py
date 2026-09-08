@@ -40,6 +40,28 @@ STRICT RULES:
 ✅ Each character keeps ONLY what they had in their original image.
 ✅ Only adjust positioning and size slightly to blend them naturally."""
 
+COMPOSITING_PROMPT_NO_BACKGROUND = """Arrange all attached character images onto a clean plain white canvas.
+Do not invent scenery, textures, or extra background elements.
+
+CRITICAL CHARACTER PRESERVATION:
+- Keep each person EXACTLY as they appear in their original image.
+- Each character must maintain their EXACT face, pose, outfit, colors, and equipment from their original image.
+- Do NOT add any extra objects, equipment, or elements to any character.
+- Do NOT mix equipment between characters.
+- Do NOT add any new sports equipment, balls, or objects that were not in the original character images.
+
+CHARACTER PLACEMENT:
+- Place the characters naturally in a group composition.
+- Make the parents slightly larger than the children for natural proportions.
+- Position characters so they don't overlap inappropriately.
+
+STRICT RULES:
+✅ Keep the canvas a plain white background.
+✅ Do not add, remove, or alter any person.
+✅ Do NOT add any extra objects, equipment, or elements.
+✅ Each character keeps ONLY what they had in their original image.
+✅ Only adjust positioning and size slightly so they fit together naturally."""
+
 FIFA_WORLD_CUP_PROMPT = """THREE INPUT IMAGES — ROLES (read carefully before generating):
 
 IMAGE 1 = USER PHOTO → sole source for the player's FACE and IDENTITY

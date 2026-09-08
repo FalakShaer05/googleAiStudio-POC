@@ -44,7 +44,7 @@ from utils.character_utils import (
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
-from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, BIRTHDAY_STATION_PREFILLED_PROMPTS
+from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, COMPOSITING_PROMPT_NO_BACKGROUND, BIRTHDAY_STATION_PREFILLED_PROMPTS
 from utils.vector_export import export_image_format, SUPPORTED_EXPORT_FORMATS
 from utils.print_resolution import list_profiles_for_api, normalize_art_type
 from creative_system import register_creative_system
@@ -1336,8 +1336,8 @@ def generate_characters_batch_web():
 @app.route("/composite-characters-on-background", methods=["POST"])
 def composite_characters_on_background():
     """
-    Composite multiple generated characters onto a single background using PIL.
-    This preserves the exact background image without modification.
+    Composite multiple generated characters onto a background using PIL or Gemini.
+    Background is optional: when omitted, characters are placed on a plain white canvas.
     """
     try:
         from PIL import Image, ImageDraw
@@ -1355,12 +1355,10 @@ def composite_characters_on_background():
         if not character_urls and not character_filenames:
             return jsonify({"error": "At least one character image is required (provide character_urls or character_filenames)."}), 400
         
-        # --- Background: prefer S3/CloudFront URL; filename only as fallback ---
+        # --- Background: optional. Prefer S3/CloudFront URL; filename only as fallback ---
         background_filename = request.form.get("background_filename", "").strip()
         background_url = request.form.get("background_url", "").strip()
-        
-        if not background_url and not background_filename:
-            return jsonify({"error": "Background image is required (provide background_url or background_filename)."}), 400
+        has_background = bool(background_url or background_filename)
 
         position = request.form.get("position", "bottom").strip()
         scale = float(request.form.get("scale", "1.0"))
@@ -1370,7 +1368,7 @@ def composite_characters_on_background():
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
         
-        # Load background image (in-memory; S3/URL preferred)
+        # Load background image (in-memory; S3/URL preferred), or a white canvas if omitted
         if background_url:
             try:
                 resp = requests.get(background_url, timeout=30)
@@ -1381,17 +1379,22 @@ def composite_characters_on_background():
                 background_image = Image.open(BytesIO(resp.content)).convert("RGB")
             except Exception as e:
                 return jsonify({"error": f"Failed to decode background image from URL: {str(e)}"}), 400
-        else:
+        elif background_filename:
             # Fallback: load from local uploads folder (legacy behavior)
             background_path = os.path.join(UPLOAD_FOLDER, secure_filename(background_filename))
             if not os.path.exists(background_path):
                 return jsonify({"error": "Background file not found"}), 400
             background_image = Image.open(background_path).convert("RGB")
+        else:
+            canvas_pixels = get_canvas_size_pixels(canvas_size, dpi) if canvas_size else None
+            if not canvas_pixels:
+                canvas_pixels = get_canvas_size_pixels("8x10", dpi) or (2400, 3000)
+            background_image = Image.new("RGB", canvas_pixels, (255, 255, 255))
         
         bg_w, bg_h = background_image.size
 
         # Apply canvas size if specified (e.g., "8x10", "16x20", "3:2", "1:1")
-        if canvas_size:
+        if has_background and canvas_size:
             canvas_pixels = get_canvas_size_pixels(canvas_size, dpi)
             if canvas_pixels:
                 target_width, target_height = canvas_pixels
@@ -1485,16 +1488,25 @@ def composite_characters_on_background():
             num_characters = len(character_images)
             canvas_context = ""
             if canvas_size:
+                canvas_label = "provided background" if has_background else "canvas"
                 canvas_context = (
                     f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                    f"the provided background ({bg_w}x{bg_h}, {bg_aspect_ratio})."
+                    f"the {canvas_label} ({bg_w}x{bg_h}, {bg_aspect_ratio})."
                 )
 
             canvas_context_str = f"\n{canvas_context}" if canvas_context else ""
             
             # Get custom compositing prompt if provided, otherwise use default
             custom_compositing_prompt = request.form.get("compositing_prompt", "").strip()
-            base_prompt = custom_compositing_prompt if custom_compositing_prompt else COMPOSITING_PROMPT
+            default_prompt = COMPOSITING_PROMPT if has_background else COMPOSITING_PROMPT_NO_BACKGROUND
+            base_prompt = custom_compositing_prompt if custom_compositing_prompt else default_prompt
+            background_output = (
+                "Return a SINGLE final composited image with all characters naturally placed on the EXACT background, ready for printing.\n"
+                "The background must be identical to the input background."
+                if has_background
+                else "Return a SINGLE final composited image with all characters naturally placed on a plain white canvas, ready for printing.\n"
+                "Do not invent scenery or extra background elements."
+            )
             
             full_prompt = f"""{base_prompt}
 
@@ -1514,8 +1526,7 @@ IMPORTANT REMINDERS:
 - No mixing or adding of sports equipment between characters.
 
 OUTPUT:
-Return a SINGLE final composited image with all characters naturally placed on the EXACT background, ready for printing.
-The background must be identical to the input background.
+{background_output}
 Each character must appear exactly as they do in their original image, with no extra objects added. And all of the characters must match the  {num_characters}"""
 
             # Prepare contents for Gemini (background + all characters)
@@ -1584,7 +1595,11 @@ Each character must appear exactly as they do in their original image, with no e
         
         response_data = {
             "success": True,
-            "message": f"Successfully composited {num_characters} character(s) onto background",
+            "message": (
+                f"Successfully composited {num_characters} character(s) onto background"
+                if has_background
+                else f"Successfully composited {num_characters} character(s) onto a white canvas"
+            ),
             "output_filename": output_filename,
             "local_path": f"/outputs/{output_filename}",
             "metadata": {
