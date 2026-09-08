@@ -39,6 +39,7 @@ from utils.character_utils import (
     upscale_image_high_resolution,
     upscale_image_type_resolution,
     normalize_image_size,
+    get_canvas_size_pixels,
 )
 from utils.bg_remover import remove_background
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -1048,6 +1049,7 @@ def upscale_type_web():
 
         art_type = normalize_art_type(request.form.get("art_type", "tshirts"))
         variant_id = request.form.get("variant_id", "").strip()
+        aspect_id = (request.form.get("aspect_id") or "").strip() or None
         if not variant_id:
             return jsonify({"error": "variant_id (product size) is required"}), 400
 
@@ -1082,6 +1084,7 @@ def upscale_type_web():
             variant_id=variant_id,
             image_size=image_size,
             ppi=ppi,
+            aspect_id=aspect_id,
         )
 
         cleanup_file(image_path)
@@ -1098,6 +1101,7 @@ def upscale_type_web():
             "local_path": f"/outputs/{out_filename}",
             "art_type": art_type,
             "variant_id": variant_id,
+            "aspect_id": aspect_id,
             "ppi": ppi,
             "image_size": image_size,
             "image_info": info,
@@ -1386,19 +1390,11 @@ def composite_characters_on_background():
         
         bg_w, bg_h = background_image.size
 
-        # Apply canvas size if specified
+        # Apply canvas size if specified (e.g., "8x10", "16x20", "3:2", "1:1")
         if canvas_size:
-            # Parse canvas size (e.g., "8x10", "11x14", "16x20")
-            size_map = {
-                "8x10": (8, 10),
-                "11x14": (11, 14),
-                "16x20": (16, 20),
-            }
-            if canvas_size in size_map:
-                target_w, target_h = size_map[canvas_size]
-                # Calculate dimensions at specified DPI
-                target_width = int(target_w * dpi)
-                target_height = int(target_h * dpi)
+            canvas_pixels = get_canvas_size_pixels(canvas_size, dpi)
+            if canvas_pixels:
+                target_width, target_height = canvas_pixels
                 # Resize background maintaining aspect ratio, then crop or pad
                 bg_aspect = bg_w / bg_h
                 target_aspect = target_width / target_height
@@ -1667,8 +1663,8 @@ def api_generate_character():
         name: canvas_size
         type: string
         required: false
-        enum: ["", "8x10", "11x14", "16x20"]
-        description: Print size (optional)
+        enum: ["", "8x10", "11x14", "16x20", "3:2", "1:1"]
+        description: Print size (optional). "3:2" and "1:1" force the output aspect ratio.
       - in: formData
         name: dpi
         type: integer
@@ -1745,8 +1741,8 @@ def api_generate_characters_batch():
                     description: Description of the character to generate
                   canvas_size:
                     type: string
-                    enum: ["", "8x10", "11x14", "16x20"]
-                    description: Print size (optional)
+                    enum: ["", "8x10", "11x14", "16x20", "3:2", "1:1"]
+                    description: Print size (optional). "3:2" and "1:1" force the output aspect ratio.
                   dpi:
                     type: integer
                     default: 300

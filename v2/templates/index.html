@@ -754,6 +754,8 @@
                 <option value="8x10">8×10</option>
                 <option value="11x14">11×14</option>
                 <option value="16x20">16×20</option>
+                <option value="3:2">3:2 — Landscape (15×10)</option>
+                <option value="1:1">1:1 — Square (12×12)</option>
               </select>
             </div>
           </div>
@@ -1819,22 +1821,28 @@
           <i class="fas fa-print me-2"></i>Print Ready / PPI
         </h1>
         <p class="mb-0">
-          Upscale artwork to exact merch print specs. Select product type and size — output uses the recommended PPI pixel dimensions.
+          Upscale artwork to exact merch print specs. Select product type, size, and art area (landscape 3:2 or square 1:1) — output uses the recommended PPI pixel dimensions.
         </p>
       </div>
 
       <div class="p-4">
         <div class="row g-3 mb-3">
-          <div class="col-md-6">
+          <div class="col-md-4">
             <label class="form-label fw-bold" for="printReadyMerchType">Merch type</label>
             <select class="form-select" id="printReadyMerchType">
               <option value="">Loading...</option>
             </select>
           </div>
-          <div class="col-md-6">
+          <div class="col-md-4">
             <label class="form-label fw-bold" for="printReadyVariant">Product size</label>
             <select class="form-select" id="printReadyVariant">
               <option value="">Select merch type first</option>
+            </select>
+          </div>
+          <div class="col-md-4" id="printReadyAspectCol">
+            <label class="form-label fw-bold" for="printReadyAspect">Art area</label>
+            <select class="form-select" id="printReadyAspect">
+              <option value="">Select size first</option>
             </select>
           </div>
         </div>
@@ -3694,12 +3702,15 @@ STRICT RULES:
     let printReadyProfiles = [];
     let printReadySelectedType = "tshirts";
     let printReadySelectedVariant = "";
+    let printReadySelectedAspect = "";
     let printReadyFile = null;
     let printReadyOutputFilename = null;
     let printReadyOutputUrl = null;
 
     const printReadyMerchType = document.getElementById("printReadyMerchType");
     const printReadyVariant = document.getElementById("printReadyVariant");
+    const printReadyAspect = document.getElementById("printReadyAspect");
+    const printReadyAspectCol = document.getElementById("printReadyAspectCol");
     const printReadyUploadArea = document.getElementById("printReadyUploadArea");
     const printReadyInput = document.getElementById("printReadyInput");
     const printReadyFileInfo = document.getElementById("printReadyFileInfo");
@@ -3720,21 +3731,73 @@ STRICT RULES:
       return profile.variants.find((v) => v.id === variantId) || profile.variants[0] || null;
     }
 
-    function updatePrintReadySpecPreview(profile, variant) {
+    function getPrintReadyAspect(variant, aspectId) {
+      if (!variant || !variant.aspects || !variant.aspects.length) return null;
+      return variant.aspects.find((a) => a.id === aspectId) || variant.aspects[0] || null;
+    }
+
+    function specRow(label, value) {
+      if (!value) return "";
+      return `<tr><th>${label}</th><td>${value}</td></tr>`;
+    }
+
+    function updatePrintReadySpecPreview(profile, variant, aspect) {
       if (!profile || !variant) {
         printReadySpecPreview.textContent = "Select a merch type and product size to see print specifications.";
         return;
       }
+      const outputPixels = aspect ? aspect.pixels_label : variant.pixels_label;
+      const outputArea = aspect ? aspect.print_area : variant.print_area;
+      const aspectTitle = aspect ? " — " + aspect.label : "";
       printReadySpecPreview.innerHTML =
-        `<div class="spec-title">${profile.label} — ${variant.size_label}</div>` +
+        `<div class="spec-title">${profile.label} — ${variant.size_label}${aspectTitle}</div>` +
         `<table class="print-spec-table">` +
-        `<tr><th>Max print area</th><td>${variant.print_area}</td></tr>` +
-        `<tr><th>Recommended pixels</th><td>${variant.pixels_label}</td></tr>` +
+        specRow("Max 3:2 art area (landscape)", variant.landscape_print_area) +
+        specRow("Recommended px (landscape)", variant.landscape_pixels_label) +
+        specRow("Max 1:1 art area (square)", variant.square_print_area) +
+        specRow("Recommended px (square)", variant.square_pixels_label) +
+        specRow("Art area (portrait)", variant.portrait_print_area) +
+        specRow("Recommended px (portrait)", variant.portrait_pixels_label) +
+        specRow("Max physical print area", variant.max_physical_print_area) +
+        specRow("Output art area", outputArea) +
+        specRow("Output pixels", outputPixels) +
         `<tr><th>PPI</th><td>${variant.ppi} PPI</td></tr>` +
+        `<tr><th>Recommended formats</th><td>${(profile.file_formats || []).join(", ")}</td></tr>` +
         `<tr><th>Processing</th><td>${variant.resize_method || "Original preserved (pixel resize)"}</td></tr>` +
         `</table>`;
       syncRecommendedExportFormat(profile, printReadyOutputFormat);
       updatePrintReadyDownloadLabel();
+    }
+
+    function populatePrintReadyAspects(profile, variant) {
+      printReadyAspect.innerHTML = "";
+      const aspects = (variant && variant.aspects) || [];
+      if (aspects.length <= 1) {
+        printReadyAspectCol.style.display = aspects.length ? "block" : "none";
+        if (aspects.length === 1) {
+          const opt = document.createElement("option");
+          opt.value = aspects[0].id;
+          opt.textContent = aspects[0].label + " — " + aspects[0].pixels_label;
+          opt.selected = true;
+          printReadyAspect.appendChild(opt);
+          printReadySelectedAspect = aspects[0].id;
+        } else {
+          printReadySelectedAspect = "";
+        }
+        updatePrintReadySpecPreview(profile, variant, aspects[0] || null);
+        return;
+      }
+      printReadyAspectCol.style.display = "block";
+      const preferred = variant.default_aspect || aspects[0].id;
+      aspects.forEach((area) => {
+        const opt = document.createElement("option");
+        opt.value = area.id;
+        opt.textContent = area.label + " — " + area.pixels_label;
+        if (area.id === preferred) opt.selected = true;
+        printReadyAspect.appendChild(opt);
+      });
+      printReadySelectedAspect = preferred;
+      updatePrintReadySpecPreview(profile, variant, getPrintReadyAspect(variant, preferred));
     }
 
     function populatePrintReadyVariants(profile) {
@@ -3742,18 +3805,19 @@ STRICT RULES:
       if (!profile || !profile.variants.length) {
         printReadyVariant.innerHTML = '<option value="">No sizes available</option>';
         printReadySelectedVariant = "";
-        updatePrintReadySpecPreview(null, null);
+        printReadySelectedAspect = "";
+        updatePrintReadySpecPreview(null, null, null);
         return;
       }
       profile.variants.forEach((variant, index) => {
         const opt = document.createElement("option");
         opt.value = variant.id;
-        opt.textContent = variant.size_label + " — " + variant.pixels_label;
+        opt.textContent = variant.size_label;
         if (index === 0) opt.selected = true;
         printReadyVariant.appendChild(opt);
       });
       printReadySelectedVariant = profile.variants[0].id;
-      updatePrintReadySpecPreview(profile, profile.variants[0]);
+      populatePrintReadyAspects(profile, profile.variants[0]);
     }
 
     function applyPrintReadyMerchType(typeId) {
@@ -3799,7 +3863,15 @@ STRICT RULES:
       printReadySelectedVariant = printReadyVariant.value;
       const profile = getPrintReadyProfile(printReadySelectedType);
       const variant = getPrintReadyVariant(profile, printReadySelectedVariant);
-      updatePrintReadySpecPreview(profile, variant);
+      populatePrintReadyAspects(profile, variant);
+    });
+
+    printReadyAspect.addEventListener("change", () => {
+      printReadySelectedAspect = printReadyAspect.value;
+      const profile = getPrintReadyProfile(printReadySelectedType);
+      const variant = getPrintReadyVariant(profile, printReadySelectedVariant);
+      const aspect = getPrintReadyAspect(variant, printReadySelectedAspect);
+      updatePrintReadySpecPreview(profile, variant, aspect);
     });
 
     printReadyUploadArea.addEventListener("click", () => printReadyInput.click());
@@ -3869,6 +3941,9 @@ STRICT RULES:
       }
       formData.append("art_type", printReadySelectedType);
       formData.append("variant_id", printReadySelectedVariant);
+      if (printReadySelectedAspect) {
+        formData.append("aspect_id", printReadySelectedAspect);
+      }
       if (variant) {
         formData.append("ppi", String(variant.ppi));
       }
