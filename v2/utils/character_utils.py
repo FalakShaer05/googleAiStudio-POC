@@ -330,6 +330,51 @@ def select_gemini_aspect_ratio(width: int, height: int) -> str:
     )
 
 
+# Print sizes offered in the character generator. Ratio-based entries force the
+# Gemini output aspect ratio; inch-based entries only drive the print canvas.
+CANVAS_SIZES: Dict[str, Dict[str, Any]] = {
+    "8x10": {"label": '8 × 10"', "inches": (8.0, 10.0), "force_aspect": False},
+    "11x14": {"label": '11 × 14"', "inches": (11.0, 14.0), "force_aspect": False},
+    "16x20": {"label": '16 × 20"', "inches": (16.0, 20.0), "force_aspect": False},
+    "3:2": {"label": '3:2 landscape (15 × 10")', "inches": (15.0, 10.0), "force_aspect": True},
+    "1:1": {"label": '1:1 square (12 × 12")', "inches": (12.0, 12.0), "force_aspect": True},
+}
+
+CANVAS_SIZE_IDS: Tuple[str, ...] = tuple(CANVAS_SIZES.keys())
+
+
+def _canvas_size_entry(canvas_size: Optional[str]) -> Optional[Dict[str, Any]]:
+    return CANVAS_SIZES.get((canvas_size or "").strip())
+
+
+def get_canvas_size_inches(canvas_size: Optional[str]) -> Optional[Tuple[float, float]]:
+    """Print dimensions in inches for a canvas size id, or None if unknown."""
+    entry = _canvas_size_entry(canvas_size)
+    return entry["inches"] if entry else None
+
+
+def get_canvas_size_pixels(canvas_size: Optional[str], dpi: int) -> Optional[Tuple[int, int]]:
+    """Print dimensions in pixels at the given DPI, or None if unknown."""
+    inches = get_canvas_size_inches(canvas_size)
+    if not inches:
+        return None
+    return int(inches[0] * dpi), int(inches[1] * dpi)
+
+
+def get_canvas_forced_aspect_ratio(canvas_size: Optional[str]) -> Optional[str]:
+    """Gemini aspect ratio string for ratio-based print sizes (3:2, 1:1)."""
+    entry = _canvas_size_entry(canvas_size)
+    if not entry or not entry.get("force_aspect"):
+        return None
+    inches_w, inches_h = entry["inches"]
+    return select_gemini_aspect_ratio(int(inches_w * 100), int(inches_h * 100))
+
+
+def describe_canvas_size(canvas_size: Optional[str]) -> str:
+    entry = _canvas_size_entry(canvas_size)
+    return entry["label"] if entry else (canvas_size or "")
+
+
 def build_wynwood_placement_prompt(position: str, scale: float) -> str:
     """Prompt block for Wynwood backgrounds — feet flush to bottom, large full-body character."""
     height_pct = int(min(98, max(75, scale * 95)))
@@ -1786,15 +1831,23 @@ def generate_character_with_identity(
             )
 
         # Update canvas_context if canvas_size is provided
+        forced_aspect_ratio = get_canvas_forced_aspect_ratio(canvas_size)
         if canvas_size:
-            if is_style_conversion:
+            canvas_label = describe_canvas_size(canvas_size)
+            if forced_aspect_ratio:
                 canvas_context = (
-                    f"\nTarget print size: {canvas_size} at {dpi} DPI. "
+                    f"\nTarget print size: {canvas_label} at {dpi} DPI. "
+                    f"The output MUST use a {forced_aspect_ratio} aspect ratio — compose the scene to "
+                    f"fill that canvas edge to edge, without letterbox bars or cropped body parts."
+                )
+            elif is_style_conversion:
+                canvas_context = (
+                    f"\nTarget print size: {canvas_label} at {dpi} DPI. "
                     f"Maintain the same aspect ratio and composition as the input image."
                 )
             else:
                 canvas_context = (
-                    f"\nTarget print size: {canvas_size} at {dpi} DPI. "
+                    f"\nTarget print size: {canvas_label} at {dpi} DPI. "
                     f"Ensure the full body fits comfortably inside this canvas."
                 )
 
@@ -2138,6 +2191,7 @@ BACKGROUND:
             contents=[normalized_prompt, selfie_image],
             seed=seed,
             temperature=temperature,
+            aspect_ratio=forced_aspect_ratio,
             image_size=image_size,
             operation="art_generation:character",
         )
@@ -2641,15 +2695,9 @@ Return a SINGLE final composited image ready for printing.
                 
                 # Apply canvas size to background if specified
                 if canvas_size:
-                    size_map = {
-                        "8x10": (8, 10),
-                        "11x14": (11, 14),
-                        "16x20": (16, 20),
-                    }
-                    if canvas_size in size_map:
-                        target_w, target_h = size_map[canvas_size]
-                        target_width = int(target_w * dpi)
-                        target_height = int(target_h * dpi)
+                    canvas_pixels = get_canvas_size_pixels(canvas_size, dpi)
+                    if canvas_pixels:
+                        target_width, target_height = canvas_pixels
                         bg_aspect = bg_w / bg_h
                         target_aspect = target_width / target_height
                         
@@ -2957,12 +3005,15 @@ def upscale_image_high_resolution(
             source = bg
 
         src_w, src_h = source.size
-        aspect_ratio = select_gemini_aspect_ratio(src_w, src_h)
+        aspect_ratio = get_canvas_forced_aspect_ratio(canvas_size) or select_gemini_aspect_ratio(src_w, src_h)
 
         canvas_note = ""
         if canvas_size:
             canvas_note = (
-                f" Target print size is {canvas_size} at {dpi} DPI — preserve the same aspect ratio."
+                f" Target print size is {canvas_size} at {dpi} DPI — output must use a "
+                f"{aspect_ratio} aspect ratio."
+                if get_canvas_forced_aspect_ratio(canvas_size)
+                else f" Target print size is {canvas_size} at {dpi} DPI — preserve the same aspect ratio."
             )
 
         prompt = (
@@ -2999,20 +3050,16 @@ def upscale_image_high_resolution(
             img = img.convert("RGB")
 
         if canvas_size:
-            size_map = {
-                "8x10": (8, 10),
-                "11x14": (11, 14),
-                "16x20": (16, 20),
-            }
-            if canvas_size in size_map:
-                inches_w, inches_h = size_map[canvas_size]
-                target_w = int(inches_w * dpi)
-                target_h = int(inches_h * dpi)
-                # Match orientation of the source (portrait vs landscape)
-                if src_w > src_h and target_w < target_h:
-                    target_w, target_h = target_h, target_w
-                elif src_h > src_w and target_h < target_w:
-                    target_w, target_h = target_h, target_w
+            canvas_pixels = get_canvas_size_pixels(canvas_size, dpi)
+            if canvas_pixels:
+                target_w, target_h = canvas_pixels
+                # Ratio-based sizes keep their own orientation; inch-based sizes
+                # match the orientation of the source (portrait vs landscape)
+                if not get_canvas_forced_aspect_ratio(canvas_size):
+                    if src_w > src_h and target_w < target_h:
+                        target_w, target_h = target_h, target_w
+                    elif src_h > src_w and target_h < target_w:
+                        target_w, target_h = target_h, target_w
                 if img.size != (target_w, target_h):
                     img = img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
@@ -3040,6 +3087,7 @@ def upscale_image_type_resolution(
     variant_id: Optional[str] = None,
     image_size: Optional[str] = None,
     ppi: Optional[int] = None,
+    aspect_id: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Merch-type print-ready resize using exact PPI pixel dimensions.
@@ -3052,6 +3100,8 @@ def upscale_image_type_resolution(
         get_target_pixels_for_variant,
         normalize_art_type,
         resize_preserving_art,
+        resolve_aspect,
+        validate_aspect,
         validate_variant,
     )
 
@@ -3065,13 +3115,17 @@ def upscale_image_type_resolution(
         ok, err = validate_variant(resolved_type, variant_id or "")
         if not ok:
             return False, err
+        ok, err = validate_aspect(resolved_type, variant_id or "", aspect_id)
+        if not ok:
+            return False, err
 
         source = Image.open(image_path)
         src_w, src_h = source.size
 
         target_w, target_h, variant_ppi, variant = get_target_pixels_for_variant(
-            resolved_type, variant_id or "", src_w, src_h
+            resolved_type, variant_id or "", src_w, src_h, aspect_id
         )
+        area = resolve_aspect(variant, aspect_id)
         resolved_ppi = ppi if ppi is not None else variant_ppi
 
         img = resize_preserving_art(source, target_w, target_h)
@@ -3086,9 +3140,10 @@ def upscale_image_type_resolution(
         out_w, out_h = img.size
         type_label = profile["label"]
         size_label = variant["size_label"]
+        aspect_label = area.get("label") or area["id"]
         return (
             True,
-            f"Print-ready {type_label} ({size_label}): {out_w:,}×{out_h:,} px @ "
+            f"Print-ready {type_label} ({size_label}, {aspect_label}): {out_w:,}×{out_h:,} px @ "
             f"{resolved_ppi} PPI — original art preserved",
         )
     except Exception as e:
