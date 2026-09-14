@@ -8,7 +8,10 @@ import random
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
+from PIL.PngImagePlugin import PngInfo
+
+META_KEY = "puzzle_collage"
 
 
 MIN_PIECES_PER_PERSON = 3
@@ -27,6 +30,18 @@ def _unique_filename(original_name: str, prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}{ext}"
 
 
+def _cell_aspect_score(rows: int, cols: int, img_w: int, img_h: int) -> float:
+    """Lower is better — 0 means perfectly square cells."""
+    if rows < 1 or cols < 1:
+        return float("inf")
+    cell_aspect = (img_w / cols) / max(img_h / rows, 1e-6)
+    score = abs(math.log(max(cell_aspect, 1e-6)))
+    # Strongly prefer at least 2×2 when we have enough pieces (avoids ribbon strips).
+    if min(rows, cols) == 1 and rows * cols > 6:
+        score += 2.5
+    return score
+
+
 def _choose_grid(total: int, img_w: int, img_h: int) -> Tuple[int, int]:
     """
     Pick rows×cols = total so individual cells are as square as possible
@@ -35,21 +50,21 @@ def _choose_grid(total: int, img_w: int, img_h: int) -> Tuple[int, int]:
     if total <= 1:
         return 1, 1
 
-    aspect = (img_w / img_h) if img_h else 1.0
     best = (1, total)
     best_score = float("inf")
-
     for cols in range(1, total + 1):
         if total % cols:
             continue
         rows = total // cols
-        cell_aspect = (img_w / cols) / (img_h / rows)
-        # Prefer cells close to square; slight bias toward the image aspect.
-        score = abs(math.log(max(cell_aspect, 1e-6))) + 0.15 * abs(math.log(max(cols / rows / aspect, 1e-6)))
+        score = _cell_aspect_score(rows, cols, img_w, img_h)
         if score < best_score:
             best_score = score
             best = (rows, cols)
     return best
+
+
+def _counts_in_range(counts: List[int]) -> bool:
+    return all(MIN_PIECES_PER_PERSON <= c <= MAX_PIECES_PER_PERSON for c in counts)
 
 
 def _plan_assignment(
@@ -58,29 +73,35 @@ def _plan_assignment(
     img_w: int,
     img_h: int,
 ) -> Tuple[int, int, List[int]]:
+    """
+    Each participant gets a strict random count in [3, 6] — not forced to 6.
+
+    Counts are kept as rolled. We only nudge within [3, 6] when the total would
+    otherwise form a 1×N ribbon that cannot interlock cleanly.
+    """
     if participants < 1:
         raise ValueError("participants must be at least 1")
 
     counts = [rng.randint(MIN_PIECES_PER_PERSON, MAX_PIECES_PER_PERSON) for _ in range(participants)]
-    total = sum(counts)
+    rows, cols = _choose_grid(sum(counts), img_w, img_h)
 
-    def cell_squareness(n: int) -> float:
-        rows, cols = _choose_grid(n, img_w, img_h)
-        cell_aspect = (img_w / cols) / (img_h / rows)
-        return abs(math.log(max(cell_aspect, 1e-6)))
+    # Fix ribbon layouts only (e.g. prime totals like 7 → 1×7), still inside [3, 6].
+    if min(rows, cols) == 1 and sum(counts) > 4:
+        best = (counts, rows, cols, _cell_aspect_score(rows, cols, img_w, img_h))
+        for _ in range(60):
+            trial = [rng.randint(MIN_PIECES_PER_PERSON, MAX_PIECES_PER_PERSON) for _ in range(participants)]
+            t_rows, t_cols = _choose_grid(sum(trial), img_w, img_h)
+            if min(t_rows, t_cols) == 1:
+                continue
+            score = _cell_aspect_score(t_rows, t_cols, img_w, img_h)
+            if score < best[3]:
+                best = (trial, t_rows, t_cols, score)
+                if score < 0.4:
+                    break
+        counts, rows, cols, _ = best
 
-    # Nudge total upward while keeping people near [3, 6] until cells are reasonably square.
-    guard = 0
-    while cell_squareness(total) > 0.35 and guard < 40:
-        expandable = [i for i, c in enumerate(counts) if c < MAX_PIECES_PER_PERSON]
-        if not expandable:
-            expandable = list(range(participants))
-        counts[rng.choice(expandable)] += 1
-        total = sum(counts)
-        guard += 1
-
-    rows, cols = _choose_grid(total, img_w, img_h)
-    assert rows * cols == total
+    assert _counts_in_range(counts)
+    assert rows * cols == sum(counts)
 
     assignment: List[int] = []
     for person_idx, count in enumerate(counts, start=1):
@@ -240,11 +261,9 @@ def _render_piece(
     polygon: List[Point],
     bbox: Tuple[int, int, int, int],
 ) -> Image.Image:
-    """Mask the piece and return a transparent RGBA crop with a light outline."""
+    """Mask the piece and return a transparent RGBA crop (no outline stroke)."""
     width, height = source.size
     left, top, right, bottom = bbox
-    # Allow tabs to extend conceptually; clamp raster to image, then pad canvas
-    # so clipped outer-edge tabs still get transparent margin for a clear shape.
     clamp_l = max(0, left)
     clamp_t = max(0, top)
     clamp_r = min(width, right)
@@ -254,6 +273,8 @@ def _render_piece(
     draw = ImageDraw.Draw(mask)
     int_poly = [(int(round(px)), int(round(py))) for px, py in polygon]
     draw.polygon(int_poly, fill=255)
+    # Slight dilate so neighboring pieces share a 1–2px overlap (seamless join).
+    mask = mask.filter(ImageFilter.MaxFilter(3))
 
     piece_full = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     piece_full.paste(source, (0, 0), mask=mask)
@@ -263,13 +284,6 @@ def _render_piece(
     canvas = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
     src_crop = piece_full.crop((clamp_l, clamp_t, clamp_r, clamp_b))
     canvas.paste(src_crop, (clamp_l - left, clamp_t - top), src_crop)
-
-    # Subtle outline so the interlocking silhouette is obvious on light UIs.
-    outline = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
-    odraw = ImageDraw.Draw(outline)
-    shifted = [(px - left, py - top) for px, py in polygon]
-    odraw.line(shifted + [shifted[0]], fill=(40, 40, 40, 200), width=2, joint="curve")
-    canvas = Image.alpha_composite(canvas, outline)
     return canvas
 
 
@@ -302,11 +316,26 @@ def split_puzzle(
         piece_crop = _render_piece(source, polygon, bbox)
 
         piece_id = f"r{row}_c{col}"
+        left, top, right, bottom = bbox
+        piece_meta = {
+            "piece_id": piece_id,
+            "person": person,
+            "row": row,
+            "col": col,
+            "index": index,
+            "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
+            "width": width,
+            "height": height,
+            "rows": rows,
+            "cols": cols,
+        }
+        pnginfo = PngInfo()
+        pnginfo.add_text(META_KEY, json.dumps(piece_meta))
+
         filename = f"cs_puzzle_piece_p{person}_{piece_id}_{uuid.uuid4().hex}.png"
         out_path = os.path.join(output_dir, filename)
-        piece_crop.save(out_path, "PNG")
+        piece_crop.save(out_path, "PNG", pnginfo=pnginfo)
 
-        left, top, right, bottom = bbox
         pieces_meta.append(
             {
                 "piece_id": piece_id,

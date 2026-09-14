@@ -471,7 +471,7 @@
               value="2"
               required
             />
-            <div class="form-text">Each person randomly gets 3–6 pieces (so 2 people → 6–12 pieces).</div>
+            <div class="form-text">Each person randomly gets <strong>3–6</strong> pieces (not fixed). Pieces share one uniform grid so they interlock into the full image.</div>
           </div>
           <button type="submit" class="convert-btn">Split into puzzle pieces</button>
           <div class="mt-3 cs-progress" style="display: none;">
@@ -505,7 +505,9 @@
           <div class="mb-3">
             <label class="form-label fw-bold" for="puzzle-assemble-pieces">Decorated puzzle pieces</label>
             <input class="form-control" type="file" id="puzzle-assemble-pieces" name="pieces" accept="image/*" multiple required />
-            <div class="form-text">Keep filenames that contain <code>r0_c1</code>-style ids, or paste piece ids below.</div>
+            <div class="form-text">
+              Prefer the PNGs from Split (they store placement metadata). Filenames like <code>r0_c1</code> also help.
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label fw-bold" for="puzzle-assemble-piece-ids">Piece IDs (optional)</label>
@@ -514,18 +516,28 @@
               type="text"
               id="puzzle-assemble-piece-ids"
               name="piece_ids"
-              placeholder='["r0_c0","r0_c1"] or r0_c0,r0_c1'
+              placeholder="r0_c0,r0_c1,r1_c0 — only needed if files were renamed"
             />
           </div>
           <div class="mb-3">
-            <label class="form-label fw-bold" for="puzzle-assemble-layout">Layout JSON from split</label>
+            <label class="form-label fw-bold" for="puzzle-assemble-layout-filename">Layout filename (optional)</label>
+            <input
+              class="form-control"
+              type="text"
+              id="puzzle-assemble-layout-filename"
+              name="layout_filename"
+              placeholder="cs_puzzle_layout_….json from split response"
+            />
+            <div class="form-text">Simple alternative to pasting full JSON. Not required if you upload the original split PNGs.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-assemble-layout">Layout JSON (optional)</label>
             <textarea
               class="form-control"
               id="puzzle-assemble-layout"
               name="layout"
-              rows="5"
-              required
-              placeholder="Paste the layout JSON returned by Split (or use Copy layout JSON)."
+              rows="3"
+              placeholder="Optional — leave empty if using split PNGs or layout_filename."
             ></textarea>
           </div>
           <button type="submit" class="convert-btn">Assemble collage</button>

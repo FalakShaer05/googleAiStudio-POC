@@ -457,27 +457,32 @@ def _puzzle_assemble_impl():
         layout = None
         layout_path = None
         layout_raw = (request.form.get("layout") or "").strip()
+        layout_filename = (request.form.get("layout_filename") or "").strip()
+
         if layout_raw:
             try:
                 layout = json.loads(layout_raw)
             except json.JSONDecodeError as exc:
                 raise ValueError("layout must be valid JSON") from exc
+        elif layout_filename:
+            safe_name = os.path.basename(layout_filename)
+            candidate = os.path.join(output_folder(), safe_name)
+            if not os.path.isfile(candidate):
+                return json_error(f"layout_filename not found: {safe_name}")
+            layout_path = candidate
         else:
-            layout_path = save_named_upload(
+            uploaded_layout = save_named_upload(
                 "layout_file",
                 "cs_puzzle_layout_in",
                 required=False,
                 allowed={"json"},
                 kind="layout",
             )
-            if layout_path:
-                temp_paths.append(layout_path)
+            if uploaded_layout:
+                temp_paths.append(uploaded_layout)
+                layout_path = uploaded_layout
 
-        if layout is None and not layout_path:
-            return json_error(
-                "Provide the layout JSON from split (form field 'layout' or upload 'layout_file')"
-            )
-
+        # layout is optional now — assembler can read placement from piece PNG metadata
         out_filename = generate_unique_filename("creative.png", "output_puzzle_collage")
         out_path = os.path.join(output_folder(), out_filename)
         success, message = assemble_puzzle(
@@ -570,12 +575,17 @@ def api_puzzle_assemble():
         name: pieces
         type: file
         required: true
-        description: One or more decorated piece images (multi-file)
+        description: One or more decorated piece images (multi-file). Split PNGs embed placement metadata.
+      - in: formData
+        name: layout_filename
+        type: string
+        required: false
+        description: Filename returned by split (e.g. cs_puzzle_layout_….json). Preferred over full layout JSON.
       - in: formData
         name: layout
         type: string
         required: false
-        description: Layout JSON returned by split
+        description: Optional full layout JSON from split
       - in: formData
         name: layout_file
         type: file
@@ -584,7 +594,7 @@ def api_puzzle_assemble():
         name: piece_ids
         type: string
         required: false
-        description: JSON array of piece_ids matching pieces order
+        description: Optional comma-separated piece ids matching pieces order (r0_c0,r0_c1). Only needed if files were renamed.
     responses:
       200:
         description: Assembled image
