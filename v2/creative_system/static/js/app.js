@@ -282,6 +282,248 @@
     });
   });
 
+  // --- Puzzle Collage ---
+  let lastPuzzleLayout = null;
+
+  document.querySelectorAll("[data-puzzle-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panel = button.getAttribute("data-puzzle-panel");
+      const section = button.closest("#section-puzzle-collage");
+      if (!section) return;
+      section.querySelectorAll("[data-puzzle-panel]").forEach((btn) => {
+        btn.classList.toggle("active", btn === button);
+      });
+      section.querySelectorAll("[data-puzzle-view]").forEach((view) => {
+        view.style.display = view.getAttribute("data-puzzle-view") === panel ? "block" : "none";
+      });
+    });
+  });
+
+  function renderPuzzlePieces(form, data) {
+    const result = form.querySelector(".puzzle-split-result");
+    const groups = form.querySelector(".puzzle-person-groups");
+    const summary = form.querySelector(".puzzle-split-summary");
+    const layoutField = form.querySelector(".puzzle-layout-json");
+    if (!result || !groups) return;
+
+    const byPerson = {};
+    (data.pieces || []).forEach((piece) => {
+      const key = String(piece.person);
+      if (!byPerson[key]) byPerson[key] = [];
+      byPerson[key].push(piece);
+    });
+
+    groups.innerHTML = "";
+    Object.keys(byPerson)
+      .sort((a, b) => Number(a) - Number(b))
+      .forEach((person) => {
+        const card = document.createElement("div");
+        card.className = "puzzle-person-card";
+        const title = document.createElement("h3");
+        title.textContent = "Person " + person + " · " + byPerson[person].length + " pieces";
+        card.appendChild(title);
+        const grid = document.createElement("div");
+        grid.className = "puzzle-piece-grid";
+        byPerson[person].forEach((piece) => {
+          const item = document.createElement("div");
+          item.className = "puzzle-piece-item";
+          const img = document.createElement("img");
+          img.alt = piece.piece_id;
+          img.src = cacheBust(piece.image_url || piece.local_path || (cfg.downloadPrefix + piece.output_filename));
+          const label = document.createElement("span");
+          label.textContent = piece.piece_id;
+          const link = document.createElement("a");
+          link.href = cfg.downloadPrefix + piece.output_filename;
+          link.download = piece.output_filename;
+          link.className = "small";
+          link.textContent = "Download";
+          item.appendChild(img);
+          item.appendChild(label);
+          item.appendChild(link);
+          grid.appendChild(item);
+        });
+        card.appendChild(grid);
+        groups.appendChild(card);
+      });
+
+    if (summary) {
+      const per = data.pieces_per_person || {};
+      const perText = Object.keys(per)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => "P" + k + "=" + per[k])
+        .join(", ");
+      summary.textContent =
+        (data.message || "") +
+        " Grid " + data.rows + "×" + data.cols +
+        (perText ? " · " + perText : "") +
+        ". Copy the layout JSON before assembling.";
+    }
+    lastPuzzleLayout = data.layout || null;
+    if (layoutField) {
+      layoutField.value = lastPuzzleLayout ? JSON.stringify(lastPuzzleLayout) : "";
+    }
+    const assembleLayout = document.getElementById("puzzle-assemble-layout");
+    if (assembleLayout && lastPuzzleLayout) {
+      assembleLayout.value = JSON.stringify(lastPuzzleLayout, null, 2);
+    }
+    result.style.display = "block";
+  }
+
+  document.querySelectorAll("form[data-puzzle-split-form]").forEach((form) => {
+    form.querySelectorAll('input[type="file"]').forEach((input) => {
+      input.addEventListener("change", () => rememberFileInput(form, input));
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (form.dataset.generating === "1") return;
+      restoreCachedFiles(form);
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+
+      const submitBtn = form.querySelector(".convert-btn");
+      const progress = form.querySelector(".cs-progress");
+      const status = form.querySelector(".cs-status");
+      const result = form.querySelector(".puzzle-split-result");
+
+      setBusy(form, submitBtn, true);
+      if (submitBtn) submitBtn.textContent = "Splitting...";
+      if (status) status.style.display = "none";
+      if (result) result.style.display = "none";
+      if (progress) progress.style.display = "block";
+
+      try {
+        const body = new FormData(form);
+        body.set("_regen", String(Date.now()));
+        const response = await fetch(cfg.puzzleSplitUrl, {
+          method: "POST",
+          body: body,
+          cache: "no-store",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Split failed");
+        }
+        renderPuzzlePieces(form, data);
+        if (status) {
+          status.className = "status-message status-success cs-status";
+          status.textContent = data.message || "Pieces ready.";
+          status.style.display = "block";
+        }
+        form.dataset.hasResult = "1";
+      } catch (err) {
+        if (status) {
+          status.className = "status-message status-error cs-status";
+          status.textContent = err.message || String(err);
+          status.style.display = "block";
+        }
+      } finally {
+        if (progress) progress.style.display = "none";
+        setBusy(form, submitBtn, false);
+        if (submitBtn) {
+          submitBtn.textContent = form.dataset.hasResult === "1" ? "Split again" : "Split into puzzle pieces";
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-puzzle-copy-layout]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const form = button.closest("form");
+      const layoutField = form && form.querySelector(".puzzle-layout-json");
+      const text = (layoutField && layoutField.value) || (lastPuzzleLayout ? JSON.stringify(lastPuzzleLayout) : "");
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "Copied!";
+        setTimeout(() => {
+          button.textContent = "Copy layout JSON";
+        }, 1500);
+      } catch (_err) {
+        if (layoutField) {
+          layoutField.hidden = false;
+          layoutField.select();
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll("form[data-puzzle-assemble-form]").forEach((form) => {
+    form.querySelectorAll('input[type="file"]').forEach((input) => {
+      input.addEventListener("change", () => rememberFileInput(form, input));
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (form.dataset.generating === "1") return;
+      restoreCachedFiles(form);
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+
+      const submitBtn = form.querySelector(".convert-btn");
+      const progress = form.querySelector(".cs-progress");
+      const status = form.querySelector(".cs-status");
+      const result = form.querySelector(".cs-result");
+
+      setBusy(form, submitBtn, true);
+      if (submitBtn) submitBtn.textContent = "Assembling...";
+      if (status) status.style.display = "none";
+      if (progress) progress.style.display = "block";
+
+      try {
+        const body = new FormData(form);
+        body.set("_regen", String(Date.now()));
+        Object.entries(fileCache(form)).forEach(([name, files]) => {
+          if (!files || !files.length) return;
+          const current = body.getAll(name).filter((value) => value instanceof File && value.size);
+          if (current.length) return;
+          body.delete(name);
+          files.forEach((file) => body.append(name, file, file.name));
+        });
+        const response = await fetch(cfg.puzzleAssembleUrl, {
+          method: "POST",
+          body: body,
+          cache: "no-store",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Assemble failed");
+        }
+        const img = form.querySelector(".cs-result-image");
+        const download = form.querySelector(".cs-download");
+        const message = form.querySelector(".cs-result-message");
+        const imageUrl = data.image_url || data.local_path || (cfg.downloadPrefix + data.output_filename);
+        if (img) img.src = cacheBust(imageUrl);
+        if (download) {
+          download.href = cfg.downloadPrefix + data.output_filename;
+          download.setAttribute("download", data.output_filename);
+        }
+        if (message) message.textContent = data.message || "Collage assembled successfully.";
+        if (result) result.style.display = "block";
+        form.dataset.hasResult = "1";
+        if (status) {
+          status.className = "status-message status-success cs-status";
+          status.textContent = data.message || "Done.";
+          status.style.display = "block";
+        }
+      } catch (err) {
+        if (status) {
+          status.className = "status-message status-error cs-status";
+          status.textContent = err.message || String(err);
+          status.style.display = "block";
+        }
+      } finally {
+        if (progress) progress.style.display = "none";
+        setBusy(form, submitBtn, false);
+        if (submitBtn) {
+          submitBtn.textContent = form.dataset.hasResult === "1" ? "Assemble again" : "Assemble collage";
+        }
+      }
+    });
+  });
+
   const params = new URLSearchParams(window.location.search);
   const deep = params.get("station");
   if (deep && document.getElementById("section-" + deep)) {

@@ -67,6 +67,13 @@ STATIONS = [
         "module": "content_filter",
         "kind": "filter",
     },
+    {
+        "id": "puzzle-collage",
+        "label": "Puzzle Collage",
+        "tagline": "Split an image into jigsaw pieces, then reassemble the art.",
+        "module": "puzzle_collage",
+        "kind": "puzzle",
+    },
 ]
 
 STATION_IDS = {item["id"] for item in STATIONS}

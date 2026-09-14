@@ -307,6 +307,58 @@
       color: inherit;
       white-space: pre-wrap;
     }
+    .puzzle-subtabs .nav-link {
+      color: #667eea;
+      font-weight: 600;
+    }
+    .puzzle-subtabs .nav-link.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+    }
+    .puzzle-person-card {
+      border: 1px solid #e9ecef;
+      border-radius: 12px;
+      padding: 0.85rem;
+      margin-bottom: 1rem;
+      background: #f8f9ff;
+    }
+    .puzzle-person-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: #4c51bf;
+    }
+    .puzzle-piece-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 0.65rem;
+    }
+    .puzzle-piece-item {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 0.35rem;
+      text-align: center;
+    }
+    .puzzle-piece-item img {
+      width: 100%;
+      height: 140px;
+      object-fit: contain;
+      background:
+        linear-gradient(45deg, #e9ecef 25%, transparent 25%),
+        linear-gradient(-45deg, #e9ecef 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #e9ecef 75%),
+        linear-gradient(-45deg, transparent 75%, #e9ecef 75%);
+      background-size: 12px 12px;
+      background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+      border-radius: 4px;
+    }
+    .puzzle-piece-item span {
+      display: block;
+      margin-top: 0.25rem;
+      font-size: 0.7rem;
+      color: #6c757d;
+    }
     .corner-nav-btn {
       position: fixed;
       top: 1.25rem;
@@ -346,9 +398,11 @@
     window.CREATIVE_SYSTEM = {
       generateUrl: {{ url_for('creative_system.generate') | tojson }},
       filterUrl: {{ url_for('creative_system.filter_content') | tojson }},
+      puzzleSplitUrl: {{ url_for('creative_system.puzzle_split') | tojson }},
+      puzzleAssembleUrl: {{ url_for('creative_system.puzzle_assemble') | tojson }},
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=apimh-new1"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=puzzle-collage2"></script>
 </body>
 </html>

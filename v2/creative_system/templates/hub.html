@@ -38,6 +38,9 @@
       <button type="button" class="nav-tab" data-tab="content-filter">
         <i class="fas fa-shield-alt me-1"></i>Wish &amp; Wisdom Filter
       </button>
+      <button type="button" class="nav-tab" data-tab="puzzle-collage">
+        <i class="fas fa-puzzle-piece me-1"></i>Puzzle Collage
+      </button>
     </div>
   </div>
 </div>
@@ -430,6 +433,116 @@
           <pre class="filter-json mb-0"></pre>
         </div>
       </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-puzzle-collage">
+    <div class="header">
+      <h1 class="h3 mb-1">Puzzle Collage</h1>
+      <p class="mb-0">Split a photo into jigsaw pieces for each person, then join decorated pieces back together.</p>
+    </div>
+    <div class="p-4">
+      <ul class="nav nav-pills mb-4 puzzle-subtabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link active" data-puzzle-panel="split">1. Split pieces</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link" data-puzzle-panel="assemble">2. Assemble collage</button>
+        </li>
+      </ul>
+
+      <div data-puzzle-view="split">
+        <form data-puzzle-split-form enctype="multipart/form-data" novalidate>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-split-image">Image</label>
+            <input class="form-control" type="file" id="puzzle-split-image" name="image" accept="image/*" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-participants">Number of participants</label>
+            <input
+              class="form-control"
+              type="number"
+              id="puzzle-participants"
+              name="participants"
+              min="1"
+              max="40"
+              value="2"
+              required
+            />
+            <div class="form-text">Each person randomly gets 3–6 pieces (so 2 people → 6–12 pieces).</div>
+          </div>
+          <button type="submit" class="convert-btn">Split into puzzle pieces</button>
+          <div class="mt-3 cs-progress" style="display: none;">
+            <div class="progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+            </div>
+            <p class="text-center mt-2 mb-0">Cutting jigsaw pieces...</p>
+          </div>
+          <div class="status-message cs-status" role="status" aria-live="polite"></div>
+          <div class="puzzle-split-result mt-4" style="display: none;">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+              <h2 class="h5 mb-0">Pieces by person</h2>
+              <button type="button" class="btn btn-sm btn-outline-secondary" data-puzzle-copy-layout>
+                Copy layout JSON
+              </button>
+            </div>
+            <p class="text-muted small mb-3 puzzle-split-summary"></p>
+            <div class="puzzle-person-groups"></div>
+            <textarea class="form-control mt-3 puzzle-layout-json" rows="4" readonly hidden></textarea>
+          </div>
+        </form>
+      </div>
+
+      <div data-puzzle-view="assemble" style="display: none;">
+        <form data-puzzle-assemble-form enctype="multipart/form-data" novalidate>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-assemble-original">Original image (optional)</label>
+            <input class="form-control" type="file" id="puzzle-assemble-original" name="original" accept="image/*" />
+            <div class="form-text">Used for canvas size. Layout from split is required either way.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-assemble-pieces">Decorated puzzle pieces</label>
+            <input class="form-control" type="file" id="puzzle-assemble-pieces" name="pieces" accept="image/*" multiple required />
+            <div class="form-text">Keep filenames that contain <code>r0_c1</code>-style ids, or paste piece ids below.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-assemble-piece-ids">Piece IDs (optional)</label>
+            <input
+              class="form-control"
+              type="text"
+              id="puzzle-assemble-piece-ids"
+              name="piece_ids"
+              placeholder='["r0_c0","r0_c1"] or r0_c0,r0_c1'
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="puzzle-assemble-layout">Layout JSON from split</label>
+            <textarea
+              class="form-control"
+              id="puzzle-assemble-layout"
+              name="layout"
+              rows="5"
+              required
+              placeholder="Paste the layout JSON returned by Split (or use Copy layout JSON)."
+            ></textarea>
+          </div>
+          <button type="submit" class="convert-btn">Assemble collage</button>
+          <div class="mt-3 cs-progress" style="display: none;">
+            <div class="progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+            </div>
+            <p class="text-center mt-2 mb-0">Joining puzzle pieces...</p>
+          </div>
+          <div class="status-message cs-status" role="status" aria-live="polite"></div>
+          <div class="cs-result mt-3" style="display: none;">
+            <img class="preview-image cs-result-image" alt="Assembled puzzle collage" />
+            <p class="mt-2 mb-2 cs-result-message"></p>
+            <a class="btn download-btn cs-download" href="#" download>Download</a>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </div>
