@@ -1,6 +1,7 @@
 """Creative System HTTP routes."""
 from __future__ import annotations
 
+import json
 import os
 import traceback
 
@@ -8,6 +9,7 @@ from flask import jsonify, render_template, request
 
 from utils.auth import require_api_key
 from utils.character_utils import generate_unique_filename
+from utils.s3_utils import upload_image_to_s3
 
 from .blueprint import api_bp, bp
 from .shared.io import (
@@ -17,12 +19,14 @@ from .shared.io import (
     output_folder,
     parse_word_list,
     save_named_upload,
+    save_upload,
     success_payload,
     upload_folder,
 )
 from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
 from .stations.content_filter import classify_content
+from .stations.puzzle_collage import assemble_puzzle, split_puzzle
 
 
 def _page_context():
@@ -56,6 +60,10 @@ def _generate_impl():
             return json_error("Invalid station. Choose a valid creative station.")
         if station_id == "content-filter":
             return json_error("Use the Wish & Wisdom content filter endpoint for this station.")
+        if station_id == "puzzle-collage":
+            return json_error(
+                "Use the Puzzle Collage split and assemble endpoints for this station."
+            )
 
         kwargs = {"station_id": station_id}
 
@@ -293,3 +301,308 @@ def api_generate():
         description: Generation failed
     """
     return _generate_impl()
+
+
+def _parse_participants() -> int:
+    raw = (request.form.get("participants") or request.form.get("participant_count") or "").strip()
+    if not raw:
+        raise ValueError("participants is required (number of people)")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("participants must be an integer") from exc
+    if value < 1:
+        raise ValueError("participants must be at least 1")
+    if value > 40:
+        raise ValueError("participants cannot exceed 40 for this POC")
+    return value
+
+
+def _puzzle_split_impl():
+    temp_paths = []
+    try:
+        image_path = save_named_upload("image", "cs_puzzle_src", required=True)
+        temp_paths.append(image_path)
+        participants = _parse_participants()
+        seed_raw = (request.form.get("seed") or "").strip()
+        seed = int(seed_raw) if seed_raw else None
+
+        result = split_puzzle(
+            image_path=image_path,
+            participants=participants,
+            output_dir=output_folder(),
+            seed=seed,
+        )
+
+        pieces_payload = []
+        for piece in result["pieces"]:
+            item = {
+                "piece_id": piece["piece_id"],
+                "person": piece["person"],
+                "person_tag": piece["person_tag"],
+                "row": piece["row"],
+                "col": piece["col"],
+                "index": piece["index"],
+                "bbox": piece["bbox"],
+                "output_filename": piece["output_filename"],
+                "local_path": piece["local_path"],
+            }
+            cloudfront_url = upload_image_to_s3(piece["abs_path"])
+            if cloudfront_url:
+                item["image_url"] = cloudfront_url
+            pieces_payload.append(item)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": (
+                    f"Split into {result['total_pieces']} pieces for "
+                    f"{participants} participant(s)."
+                ),
+                "participants": participants,
+                "rows": result["rows"],
+                "cols": result["cols"],
+                "total_pieces": result["total_pieces"],
+                "pieces_per_person": result["pieces_per_person"],
+                "pieces": pieces_payload,
+                "layout": result["layout"],
+                "layout_filename": result["layout_filename"],
+                "layout_local_path": result["layout_local_path"],
+            }
+        )
+    except ValueError as exc:
+        return json_error(str(exc))
+    except Exception as exc:
+        print("Error in puzzle-collage split:", exc)
+        print(traceback.format_exc())
+        return json_error(str(exc), 500)
+    finally:
+        cleanup_paths(*temp_paths)
+
+
+def _collect_piece_uploads(temp_paths: list) -> tuple[list[str], list[str]]:
+    """Collect piece image uploads and optional parallel piece_ids."""
+    piece_paths: list[str] = []
+    piece_ids: list[str] = []
+
+    # Multi-file field "pieces"
+    for storage in request.files.getlist("pieces"):
+        path = save_upload(storage, "cs_puzzle_decorated")
+        if path:
+            temp_paths.append(path)
+            piece_paths.append(path)
+
+    # Indexed fields piece_0, piece_1, ...
+    if not piece_paths:
+        index = 0
+        while True:
+            path = save_named_upload(f"piece_{index}", "cs_puzzle_decorated", required=False)
+            if not path:
+                break
+            temp_paths.append(path)
+            piece_paths.append(path)
+            index += 1
+
+    # Single "piece" fallback
+    if not piece_paths:
+        path = save_named_upload("piece", "cs_puzzle_decorated", required=False)
+        if path:
+            temp_paths.append(path)
+            piece_paths.append(path)
+
+    raw_ids = (request.form.get("piece_ids") or "").strip()
+    if raw_ids:
+        if raw_ids.startswith("["):
+            parsed = json.loads(raw_ids)
+            if not isinstance(parsed, list):
+                raise ValueError("piece_ids must be a JSON array of strings")
+            piece_ids = [str(item).strip() for item in parsed]
+        else:
+            piece_ids = [part.strip() for part in raw_ids.split(",") if part.strip()]
+
+    # Optional parallel form fields piece_id_0 ...
+    if not piece_ids:
+        index = 0
+        collected = []
+        while True:
+            value = (request.form.get(f"piece_id_{index}") or "").strip()
+            if not value and index >= len(piece_paths):
+                break
+            collected.append(value)
+            index += 1
+            if index > len(piece_paths) + 5:
+                break
+        if any(collected):
+            piece_ids = collected[: len(piece_paths)]
+
+    return piece_paths, piece_ids
+
+
+def _puzzle_assemble_impl():
+    temp_paths = []
+    try:
+        original_path = save_named_upload("original", "cs_puzzle_original", required=False)
+        if original_path:
+            temp_paths.append(original_path)
+        # Also accept "image" as the original.
+        if not original_path:
+            original_path = save_named_upload("image", "cs_puzzle_original", required=False)
+            if original_path:
+                temp_paths.append(original_path)
+
+        piece_paths, piece_ids = _collect_piece_uploads(temp_paths)
+        if not piece_paths:
+            return json_error("Upload at least one decorated puzzle piece (pieces)")
+
+        layout = None
+        layout_path = None
+        layout_raw = (request.form.get("layout") or "").strip()
+        layout_filename = (request.form.get("layout_filename") or "").strip()
+
+        if layout_raw:
+            try:
+                layout = json.loads(layout_raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("layout must be valid JSON") from exc
+        elif layout_filename:
+            safe_name = os.path.basename(layout_filename)
+            candidate = os.path.join(output_folder(), safe_name)
+            if not os.path.isfile(candidate):
+                return json_error(f"layout_filename not found: {safe_name}")
+            layout_path = candidate
+        else:
+            uploaded_layout = save_named_upload(
+                "layout_file",
+                "cs_puzzle_layout_in",
+                required=False,
+                allowed={"json"},
+                kind="layout",
+            )
+            if uploaded_layout:
+                temp_paths.append(uploaded_layout)
+                layout_path = uploaded_layout
+
+        # layout is optional now — assembler can read placement from piece PNG metadata
+        out_filename = generate_unique_filename("creative.png", "output_puzzle_collage")
+        out_path = os.path.join(output_folder(), out_filename)
+        success, message = assemble_puzzle(
+            piece_paths=piece_paths,
+            output_path=out_path,
+            layout=layout,
+            layout_path=layout_path,
+            original_path=original_path,
+            piece_ids=piece_ids or None,
+        )
+        if not success:
+            return json_error(message or "Assembly failed", 500)
+        return jsonify(success_payload(out_filename, message))
+    except ValueError as exc:
+        return json_error(str(exc))
+    except Exception as exc:
+        print("Error in puzzle-collage assemble:", exc)
+        print(traceback.format_exc())
+        return json_error(str(exc), 500)
+    finally:
+        cleanup_paths(*temp_paths)
+
+
+@bp.route("/puzzle-collage/split", methods=["POST"])
+def puzzle_split():
+    return _puzzle_split_impl()
+
+
+@bp.route("/puzzle-collage/assemble", methods=["POST"])
+def puzzle_assemble():
+    return _puzzle_assemble_impl()
+
+
+@api_bp.route("/puzzle-collage-split", methods=["POST"])
+@require_api_key
+def api_puzzle_split():
+    """
+    Split an image into jigsaw pieces assigned to participants.
+    ---
+    tags:
+      - Creative System
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: header
+        name: X-API-Key
+        type: string
+      - in: formData
+        name: image
+        type: file
+        required: true
+      - in: formData
+        name: participants
+        type: integer
+        required: true
+        description: Number of people (each gets 3-6 pieces)
+    responses:
+      200:
+        description: Pieces tagged by person plus layout JSON for assemble
+      400:
+        description: Invalid input
+      401:
+        description: Missing or invalid API key
+      500:
+        description: Split failed
+    """
+    return _puzzle_split_impl()
+
+
+@api_bp.route("/puzzle-collage-assemble", methods=["POST"])
+@require_api_key
+def api_puzzle_assemble():
+    """
+    Join decorated puzzle pieces back into one image.
+    ---
+    tags:
+      - Creative System
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: header
+        name: X-API-Key
+        type: string
+      - in: formData
+        name: original
+        type: file
+        required: false
+        description: Optional original image for canvas sizing
+      - in: formData
+        name: pieces
+        type: file
+        required: true
+        description: One or more decorated piece images (multi-file). Split PNGs embed placement metadata.
+      - in: formData
+        name: layout_filename
+        type: string
+        required: false
+        description: Filename returned by split (e.g. cs_puzzle_layout_….json). Preferred over full layout JSON.
+      - in: formData
+        name: layout
+        type: string
+        required: false
+        description: Optional full layout JSON from split
+      - in: formData
+        name: layout_file
+        type: file
+        required: false
+      - in: formData
+        name: piece_ids
+        type: string
+        required: false
+        description: Optional comma-separated piece ids matching pieces order (r0_c0,r0_c1). Only needed if files were renamed.
+    responses:
+      200:
+        description: Assembled image
+      400:
+        description: Invalid input
+      401:
+        description: Missing or invalid API key
+      500:
+        description: Assembly failed
+    """
+    return _puzzle_assemble_impl()
