@@ -43,6 +43,12 @@ STATIONS = [
         "module": "graphic_heart",
     },
     {
+        "id": "apimh-new",
+        "label": "APIMH-New",
+        "tagline": "Explorer or Dreamer heart map.",
+        "module": "apimh_new",
+    },
+    {
         "id": "audio-to-text",
         "label": "Audio to Text",
         "tagline": "Upload a recording. Get a transcript.",
@@ -53,6 +59,13 @@ STATIONS = [
         "label": "Audio Type",
         "tagline": "A recording mapped into neon waveform art.",
         "module": "audio_type",
+    },
+    {
+        "id": "content-filter",
+        "label": "Wish & Wisdom Filter",
+        "tagline": "Check an entry before it is displayed.",
+        "module": "content_filter",
+        "kind": "filter",
     },
 ]
 

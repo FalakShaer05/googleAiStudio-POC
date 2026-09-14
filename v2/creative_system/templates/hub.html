@@ -26,11 +26,17 @@
       <button type="button" class="nav-tab" data-tab="graphic-heart">
         <i class="fas fa-heart me-1"></i>Graphic Heart
       </button>
+      <button type="button" class="nav-tab" data-tab="apimh-new">
+        <i class="fas fa-map-marker-alt me-1"></i>APIMH-New
+      </button>
       <button type="button" class="nav-tab" data-tab="audio-to-text">
         <i class="fas fa-microphone me-1"></i>Audio to Text
       </button>
       <button type="button" class="nav-tab" data-tab="audio-type">
         <i class="fas fa-wave-square me-1"></i>Audio Type
+      </button>
+      <button type="button" class="nav-tab" data-tab="content-filter">
+        <i class="fas fa-shield-alt me-1"></i>Wish &amp; Wisdom Filter
       </button>
     </div>
   </div>
@@ -222,6 +228,68 @@
 </div>
 
 <div class="container">
+  <div class="main-container content-section" id="section-apimh-new">
+    <div class="header">
+      <h1 class="h3 mb-1">APIMH-New</h1>
+      <p class="mb-0">A Place in My Heart — pick Explorer or Dreamer, then generate the die-cut map print.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="apimh-new" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Type</label>
+          <div class="apimh-type-picker">
+            <label class="apimh-type-card">
+              <input type="radio" name="map_type" value="explorer" required checked />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/apimh-new-explorer.png') }}?v=apimh3"
+                alt="The Explorer — anatomical heart map"
+              />
+              <span class="apimh-type-title">The Explorer</span>
+              <span class="apimh-type-tagline">Bold. Driven. Always discovering.</span>
+            </label>
+            <div class="apimh-type-or" aria-hidden="true">OR</div>
+            <label class="apimh-type-card">
+              <input type="radio" name="map_type" value="dreamer" />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/apimh-new-dreamer.png') }}?v=apimh1"
+                alt="The Dreamer — classic heart map"
+              />
+              <span class="apimh-type-title">The Dreamer</span>
+              <span class="apimh-type-tagline">Intuitive. Connected. Full of feeling.</span>
+            </label>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Map screenshot (used as the streets inside the heart)</label>
+          <input type="file" class="form-control" name="map_image" accept="image/*" />
+          <div class="form-text">Upload a map of the place. If you skip this, lat/long can fetch a snapshot instead.</div>
+        </div>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Latitude</label>
+            <input type="text" class="form-control" name="latitude" placeholder="25.8014" />
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label fw-bold">Longitude</label>
+            <input type="text" class="form-control" name="longitude" placeholder="-80.1994" />
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Location label</label>
+          <input type="text" class="form-control" name="location_label" value="WYNWOOD, FLORIDA" placeholder="WYNWOOD, FLORIDA" />
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold">Message</label>
+          <input type="text" class="form-control" name="message" required placeholder="Where it all began" />
+        </div>
+        <button type="submit" class="convert-btn">Generate</button>
+        {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
   <div class="main-container content-section" id="section-audio-to-text">
     <div class="header">
       <h1 class="h3 mb-1">Audio to Text</h1>
@@ -297,6 +365,70 @@
         </div>
         <button type="submit" class="convert-btn">Generate</button>
         {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-content-filter">
+    <div class="header">
+      <h1 class="h3 mb-1">Wish &amp; Wisdom Filter</h1>
+      <p class="mb-0">Check an entry before it appears in Make a Wish or Tree of Wisdom.</p>
+    </div>
+    <div class="p-4">
+      <div class="filter-guidelines" data-filter-guidelines>
+        <h2 class="h5">Entry guidelines</h2>
+        <p>Your entry should be sincere, clear, safe, and suitable for public display.</p>
+        <ul class="mb-4">
+          <li>A wish should express a positive hope, blessing, or aspiration.</li>
+          <li>Wisdom should share a constructive insight, lesson, or helpful advice.</li>
+          <li>Gibberish, unreadable text, advertising, and promotional content are blocked.</li>
+          <li>Political, harmful, unethical, explicit, hateful, or confessional content is blocked.</li>
+          <li>Do not include private information, links, handles, or calls to action.</li>
+        </ul>
+        <button type="button" class="convert-btn" data-filter-continue>
+          I understand — continue
+        </button>
+      </div>
+
+      <form data-filter-form style="display: none;">
+        <button type="button" class="btn btn-link px-0 mb-2" data-filter-back>
+          <i class="fas fa-arrow-left me-1"></i>Review guidelines
+        </button>
+        <div class="mb-3">
+          <label class="form-label fw-bold" for="filter-entry-type">Entry type</label>
+          <select class="form-select" id="filter-entry-type" name="entry_type" required>
+            <option value="wish">Make a Wish</option>
+            <option value="wisdom">Tree of Wisdom</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-bold" for="filter-entry-text">Sentence or paragraph</label>
+          <textarea
+            class="form-control"
+            id="filter-entry-text"
+            name="text"
+            rows="6"
+            maxlength="5000"
+            required
+            placeholder="Write the entry you want to check..."
+          ></textarea>
+          <div class="form-text">Maximum 5,000 characters.</div>
+        </div>
+        <button type="submit" class="convert-btn">Check entry</button>
+        <div class="mt-3 cs-progress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0">Checking entry with Gemini...</p>
+        </div>
+        <div class="status-message cs-status" role="status" aria-live="polite"></div>
+        <div class="filter-decision mt-3" style="display: none;" aria-live="polite">
+          <h2 class="h5 filter-decision-title"></h2>
+          <p class="mb-2 filter-decision-reason"></p>
+          <pre class="filter-json mb-0"></pre>
+        </div>
       </form>
     </div>
   </div>

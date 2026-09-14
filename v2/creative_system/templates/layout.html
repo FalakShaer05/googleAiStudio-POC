@@ -167,6 +167,94 @@
         aspect-ratio: 16 / 9;
       }
     }
+    .apimh-type-picker {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 0.85rem;
+      align-items: stretch;
+    }
+    .apimh-type-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin: 0;
+      padding: 0.55rem;
+      border: 2px solid #d9d4cb;
+      border-radius: 14px;
+      background: #f7f2ea;
+      cursor: pointer;
+      text-align: center;
+      color: #1a1a1a;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .apimh-type-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .apimh-type-card img {
+      width: 100%;
+      aspect-ratio: 9 / 16;
+      max-height: 320px;
+      object-fit: cover;
+      object-position: top center;
+      border-radius: 10px;
+      background: #efe8dc;
+    }
+    .apimh-type-title {
+      margin-top: 0.25rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .apimh-type-tagline {
+      font-size: 0.8rem;
+      font-weight: 400;
+      color: #5c574f;
+      padding-bottom: 0.2rem;
+    }
+    .apimh-type-card:has(input:checked) {
+      border-color: #b6d94c;
+      box-shadow: 0 0 0 3px rgba(182, 217, 76, 0.28);
+    }
+    .apimh-type-card:has(input:checked)::after {
+      content: "✓";
+      position: absolute;
+      top: 0.85rem;
+      right: 0.85rem;
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 50%;
+      background: #b6d94c;
+      color: #111;
+      font-size: 0.75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+    }
+    .apimh-type-or {
+      align-self: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: #8a847a;
+    }
+    @media (max-width: 768px) {
+      .apimh-type-picker {
+        grid-template-columns: 1fr;
+      }
+      .apimh-type-or {
+        text-align: center;
+      }
+      .apimh-type-card img {
+        aspect-ratio: 3 / 4;
+        max-height: 280px;
+      }
+    }
     .download-btn {
       background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
       border: none;
@@ -194,6 +282,29 @@
       background: #f8f9ff;
       border-radius: 20px;
       border: 1px solid #e9ecef;
+    }
+    .filter-guidelines li { margin-bottom: 0.45rem; }
+    .filter-decision {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    .filter-decision.allowed {
+      background: #d4edda;
+      border-color: #b7dfbf;
+      color: #155724;
+    }
+    .filter-decision.blocked {
+      background: #f8d7da;
+      border-color: #efb7bd;
+      color: #721c24;
+    }
+    .filter-json {
+      padding: 0.75rem;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.7);
+      color: inherit;
+      white-space: pre-wrap;
     }
     .corner-nav-btn {
       position: fixed;
@@ -233,9 +344,10 @@
   <script>
     window.CREATIVE_SYSTEM = {
       generateUrl: {{ url_for('creative_system.generate') | tojson }},
+      filterUrl: {{ url_for('creative_system.filter_content') | tojson }},
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=regen4"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=apimh-new1"></script>
 </body>
 </html>

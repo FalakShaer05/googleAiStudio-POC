@@ -195,6 +195,93 @@
     });
   });
 
+  document.querySelectorAll("[data-filter-continue]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const section = button.closest(".content-section");
+      const guidelines = section && section.querySelector("[data-filter-guidelines]");
+      const form = section && section.querySelector("[data-filter-form]");
+      if (guidelines) guidelines.style.display = "none";
+      if (form) {
+        form.style.display = "block";
+        const textarea = form.querySelector('textarea[name="text"]');
+        if (textarea) textarea.focus();
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-filter-back]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const section = button.closest(".content-section");
+      const guidelines = section && section.querySelector("[data-filter-guidelines]");
+      const form = section && section.querySelector("[data-filter-form]");
+      if (form) form.style.display = "none";
+      if (guidelines) guidelines.style.display = "block";
+    });
+  });
+
+  document.querySelectorAll("form[data-filter-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+
+      const submitBtn = form.querySelector(".convert-btn");
+      const progress = form.querySelector(".cs-progress");
+      const status = form.querySelector(".cs-status");
+      const decision = form.querySelector(".filter-decision");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Checking...";
+      progress.style.display = "block";
+      status.style.display = "none";
+      decision.style.display = "none";
+
+      try {
+        const response = await fetch(cfg.filterUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entry_type: form.elements.entry_type.value,
+            text: form.elements.text.value,
+          }),
+          cache: "no-store",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "The entry could not be checked.");
+        }
+
+        const blocked = data.blocked === true;
+        decision.className = "filter-decision mt-3 " + (blocked ? "blocked" : "allowed");
+        decision.querySelector(".filter-decision-title").textContent =
+          blocked ? "Entry blocked" : "Entry allowed";
+        decision.querySelector(".filter-decision-reason").textContent =
+          blocked ? data.reason : "This entry meets the selected guidelines.";
+        decision.querySelector(".filter-json").textContent = JSON.stringify(
+          { blocked: blocked, reason: blocked ? data.reason : null },
+          null,
+          2
+        );
+        decision.style.display = "block";
+
+        status.className = "status-message " + (blocked ? "status-error" : "status-success") + " cs-status";
+        status.textContent = blocked
+          ? "This entry cannot be submitted. Review the reason below."
+          : "This entry can be submitted.";
+        status.style.display = "block";
+      } catch (err) {
+        status.className = "status-message status-error cs-status";
+        status.textContent = err.message || String(err);
+        status.style.display = "block";
+      } finally {
+        progress.style.display = "none";
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Check entry";
+      }
+    });
+  });
+
   const params = new URLSearchParams(window.location.search);
   const deep = params.get("station");
   if (deep && document.getElementById("section-" + deep)) {
