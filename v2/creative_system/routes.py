@@ -98,7 +98,7 @@ def _generate_impl():
             kwargs["location_label"] = (request.form.get("location_label") or "").strip()
             lat_raw = (request.form.get("latitude") or "").strip()
             lng_raw = (request.form.get("longitude") or "").strip()
-            if not kwargs["message"]:
+            if station_id != "apimh-new" and not kwargs["message"]:
                 return json_error("A message is required")
             try:
                 kwargs["latitude"] = float(lat_raw) if lat_raw else None

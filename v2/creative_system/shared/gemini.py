@@ -477,6 +477,155 @@ def isolate_paper_background(img: Image.Image, crop: bool = True, pad: int = 8) 
     return isolate_word_hand_cutout(img, crop=crop, pad=pad)
 
 
+def knockout_cream_card_background(img: Image.Image) -> Image.Image:
+    """
+    Convert baked card / fake-transparency backgrounds into real PNG alpha.
+
+    Removes edge-connected cream/white and gray/white checkerboard placeholders
+    while protecting textured map pixels and dark typography.
+    """
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    if w < 2 or h < 2:
+        return rgba
+
+    if not NUMPY_AVAILABLE:
+        return _knockout_cream_card_background_pil(rgba)
+
+    arr = np.array(rgba)
+    r = arr[:, :, 0].astype(np.float32)
+    g = arr[:, :, 1].astype(np.float32)
+    b = arr[:, :, 2].astype(np.float32)
+    a = arr[:, :, 3].astype(np.float32)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+    warm = ((r - b) >= 6) & ((g - b) >= 2)
+
+    cream = (
+        ((warm) & (lum >= 190) & (sat <= 70))
+        | ((r >= 220) & (g >= 210) & (b >= 190) & (sat <= 55) & warm)
+    )
+    flat_white = (lum >= 245) & (sat <= 18)
+    flat_gray = (sat <= 22) & (lum >= 95) & (lum <= 210)
+    checker = _line_art_checker_mask(lum, sat)
+
+    # Always erase detected checker tiles — they are never map content.
+    if checker.any() and SCIPY_AVAILABLE:
+        checker = _ndimage.binary_dilation(checker, iterations=2)
+    elif checker.any():
+        grown = checker.copy()
+        grown[1:, :] |= checker[:-1, :]
+        grown[:-1, :] |= checker[1:, :]
+        grown[:, 1:] |= checker[:, :-1]
+        grown[:, :-1] |= checker[:, 1:]
+        checker = grown
+    arr[checker, 3] = 0
+
+    # Hazard / barber side strips.
+    stripe = np.zeros((h, w), dtype=bool)
+    edge_w = max(2, w // 40)
+    for x0, x1 in ((0, edge_w), (w - edge_w, w)):
+        band = lum[:, x0:x1]
+        band_sat = sat[:, x0:x1]
+        near_bw = (band_sat <= 30) & ((band <= 40) | (band >= 215))
+        if float(near_bw.mean()) >= 0.55:
+            stripe[:, x0:x1] = near_bw
+    arr[stripe, 3] = 0
+
+    chroma = (
+        ((g > 200) & (r < 90) & (b < 90))
+        | ((r > 200) & (g < 90) & (b > 200))
+    )
+
+    # Protect textured map / ink from white flood-fill.
+    if SCIPY_AVAILABLE:
+        mean = _ndimage.uniform_filter(lum, size=5)
+        mean_sq = _ndimage.uniform_filter(lum * lum, size=5)
+        local_var = np.clip(mean_sq - mean * mean, 0.0, None)
+    else:
+        local_var = np.zeros_like(lum)
+    busy = (local_var > 55) | (sat > 28) | (lum < 170)
+    if SCIPY_AVAILABLE:
+        busy = _ndimage.binary_dilation(busy, iterations=1)
+
+    a = arr[:, :, 3]
+    paper = (cream | flat_white | chroma) & (a > 0)
+    # Mid gray only as leftover checker field, not map asphalt.
+    if float(checker.mean()) >= 0.02:
+        paper = paper | (flat_gray & ~busy & (a > 0))
+
+    # Keep internal die-cut ridges: cream/white strips that sit among map pixels.
+    map_like = busy | (sat > 22)
+    if SCIPY_AVAILABLE:
+        map_frac = _ndimage.uniform_filter(map_like.astype(np.float32), size=9)
+        internal_ridge = paper & (map_frac >= 0.18) & (map_frac <= 0.88)
+    else:
+        internal_ridge = np.zeros(paper.shape, dtype=bool)
+
+    walkable = (paper & ~busy & ~internal_ridge) | (a < 16) | chroma
+    outer = _flood_from_edges(walkable)
+    if float(outer.mean()) < 0.02 and (cream | flat_white).any():
+        # Solid white/cream card with no checker: still clear edge paper.
+        walkable = ((cream | flat_white) & ~busy & ~internal_ridge) | (a < 16)
+        outer = _flood_from_edges(walkable)
+
+    if float(outer.mean()) >= 0.01:
+        arr[outer, 3] = 0
+
+    fringe = (
+        (arr[:, :, 3] > 0)
+        & (arr[:, :, 3] < 40)
+        & (sat <= 35)
+        & (lum >= 180)
+        & ~busy
+        & ~internal_ridge
+    )
+    arr[fringe, 3] = 0
+    return Image.fromarray(arr, "RGBA")
+
+
+def _knockout_cream_card_background_pil(rgba: Image.Image) -> Image.Image:
+    """PIL fallback when numpy is unavailable."""
+    w, h = rgba.size
+    pixels = rgba.load()
+    walkable = [[False] * w for _ in range(h)]
+    for y in range(h):
+        for x in range(w):
+            pr, pg, pb, pa = pixels[x, y]
+            if pa < 16:
+                walkable[y][x] = True
+                continue
+            lum = (pr + pg + pb) / 3.0
+            sat = max(pr, pg, pb) - min(pr, pg, pb)
+            warm = (pr - pb) >= 6
+            if ((warm and lum >= 190 and sat <= 70)
+                    or (lum >= 245 and sat <= 18)
+                    or (sat <= 22 and 95 <= lum <= 210)
+                    or (pg > 200 and pr < 90 and pb < 90)
+                    or (pr > 200 and pg < 90 and pb > 200)):
+                walkable[y][x] = True
+    visited = [[False] * w for _ in range(h)]
+    queue: deque = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if walkable[y][x] and not visited[y][x]:
+                visited[y][x] = True
+                queue.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if walkable[y][x] and not visited[y][x]:
+                visited[y][x] = True
+                queue.append((x, y))
+    while queue:
+        x, y = queue.popleft()
+        pixels[x, y] = (0, 0, 0, 0)
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < w and 0 <= ny < h and walkable[ny][nx] and not visited[ny][nx]:
+                visited[ny][nx] = True
+                queue.append((nx, ny))
+    return rgba
+
+
 def _is_line_art_paper_pixel(r: int, g: int, b: int, a: int = 255) -> bool:
     """Beige/cream/off-white/white page — not gray or black ink."""
     if a < 16:

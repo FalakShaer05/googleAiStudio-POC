@@ -231,7 +231,7 @@
   <div class="main-container content-section" id="section-apimh-new">
     <div class="header">
       <h1 class="h3 mb-1">APIMH-New</h1>
-      <p class="mb-0">A Place in My Heart — pick Explorer or Dreamer, then generate the die-cut map print.</p>
+      <p class="mb-0">A Place in My Heart — pick Explorer or Dreamer, then generate a die-cut map print on a transparent background.</p>
     </div>
     <div class="p-4">
       <form data-station-form="apimh-new" enctype="multipart/form-data">
@@ -279,8 +279,8 @@
           <input type="text" class="form-control" name="location_label" value="WYNWOOD, FLORIDA" placeholder="WYNWOOD, FLORIDA" />
         </div>
         <div class="mb-3">
-          <label class="form-label fw-bold">Message</label>
-          <input type="text" class="form-control" name="message" required placeholder="Where it all began" />
+          <label class="form-label fw-bold">Message <span class="text-muted fw-normal">(optional)</span></label>
+          <input type="text" class="form-control" name="message" placeholder="Where it all began" />
         </div>
         <button type="submit" class="convert-btn">Generate</button>
         {% include "partials/form_result.html" %}
