@@ -481,8 +481,9 @@ def knockout_cream_card_background(img: Image.Image) -> Image.Image:
     """
     Convert baked card / fake-transparency backgrounds into real PNG alpha.
 
-    Removes edge-connected cream/white and gray/white checkerboard placeholders
-    while protecting textured map pixels and dark typography.
+    Clears edge-connected white, cream, gray, black, checkerboard, and similar
+    solid/split backdrops while keeping the heart map, die-cut ridges, green
+    underline, and typography.
     """
     rgba = img.convert("RGBA")
     w, h = rgba.size
@@ -502,14 +503,15 @@ def knockout_cream_card_background(img: Image.Image) -> Image.Image:
     warm = ((r - b) >= 6) & ((g - b) >= 2)
 
     cream = (
-        ((warm) & (lum >= 190) & (sat <= 70))
-        | ((r >= 220) & (g >= 210) & (b >= 190) & (sat <= 55) & warm)
+        ((warm) & (lum >= 175) & (sat <= 75))
+        | ((r >= 210) & (g >= 200) & (b >= 185) & (sat <= 60) & warm)
     )
-    flat_white = (lum >= 245) & (sat <= 18)
-    flat_gray = (sat <= 22) & (lum >= 95) & (lum <= 210)
-    checker = _line_art_checker_mask(lum, sat)
+    flat_white = (lum >= 240) & (sat <= 22)
+    neutral_light = (sat <= 32) & (lum >= 150)
+    neutral_mid = (sat <= 28) & (lum >= 70) & (lum < 150)
+    neutral_dark = (sat <= 35) & (lum <= 55)
 
-    # Always erase detected checker tiles — they are never map content.
+    checker = _line_art_checker_mask(lum, sat)
     if checker.any() and SCIPY_AVAILABLE:
         checker = _ndimage.binary_dilation(checker, iterations=2)
     elif checker.any():
@@ -521,13 +523,12 @@ def knockout_cream_card_background(img: Image.Image) -> Image.Image:
         checker = grown
     arr[checker, 3] = 0
 
-    # Hazard / barber side strips.
     stripe = np.zeros((h, w), dtype=bool)
     edge_w = max(2, w // 40)
     for x0, x1 in ((0, edge_w), (w - edge_w, w)):
-        band = lum[:, x0:x1]
+        band_lum = lum[:, x0:x1]
         band_sat = sat[:, x0:x1]
-        near_bw = (band_sat <= 30) & ((band <= 40) | (band >= 215))
+        near_bw = (band_sat <= 30) & ((band_lum <= 40) | (band_lum >= 215))
         if float(near_bw.mean()) >= 0.55:
             stripe[:, x0:x1] = near_bw
     arr[stripe, 3] = 0
@@ -537,50 +538,124 @@ def knockout_cream_card_background(img: Image.Image) -> Image.Image:
         | ((r > 200) & (g < 90) & (b > 200))
     )
 
-    # Protect textured map / ink from white flood-fill.
+    # Sample border colors so gray / black / split backdrops key out.
+    border_rows = np.concatenate([
+        np.zeros(w, dtype=int),
+        np.full(w, h - 1, dtype=int),
+        np.arange(h),
+        np.arange(h),
+    ])
+    border_cols = np.concatenate([
+        np.arange(w),
+        np.arange(w),
+        np.zeros(h, dtype=int),
+        np.full(h, w - 1, dtype=int),
+    ])
+    step = max(1, len(border_rows) // 400)
+    border_rows = border_rows[::step]
+    border_cols = border_cols[::step]
+    br = r[border_rows, border_cols]
+    bg_ = g[border_rows, border_cols]
+    bb = b[border_rows, border_cols]
+    bl = lum[border_rows, border_cols]
+    bs = sat[border_rows, border_cols]
+    border_neutral = bs <= 40
+    light_share = float(((bl >= 150) & border_neutral).mean()) if len(bl) else 0.0
+    dark_share = float(((bl <= 60) & border_neutral).mean()) if len(bl) else 0.0
+    mid_share = float(((bl > 60) & (bl < 150) & border_neutral).mean()) if len(bl) else 0.0
+
+    similar_border = np.zeros((h, w), dtype=bool)
+    seed_mask = border_neutral & (
+        (bl >= 140) | (bl <= 70) | ((bl > 70) & (bl < 140) & (mid_share >= 0.15))
+    )
+    seed_r, seed_g, seed_b = br[seed_mask], bg_[seed_mask], bb[seed_mask]
+    if seed_r.size:
+        picks = np.linspace(0, seed_r.size - 1, num=min(12, seed_r.size), dtype=int)
+        for i in picks:
+            dist = np.abs(r - seed_r[i]) + np.abs(g - seed_g[i]) + np.abs(b - seed_b[i])
+            similar_border |= (dist <= 48) & (sat <= 42)
+
+    paper = cream | flat_white | neutral_light | chroma | similar_border
+    if mid_share >= 0.12 or light_share >= 0.35:
+        paper = paper | neutral_mid
+    if dark_share >= 0.12:
+        paper = paper | neutral_dark
+    paper = paper & (arr[:, :, 3] > 0)
+
     if SCIPY_AVAILABLE:
         mean = _ndimage.uniform_filter(lum, size=5)
         mean_sq = _ndimage.uniform_filter(lum * lum, size=5)
         local_var = np.clip(mean_sq - mean * mean, 0.0, None)
+        dil = _ndimage.maximum_filter(lum, size=3)
+        ero = _ndimage.minimum_filter(lum, size=3)
+        local_contrast = dil - ero
     else:
         local_var = np.zeros_like(lum)
-    busy = (local_var > 55) | (sat > 28) | (lum < 170)
+        local_contrast = np.zeros_like(lum)
+
+    green_accent = (g > r + 18) & (g > b + 18) & (g >= 90) & (sat >= 35)
+    map_color = (sat > 30) & ~green_accent
+    busy = (local_var > 48) | map_color | green_accent
+    text_stroke = (local_contrast > 28) & (sat <= 55)
+    yy = np.arange(h)[:, None]
+    keep_text = (yy >= int(h * 0.50)) & text_stroke
     if SCIPY_AVAILABLE:
         busy = _ndimage.binary_dilation(busy, iterations=1)
+        keep_text = _ndimage.binary_dilation(keep_text, iterations=1)
 
-    a = arr[:, :, 3]
-    paper = (cream | flat_white | chroma) & (a > 0)
-    # Mid gray only as leftover checker field, not map asphalt.
-    if float(checker.mean()) >= 0.02:
-        paper = paper | (flat_gray & ~busy & (a > 0))
-
-    # Keep internal die-cut ridges: cream/white strips that sit among map pixels.
     map_like = busy | (sat > 22)
     if SCIPY_AVAILABLE:
         map_frac = _ndimage.uniform_filter(map_like.astype(np.float32), size=9)
-        internal_ridge = paper & (map_frac >= 0.18) & (map_frac <= 0.88)
+        internal_ridge = (cream | flat_white | ((sat <= 30) & (lum >= 200))) & (
+            (map_frac >= 0.16) & (map_frac <= 0.90)
+        )
     else:
-        internal_ridge = np.zeros(paper.shape, dtype=bool)
+        internal_ridge = np.zeros((h, w), dtype=bool)
 
-    walkable = (paper & ~busy & ~internal_ridge) | (a < 16) | chroma
+    walkable = (
+        (paper & ~busy & ~internal_ridge & ~keep_text)
+        | (arr[:, :, 3] < 16)
+        | chroma
+        | checker
+    )
     outer = _flood_from_edges(walkable)
-    if float(outer.mean()) < 0.02 and (cream | flat_white).any():
-        # Solid white/cream card with no checker: still clear edge paper.
-        walkable = ((cream | flat_white) & ~busy & ~internal_ridge) | (a < 16)
+
+    if float(outer.mean()) < 0.03:
+        walkable = (
+            (cream | flat_white | neutral_light | similar_border)
+            & ~busy
+            & ~internal_ridge
+            & ~keep_text
+        ) | (arr[:, :, 3] < 16)
+        if dark_share >= 0.12:
+            walkable = walkable | (neutral_dark & ~busy & ~keep_text)
+        if mid_share >= 0.12:
+            walkable = walkable | (neutral_mid & ~busy & ~internal_ridge & ~keep_text)
         outer = _flood_from_edges(walkable)
 
     if float(outer.mean()) >= 0.01:
         arr[outer, 3] = 0
+        if SCIPY_AVAILABLE:
+            fringe_zone = _ndimage.binary_dilation(outer, iterations=1) & ~outer
+            fringe = (
+                fringe_zone
+                & (sat <= 40)
+                & ~busy
+                & ~internal_ridge
+                & ~keep_text
+                & (arr[:, :, 3] > 0)
+            )
+            arr[fringe, 3] = 0
 
-    fringe = (
+    soft = (
         (arr[:, :, 3] > 0)
-        & (arr[:, :, 3] < 40)
-        & (sat <= 35)
-        & (lum >= 180)
+        & (arr[:, :, 3] < 48)
+        & (sat <= 40)
         & ~busy
         & ~internal_ridge
+        & ~keep_text
     )
-    arr[fringe, 3] = 0
+    arr[soft, 3] = 0
     return Image.fromarray(arr, "RGBA")
 
 
@@ -598,9 +673,10 @@ def _knockout_cream_card_background_pil(rgba: Image.Image) -> Image.Image:
             lum = (pr + pg + pb) / 3.0
             sat = max(pr, pg, pb) - min(pr, pg, pb)
             warm = (pr - pb) >= 6
-            if ((warm and lum >= 190 and sat <= 70)
-                    or (lum >= 245 and sat <= 18)
-                    or (sat <= 22 and 95 <= lum <= 210)
+            if ((warm and lum >= 175 and sat <= 70)
+                    or (lum >= 240 and sat <= 22)
+                    or (sat <= 32 and lum >= 70)  # gray / mid card
+                    or (sat <= 35 and lum <= 55)  # black backdrop
                     or (pg > 200 and pr < 90 and pb < 90)
                     or (pr > 200 and pg < 90 and pb > 200)):
                 walkable[y][x] = True
