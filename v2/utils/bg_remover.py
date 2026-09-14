@@ -1,14 +1,18 @@
 """
-Background removal utilities using cloud APIs (Freepik, remove.bg, Gemini).
+Background removal utilities using cloud APIs (Freepik, remove.bg) and
+local rembg for true PNG alpha (internal fallback).
 """
 import os
 import time
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import requests
 from PIL import Image
 
 from .s3_utils import build_public_image_url
+
+# Cache rembg sessions so model weights are loaded once per process.
+_REMBG_SESSIONS = {}
 
 
 def _bg_removed_output_path(image_path: str) -> str:
@@ -38,8 +42,153 @@ def _save_pil_image(image_path: str, image: Image.Image) -> str:
     return output_path
 
 
+def _has_real_transparency(image: Image.Image, min_ratio: float = 0.02) -> bool:
+    """True when a meaningful share of pixels are actually transparent."""
+    rgba = image.convert("RGBA")
+    alpha = rgba.getchannel("A")
+    # Histogram: index i = count of pixels with alpha == i
+    hist = alpha.histogram()
+    transparent = sum(hist[:16])  # alpha 0..15
+    total = rgba.size[0] * rgba.size[1]
+    if total <= 0:
+        return False
+    return (transparent / total) >= min_ratio
+
+
+def _rembg_model_names() -> List[str]:
+    raw = os.getenv("REMBG_MODEL_ORDER", "u2net,isnet-general-use,birefnet-general")
+    names = [part.strip() for part in raw.split(",") if part.strip()]
+    return names or ["u2net"]
+
+
+def _get_rembg_session(model_name: str):
+    if model_name in _REMBG_SESSIONS:
+        return _REMBG_SESSIONS[model_name]
+    from rembg import new_session
+
+    session = new_session(model_name)
+    _REMBG_SESSIONS[model_name] = session
+    return session
+
+
+def _decontaminate_cutout_edges(image: Image.Image) -> Image.Image:
+    """
+    Reduce light/white fringe on rembg cutouts by un-premultiplying against a
+    light background estimate, then hardening near-transparent fringe pixels.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return image.convert("RGBA")
+
+    arr = np.array(image.convert("RGBA"), dtype=np.float32)
+    alpha = arr[:, :, 3] / 255.0
+    h, w = alpha.shape
+    if h < 2 or w < 2:
+        return image.convert("RGBA")
+
+    # Estimate background from mostly-transparent border samples (fallback: white).
+    border = np.concatenate(
+        [
+            arr[0, :, :3].reshape(-1, 3),
+            arr[-1, :, :3].reshape(-1, 3),
+            arr[:, 0, :3].reshape(-1, 3),
+            arr[:, -1, :3].reshape(-1, 3),
+        ],
+        axis=0,
+    )
+    border_alpha = np.concatenate(
+        [alpha[0, :], alpha[-1, :], alpha[:, 0], alpha[:, -1]],
+        axis=0,
+    )
+    bg_samples = border[border_alpha < 0.2]
+    if bg_samples.size:
+        bg = bg_samples.mean(axis=0)
+    else:
+        bg = np.array([255.0, 255.0, 255.0], dtype=np.float32)
+
+    # Soft edge band: decontaminate RGB so light bg doesn't bleed into subject.
+    soft = (alpha > 0.02) & (alpha < 0.98)
+    safe_a = np.maximum(alpha, 1e-4)
+    for c in range(3):
+        channel = arr[:, :, c]
+        restored = (channel - (1.0 - alpha) * bg[c]) / safe_a
+        arr[:, :, c] = np.where(soft, np.clip(restored, 0, 255), channel)
+
+    # Drop dust / hairline fringe that is almost fully transparent.
+    arr[:, :, 3] = np.where(alpha < 0.06, 0, arr[:, :, 3])
+
+    # Mild alpha harden near edges: shrink very soft fringe without eating hair.
+    mid = (alpha >= 0.06) & (alpha < 0.35)
+    # Only harden when pixel is still near the estimated background (halo color).
+    near_bg = (
+        (np.abs(arr[:, :, 0] - bg[0]) < 28)
+        & (np.abs(arr[:, :, 1] - bg[1]) < 28)
+        & (np.abs(arr[:, :, 2] - bg[2]) < 28)
+    )
+    arr[mid & near_bg, 3] = 0
+
+    return Image.fromarray(arr.astype(np.uint8), "RGBA")
+
+
+def remove_background_with_rembg(image_path: str) -> Optional[str]:
+    """
+    Local background removal with rembg — true PNG alpha (no baked checkerboard).
+    Model order comes from REMBG_MODEL_ORDER (comma-separated).
+    """
+    if not os.path.exists(image_path):
+        return None
+
+    try:
+        from rembg import remove
+    except Exception as e:
+        print(f"❌ rembg is not available: {e}")
+        return None
+
+    try:
+        print("🔧 Requesting background removal from rembg (local)...")
+        started = time.perf_counter()
+        source = Image.open(image_path).convert("RGB")
+        last_error = None
+
+        for model_name in _rembg_model_names():
+            try:
+                session = _get_rembg_session(model_name)
+                cut = remove(source, session=session)
+                if not isinstance(cut, Image.Image):
+                    from io import BytesIO
+
+                    cut = Image.open(BytesIO(cut))
+                cut = cut.convert("RGBA")
+                if not _has_real_transparency(cut):
+                    print(f"⚠️ rembg model={model_name} returned opaque alpha — trying next")
+                    continue
+                cut = _decontaminate_cutout_edges(cut)
+                output_path = _save_pil_image(image_path, cut)
+                print(
+                    f"✅ rembg background removal successful "
+                    f"(model={model_name}) in {time.perf_counter() - started:.2f}s"
+                )
+                return output_path
+            except Exception as model_exc:
+                last_error = model_exc
+                print(f"⚠️ rembg model={model_name} failed: {model_exc}")
+
+        if last_error:
+            print(f"❌ rembg exhausted models: {last_error}")
+        else:
+            print("❌ rembg did not produce a transparent cutout")
+        return None
+    except Exception as e:
+        print(f"❌ Error in rembg background removal: {e}")
+        return None
+
+
 def remove_background_with_gemini_api(image_path: str) -> Optional[str]:
-    """Remove background using Gemini image editing (no local model storage)."""
+    """
+    Deprecated for /remove-bg: Gemini often paints a fake checkerboard into RGB.
+    Kept for callers that still import it; prefer rembg for true transparency.
+    """
     if _is_placeholder_key(os.getenv("GEMINI_API_KEY", "")):
         print("❌ GEMINI_API_KEY not set — cannot use Gemini fallback")
         return None
@@ -62,6 +211,9 @@ def remove_background_with_gemini_api(image_path: str) -> Optional[str]:
         prompt = (
             "Remove the background from this image completely. "
             "Output ONLY the main subject with a fully transparent background. "
+            "Do NOT draw a checkerboard, grid, dither, gray squares, or any "
+            "transparency-preview pattern. Transparency must be real empty pixels, "
+            "not a painted pattern. "
             "Do not add a new background, floor shadow, or extra objects. "
             "Preserve the subject exactly as shown."
         )
@@ -79,6 +231,14 @@ def remove_background_with_gemini_api(image_path: str) -> Optional[str]:
         result = _extract_final_image_from_response(response)
         if result is None:
             print("❌ Gemini did not return an image")
+            return None
+
+        result = result.convert("RGBA")
+        if not _has_real_transparency(result):
+            print(
+                "❌ Gemini returned opaque / fake-transparency output "
+                "(likely a painted checkerboard) — rejecting"
+            )
             return None
 
         output_path = _save_pil_image(image_path, result)
@@ -160,10 +320,10 @@ def remove_background_with_removebg_api(image_path: str) -> Optional[str]:
 
 def remove_background(image_path: str) -> Tuple[Optional[str], str, str]:
     """
-    Remove background using cloud providers in order:
+    Remove background using providers in order:
       1. Freepik (unless SKIP_FREEPIK=true)
       2. remove.bg (requires valid REMOVE_BG_API_KEY)
-      3. Gemini (uses GEMINI_API_KEY)
+      3. rembg local (true PNG alpha — internal fallback)
 
     Returns:
         (result_path, method, error_summary)
@@ -187,12 +347,12 @@ def remove_background(image_path: str) -> Tuple[Optional[str], str, str]:
             return result, "removebg", ""
         errors.append("remove.bg rejected the request (check REMOVE_BG_API_KEY is valid)")
 
-    print("⚠️ Falling back to Gemini...")
-    result = remove_background_with_gemini_api(image_path)
+    print("⚠️ Falling back to rembg (local true-alpha)...")
+    result = remove_background_with_rembg(image_path)
     if result:
-        return result, "gemini", ""
+        return result, "rembg", ""
 
-    errors.append("Gemini fallback did not return an image")
+    errors.append("rembg local fallback did not return a transparent image")
     return None, "none", "; ".join(errors)
 
 
