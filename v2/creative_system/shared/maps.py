@@ -20,17 +20,19 @@ def fetch_static_map(
     dest_path: str,
     zoom: int = 16,
     size: str = "640x640",
+    marker_color: str = "0x111111",
 ) -> Optional[str]:
     key = maps_api_key()
     if not key:
         return None
+    color = (marker_color or "0x111111").strip()
     params = {
         "center": f"{latitude},{longitude}",
         "zoom": zoom,
         "size": size,
         "scale": 2,
         "maptype": "roadmap",
-        "markers": f"color:0x111111|{latitude},{longitude}",
+        "markers": f"color:{color}|{latitude},{longitude}",
         "key": key,
     }
     response = requests.get(STATIC_MAP_URL, params=params, timeout=20)

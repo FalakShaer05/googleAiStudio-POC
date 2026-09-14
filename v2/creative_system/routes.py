@@ -22,6 +22,7 @@ from .shared.io import (
 )
 from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
+from .stations.content_filter import classify_content
 
 
 def _page_context():
@@ -53,6 +54,8 @@ def _generate_impl():
         station_id = (request.form.get("station") or "").strip().lower()
         if station_id not in STATION_IDS:
             return json_error("Invalid station. Choose a valid creative station.")
+        if station_id == "content-filter":
+            return json_error("Use the Wish & Wisdom content filter endpoint for this station.")
 
         kwargs = {"station_id": station_id}
 
@@ -90,18 +93,27 @@ def _generate_impl():
             if len(kwargs["words"]) < 3:
                 return json_error("Pick or enter at least 3 words")
 
-        elif station_id == "graphic-heart":
+        elif station_id in {"graphic-heart", "apimh-new"}:
             kwargs["message"] = (request.form.get("message") or "").strip()
             kwargs["location_label"] = (request.form.get("location_label") or "").strip()
             lat_raw = (request.form.get("latitude") or "").strip()
             lng_raw = (request.form.get("longitude") or "").strip()
-            if not kwargs["message"]:
+            if station_id != "apimh-new" and not kwargs["message"]:
                 return json_error("A message is required")
             try:
                 kwargs["latitude"] = float(lat_raw) if lat_raw else None
                 kwargs["longitude"] = float(lng_raw) if lng_raw else None
             except ValueError:
                 return json_error("Latitude and longitude must be numbers")
+
+            marker_color = "0x111111"
+            if station_id == "apimh-new":
+                map_type = (request.form.get("map_type") or request.form.get("type") or "explorer").strip().lower()
+                if map_type not in {"explorer", "dreamer"}:
+                    return json_error("Choose a type: explorer or dreamer")
+                kwargs["map_type"] = map_type
+                if map_type == "dreamer":
+                    marker_color = "0xE85A2D"
 
             map_path = save_named_upload("map_image", "cs_map", required=False)
             if map_path:
@@ -110,7 +122,12 @@ def _generate_impl():
                 static_name = generate_unique_filename("static_map.png", "cs_static_map")
                 static_path = os.path.join(upload_folder(), static_name)
                 try:
-                    fetched = fetch_static_map(kwargs["latitude"], kwargs["longitude"], static_path)
+                    fetched = fetch_static_map(
+                        kwargs["latitude"],
+                        kwargs["longitude"],
+                        static_path,
+                        marker_color=marker_color,
+                    )
                 except Exception as map_exc:
                     return json_error(
                         f"Could not fetch a map snapshot ({map_exc}). Upload a map screenshot instead."
@@ -174,6 +191,78 @@ def generate():
     return _generate_impl()
 
 
+def _filter_content_impl():
+    try:
+        data = request.get_json(silent=True) if request.is_json else request.form
+        if data is None or not hasattr(data, "get"):
+            raise ValueError("Request body must contain entry_type and text.")
+        entry_type = str(data.get("entry_type") or "")
+        text = str(data.get("text") or "")
+        result = classify_content(entry_type, text)
+        return jsonify(
+            {
+                "success": True,
+                "entry_type": entry_type.strip().lower(),
+                **result,
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print("Error in Wish & Wisdom content filter:", exc)
+        print(traceback.format_exc())
+        return jsonify(
+            {
+                "success": False,
+                "error": (
+                    "The entry could not be checked right now. "
+                    "Please try again before submitting it."
+                ),
+            }
+        ), 502
+
+
+@bp.route("/filter-content", methods=["POST"])
+def filter_content():
+    return _filter_content_impl()
+
+
+@api_bp.route("/filter-wish-wisdom", methods=["POST"])
+@require_api_key
+def api_filter_content():
+    """
+    Check whether a Wish or Wisdom entry is eligible for public display.
+    ---
+    tags:
+      - Creative System
+    consumes:
+      - application/json
+      - application/x-www-form-urlencoded
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [entry_type, text]
+          properties:
+            entry_type:
+              type: string
+              enum: [wish, wisdom]
+            text:
+              type: string
+    responses:
+      200:
+        description: Classification with blocked boolean and reason
+      400:
+        description: Invalid input
+      401:
+        description: Missing or invalid API key
+      502:
+        description: AI classification unavailable
+    """
+    return _filter_content_impl()
+
+
 @api_bp.route("/generate-creative", methods=["POST"])
 @require_api_key
 def api_generate():
@@ -192,7 +281,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, audio-to-text, audio-type
+        description: holding-hands, make-art-yours, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
     responses:
       200:
         description: Artwork generated
