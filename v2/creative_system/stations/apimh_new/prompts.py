@@ -82,7 +82,8 @@ def style_instruction(map_type: str) -> str:
         f"If a title is present in the print, include a short {ACCENT_GREEN} lime-green "
         "hand-painted brush-stroke underline beneath it. "
         "Outside the heart and text use a FLAT solid pure white (#FFFFFF) backdrop only — "
-        "never cream/beige card stock, never a gray/white checkerboard, never striped borders. "
+        "never cream/beige, never gray, never black, never black/white splits, "
+        "never a gray/white checkerboard, never striped borders. "
         "CRITICAL: IGNORE and DO NOT COPY any map streets, water, parks, pins, or place names "
         "from this reference — it is a different sample city. "
         "The map fill MUST come only from the user map images (IMAGE 1 / IMAGE 2)."
@@ -97,7 +98,7 @@ def layout_lock(map_type: str) -> str:
         f"LAYOUT LOCK ({meta['label']}): Heart cutout dominates the upper ~60% of the frame. "
         f"Silhouette must clearly read as a {meta['heart']} — not the other type. "
         "Background outside the heart and typography must be flat solid #FFFFFF "
-        "(no beige card, no checkerboard pattern, no striped borders). "
+        "(no beige card, no gray/black fills, no split fields, no checkerboard, no striped borders). "
         f"Keep generous empty margins; no busy chrome or UI.{explorer_extra}"
     )
 
@@ -204,7 +205,9 @@ MAP TREATMENT:
 {explorer_treatment}
 BACKGROUND:
 - Flat solid pure white (#FFFFFF) everywhere outside the heart and the text block.
-- FORBIDDEN: gray/white checkerboard, transparency preview pattern, cream/beige paper fill, striped side borders, page drop-shadow box.
+- FORBIDDEN: gray backgrounds, black backgrounds, black/white split fields, diagonal brush washes,
+  gray/white checkerboard, transparency preview pattern, cream/beige paper fill, striped side borders,
+  page drop-shadow box.
 - Do NOT illustrate transparency — leave a plain white field; real alpha is added afterward.
 
 {text_block}
