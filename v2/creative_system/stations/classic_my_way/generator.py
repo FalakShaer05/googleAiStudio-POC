@@ -8,13 +8,11 @@ def generate(output_path: str, template_path: str, artwork_path: str, user_promp
         prompt=build_prompt(user_prompt),
         role_images=[
             (
-                "ORIGINAL ART / TEMPLATE. Lock this orientation, framing, layout, proportions, "
-                "and every template element. Do not redesign or replace the template.",
+                "ORIGINAL ART / TEMPLATE",
                 load_rgb(template_path),
             ),
             (
-                "USER ART with additions placed on the template. Enhance per the user prompt "
-                "while preserving their text, drawings, colors, objects, and creative intent.",
+                "USER ART",
                 load_rgb(artwork_path),
             ),
         ],
