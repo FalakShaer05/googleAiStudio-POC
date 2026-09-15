@@ -14,6 +14,9 @@
       <button type="button" class="nav-tab" data-tab="make-art-yours">
         <i class="fas fa-paint-brush me-1"></i>Make Art Yours
       </button>
+      <button type="button" class="nav-tab" data-tab="classic-my-way">
+        <i class="fas fa-magic me-1"></i>Classic My Way
+      </button>
       <button type="button" class="nav-tab" data-tab="selfie-becoming">
         <i class="fas fa-user-circle me-1"></i>Selfie Becoming
       </button>
@@ -104,6 +107,56 @@
         </div>
         <button type="submit" class="convert-btn">Generate</button>
         {% include "partials/form_result.html" %}
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="main-container content-section" id="section-classic-my-way">
+    <div class="header">
+      <h1 class="h3 mb-1">Classic My Way</h1>
+      <p class="mb-0">Upload your creative edit. Get the same idea with a higher finish — art kept intact.</p>
+    </div>
+    <div class="p-4">
+      <form data-station-form="classic-my-way" data-progress="Polishing your artwork..." enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Your artwork (required)</label>
+          <input type="file" class="form-control" name="artwork" accept="image/*" required data-cmw-source />
+        </div>
+        <button type="submit" class="convert-btn">Enhance artwork</button>
+        <div class="mt-3 cs-progress" style="display: none;">
+          <div class="progress">
+            <div class="progress-bar progress-bar-striped progress-bar-animated" style="width: 100%;"></div>
+          </div>
+          <p class="text-center mt-2 mb-0">Polishing your artwork...</p>
+        </div>
+        <div class="status-message cs-status"></div>
+        <div class="cmw-compare cs-result" style="display: none;">
+          <div class="cmw-compare-grid">
+            <div class="cmw-pane">
+              <div class="cmw-pane-label">
+                <span class="cmw-label-muted">YOUR VERSION</span>
+                <span class="cmw-label-note">Raw creative edit.</span>
+              </div>
+              <div class="cmw-frame">
+                <img class="cmw-original-image" alt="Your original artwork" />
+              </div>
+              <a class="cmw-btn cmw-btn-keep cs-keep-original" href="#" download>KEEP THIS VERSION <i class="fas fa-arrow-right ms-1"></i></a>
+            </div>
+            <div class="cmw-pane">
+              <div class="cmw-pane-label">
+                <span class="cmw-badge"><i class="fas fa-magic me-1"></i>AI ENHANCED</span>
+                <span class="cmw-label-note">Same idea. A higher finish.</span>
+              </div>
+              <div class="cmw-frame">
+                <img class="preview-image cs-result-image cmw-enhanced-image" alt="AI enhanced artwork" />
+              </div>
+              <a class="cmw-btn cmw-btn-use cs-download" href="#">USE AI VERSION <i class="fas fa-arrow-right ms-1"></i></a>
+            </div>
+          </div>
+          <p class="mb-0 mt-3 text-center cmw-result-message cs-result-message">Artwork enhanced successfully.</p>
+        </div>
       </form>
     </div>
   </div>

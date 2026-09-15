@@ -19,11 +19,18 @@ STATIONS = [
         "module": "make_art_yours",
     },
     {
+        "id": "classic-my-way",
+        "label": "Classic My Way",
+        "tagline": "Upload your edit. Get a higher finish.",
+        "module": "classic_my_way",
+    },
+    {
         "id": "selfie-becoming",
         "label": "Selfie Becoming",
         "tagline": "A line-art portrait that fades into being.",
         "module": "selfie_becoming",
     },
+
     {
         "id": "tracing-hand",
         "label": "Tracing Hand",

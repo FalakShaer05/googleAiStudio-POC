@@ -76,9 +76,42 @@
       submitBtn.textContent = "Generating...";
     } else if (form.dataset.hasResult === "1") {
       const stationId = form.getAttribute("data-station-form");
-      submitBtn.textContent = stationId === "audio-to-text" ? "Transcribe again" : "Generate again";
+      if (stationId === "audio-to-text") {
+        submitBtn.textContent = "Transcribe again";
+      } else if (stationId === "classic-my-way") {
+        submitBtn.textContent = "Enhance again";
+      } else {
+        submitBtn.textContent = "Generate again";
+      }
     } else {
       submitBtn.textContent = submitBtn.dataset.idleLabel || "Generate";
+    }
+  }
+
+  function revokeObjectUrl(url) {
+    if (url && String(url).startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function syncClassicMyWayOriginal(form) {
+    const source = form.querySelector("[data-cmw-source]");
+    const originalImg = form.querySelector(".cmw-original-image");
+    const keepLink = form.querySelector(".cs-keep-original");
+    if (!source || !originalImg) return;
+
+    const cached = fileCache(form)[source.name];
+    const file = (source.files && source.files[0]) || (cached && cached[0]);
+    if (!file) return;
+
+    revokeObjectUrl(originalImg.dataset.objectUrl);
+    const objectUrl = URL.createObjectURL(file);
+    originalImg.dataset.objectUrl = objectUrl;
+    originalImg.src = objectUrl;
+
+    if (keepLink) {
+      keepLink.href = objectUrl;
+      keepLink.setAttribute("download", file.name || "your-version.png");
     }
   }
 
@@ -153,6 +186,9 @@
           img.style.display = "";
           img.src = cacheBust(imageUrl);
         }
+        if (stationId === "classic-my-way") {
+          syncClassicMyWayOriginal(form);
+        }
       }
       if (download) {
         download.href = cfg.downloadPrefix + data.output_filename;
@@ -187,7 +223,12 @@
   document.querySelectorAll("form[data-station-form]").forEach((form) => {
     form.setAttribute("novalidate", "");
     form.querySelectorAll('input[type="file"]').forEach((input) => {
-      input.addEventListener("change", () => rememberFileInput(form, input));
+      input.addEventListener("change", () => {
+        rememberFileInput(form, input);
+        if (form.getAttribute("data-station-form") === "classic-my-way" && input.hasAttribute("data-cmw-source")) {
+          syncClassicMyWayOriginal(form);
+        }
+      });
     });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
