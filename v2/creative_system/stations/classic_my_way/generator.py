@@ -2,20 +2,24 @@ from ...shared.gemini import aspect_from_image, generate_composed_image, load_rg
 from .prompts import build_prompt
 
 
-def generate(output_path: str, artwork_path: str, **_kwargs):
+def generate(output_path: str, template_path: str, artwork_path: str, user_prompt: str, **_kwargs):
     return generate_composed_image(
         output_path=output_path,
-        prompt=build_prompt(),
+        prompt=build_prompt(user_prompt),
         role_images=[
             (
-                "SOURCE ARTWORK. Keep this exact creative idea and layout. "
-                "Aggressively finish rough edits with richer color, deeper shadows, "
-                "and clearer lighting so the enhancement is obvious at a glance.",
+                "ORIGINAL ART / TEMPLATE. Lock this orientation, framing, layout, proportions, "
+                "and every template element. Do not redesign or replace the template.",
+                load_rgb(template_path),
+            ),
+            (
+                "USER ART with additions placed on the template. Enhance per the user prompt "
+                "while preserving their text, drawings, colors, objects, and creative intent.",
                 load_rgb(artwork_path),
             ),
         ],
         style_target=None,
         aspect_ratio=aspect_from_image(artwork_path, fallback="3:4"),
-        temperature=0.5,
+        temperature=0.35,
         operation="art_generation:creative:classic-my-way",
     )

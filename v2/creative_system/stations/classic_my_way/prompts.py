@@ -1,33 +1,23 @@
-def build_prompt() -> str:
-    return """IMAGE 1 is the user's creative artwork — often a classic base with rough digital edits on top (flat brush strokes, doodles, stickers, soft overlays).
+def build_prompt(user_prompt: str) -> str:
+    return f"""IMAGE 1 is the ORIGINAL ART / TEMPLATE (blank / base design).
+IMAGE 2 is the USER ART image with their art placed on that template.
 
-Your job: a CLEARLY VISIBLE AI FINISHING PASS.
-The result must look obviously different from the input at a glance — same idea, richer color, deeper shadows, much higher finish.
+Use IMAGE 1 to understand and lock the template. Enhance IMAGE 2 only.
 
-WHAT “ENHANCE” MEANS HERE (do this aggressively):
-1. INTEGRATE rough edits into the artwork
-   - Turn flat / crude brush strokes, doodles, and overlays into intentional painted or photographic detail.
-   - Match lighting, shading, edges, and texture of the surrounding art so edits feel built-in, not pasted on.
-   - Add micro-detail: hair strands, fabric weave, skin pores / paint grain, soft contact shadows, specular highlights where natural.
-2. BOOST COLOR (must be noticeable)
-   - Enrich saturation and color depth so hues feel alive — especially accents the user added (eyebrows, hair streaks, props, graffiti, clothing).
-   - Clarify warm vs cool separation; lift muddy midtones into cleaner, more intentional color.
-   - Keep the same palette intent (same hue families), but make colors punchier and more refined than the input.
-3. STRENGTHEN LIGHT AND SHADOW (must be noticeable)
-   - Deepen shadows for clearer form and 3D volume; darken recessed areas without crushing to pure black.
-   - Brighten and shape key highlights so light direction reads clearly across face, fabric, hair, and edits.
-   - Add soft cast / contact shadows under and around integrated edits so they sit in the scene.
-   - Increase local contrast so the piece has a clear light-to-dark range vs the flatter input.
-4. UPGRADE image quality
-   - Sharper focus, richer depth, cleaner edges.
-   - Remove blur, mushiness, and compression noise.
-5. KEEP THE CREATIVE IDEA
-   - Same subjects, poses, framing, crop, and layout.
-   - Same edit intent (placements, props, text, graffiti) — finished with stronger color and shadow.
-   - Do not invent a new concept, costume, or scene.
+Enhance the user's artwork while strictly preserving the original template and creative intent.
+Do NOT change the template's orientation, size, aspect ratio, framing, layout, or proportions. Do NOT rotate, crop, stretch, replace, redesign, or remove any template elements.
+Preserve all user-created text, drawings, colors, objects, and elements. Do not change the wording or meaning of any text.
+Only refine the user's additions by improving:
 
-PRESERVE RULES:
-- Do NOT remove the user's creative additions; finish them.
-- Do NOT restyle into a different art movement or replace faces/identity.
-- Do NOT add unrelated objects, UI chrome, watermarks, or a before/after split.
-- Output ONE finished image only — gallery-ready, same idea, clearly richer in color and shadow than the input."""
+Placement, alignment, and spacing
+Line quality and shapes
+Color harmony, contrast, and vibrancy
+Overall balance and visual cohesion
+Cleanliness and print quality
+Make subtle, professional improvements while keeping the artwork clearly recognizable as the user's original creation.
+Enhance — do not redesign. The final result must have the exact same orientation, dimensions, and canvas boundaries as the original.
+
+USER PROMPT:
+{user_prompt.strip()}
+
+Follow the USER PROMPT for how to enhance, while still obeying all preserve rules above."""

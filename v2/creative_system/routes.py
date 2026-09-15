@@ -86,8 +86,12 @@ def _generate_impl():
                 return json_error("A prompt is required")
 
         elif station_id == "classic-my-way":
+            kwargs["template_path"] = save_named_upload("template", "cs_classic_template", required=True)
             kwargs["artwork_path"] = save_named_upload("artwork", "cs_classic_my_way", required=True)
-            temp_paths.append(kwargs["artwork_path"])
+            temp_paths.extend([kwargs["template_path"], kwargs["artwork_path"]])
+            kwargs["user_prompt"] = (request.form.get("prompt") or "").strip()
+            if not kwargs["user_prompt"]:
+                return json_error("A prompt is required")
 
         elif station_id == "selfie-becoming":
             kwargs["selfie_path"] = save_named_upload("selfie", "cs_selfie", required=True)

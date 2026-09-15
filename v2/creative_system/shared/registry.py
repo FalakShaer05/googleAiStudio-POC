@@ -21,7 +21,7 @@ STATIONS = [
     {
         "id": "classic-my-way",
         "label": "Classic My Way",
-        "tagline": "Upload your edit. Get a higher finish.",
+        "tagline": "Template + user art + prompt. Enhance the additions.",
         "module": "classic_my_way",
     },
     {
