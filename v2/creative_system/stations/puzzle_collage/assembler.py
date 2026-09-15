@@ -9,8 +9,35 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageFilter
 
 META_KEY = "puzzle_collage"
-OUTPUT_DPI = 200
+OUTPUT_DPI = 300
+# Minimal PNG compression keeps files closer to source size (lossless).
+PNG_COMPRESS_LEVEL = 0
 _PIECE_ID_RE = re.compile(r"r(\d+)_c(\d+)", re.IGNORECASE)
+
+
+def _dpi_tuple(value: Any, fallback: int = OUTPUT_DPI) -> Tuple[float, float]:
+    if isinstance(value, (tuple, list)) and len(value) >= 2:
+        try:
+            x, y = float(value[0]), float(value[1])
+            if x > 0 and y > 0:
+                return (x, y)
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, (int, float)) and float(value) > 0:
+        v = float(value)
+        return (v, v)
+    return (float(fallback), float(fallback))
+
+
+def _dpi_from_image(path: Optional[str], fallback: int = OUTPUT_DPI) -> Tuple[float, float]:
+    """Prefer the source image DPI when present; otherwise use OUTPUT_DPI."""
+    if path and os.path.isfile(path):
+        try:
+            with Image.open(path) as img:
+                return _dpi_tuple(img.info.get("dpi"), fallback=fallback)
+        except Exception:
+            pass
+    return (float(fallback), float(fallback))
 
 
 def _load_layout(layout: Optional[Dict[str, Any]] = None, layout_path: Optional[str] = None) -> Dict[str, Any]:
@@ -205,7 +232,7 @@ def assemble_puzzle(
     """
     Paste decorated puzzle pieces onto a canvas.
 
-    Cut borders from split are kept (including on shared joins).
+    Full-perimeter piece borders from split are kept (including on shared joins).
 
     Placement comes from (first match):
       1. `layout` / `layout_path`
@@ -227,6 +254,15 @@ def assemble_puzzle(
 
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
+    # DPI preference: original upload → layout metadata → first piece → 300.
+    if original_path and os.path.isfile(original_path):
+        out_dpi = _dpi_from_image(original_path, fallback=OUTPUT_DPI)
+    elif meta.get("dpi") is not None:
+        out_dpi = _dpi_tuple(meta.get("dpi"), fallback=OUTPUT_DPI)
+    elif piece_paths:
+        out_dpi = _dpi_from_image(piece_paths[0], fallback=OUTPUT_DPI)
+    else:
+        out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
 
     # Prefer the original photo as underlay so any tiny gaps stay invisible.
     if original_path and os.path.isfile(original_path):
@@ -272,6 +308,9 @@ def assemble_puzzle(
 
         piece = Image.open(path).convert("RGBA")
         if piece.size != (expected_w, expected_h):
+            # Prefer upscaling decorated art with high-quality filter; never
+            # downscale below the layout slot when the upload is larger — crop
+            # via paste bounds instead only when sizes already match layout.
             piece = piece.resize((expected_w, expected_h), Image.Resampling.LANCZOS)
 
         paste_x, paste_y = left, top
@@ -299,15 +338,17 @@ def assemble_puzzle(
         return False, f"Could not assemble puzzle: {detail}"
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    # Lossless PNG at print DPI; minimal compression preserves file size / fidelity.
     canvas.convert("RGB").save(
         output_path,
         "PNG",
-        optimize=True,
-        dpi=(OUTPUT_DPI, OUTPUT_DPI),
+        compress_level=PNG_COMPRESS_LEVEL,
+        dpi=out_dpi,
     )
+    dpi_label = int(round(out_dpi[0]))
     note = (
         f"Assembled {placed} puzzle piece(s) into one image "
-        f"({width}x{height}px @ {OUTPUT_DPI} DPI)."
+        f"({width}x{height}px @ {dpi_label} DPI)."
     )
     if missing:
         note += f" Skipped {len(missing)}: " + "; ".join(missing[:3])

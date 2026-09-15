@@ -23,23 +23,11 @@ TAB_HEAD_RADIUS_RATIO = 0.50  # of tab_size
 TAB_CENTER_OUT_RATIO = 0.40  # of tab_size; must be < head radius for neck undercut
 TAB_SHOULDER_RATIO = 0.055  # along-edge lead-in before the neck (smooth fillet)
 TAB_ARC_SAMPLES = 28
-# Thin die-cut stroke (kept light so bevel/swell stay visible).
-BORDER_WIDTH_PX = 1.6
-BORDER_COLOR = (0x2A, 0x2A, 0x2A)  # #2a2a2a
-# Cardboard swell / elevation (light from top-left).
-SWELL_STEPS = 10  # erosion cascade depth → soft dome height map
-SWELL_CENTER_LIFT = 0.14  # brighten toward piece center
-SWELL_EDGE_SETTLE = 0.22  # darken near the cut rim
-ELEVATION_RIM_PX = 6
-ELEVATION_HIGHLIGHT = 0.55  # white overlay on lit rim
-ELEVATION_SHADE = 0.62  # black overlay on shaded rim
-ELEVATION_OFFSET = 3  # px shift used to find lit vs shaded edges
-SPECULAR_STRENGTH = 0.18  # soft sheen across the swollen face
-DROP_SHADOW_OFFSET = (3, 5)
-DROP_SHADOW_BLUR = 4.0
-DROP_SHADOW_ALPHA = 140
-# Extra bbox pad: border + drop shadow offset/blur.
-PIECE_RENDER_PAD = 14
+# Solid outline around the entire piece silhouette (inward stroke).
+BORDER_WIDTH_PX = 3
+BORDER_COLOR = (0x1B, 0x1B, 0x1B)  # #1b1b1b
+# Padding so the crop does not clip anti-aliased edge pixels.
+PIECE_RENDER_PAD = 4
 
 
 Point = Tuple[float, float]
@@ -358,159 +346,32 @@ def _bbox_from_points(points: List[Point], pad: int = 2) -> Tuple[int, int, int,
     )
 
 
-def _shift_gray(img: Image.Image, dx: int, dy: int, fill: int = 0) -> Image.Image:
-    """Translate an L image; vacated area filled with `fill`."""
-    out = Image.new("L", img.size, fill)
-    out.paste(img, (dx, dy))
-    return out
-
-
-def _height_map(mask: Image.Image, steps: int) -> Image.Image:
+def _apply_piece_border(piece: Image.Image, mask: Image.Image, width_px: int) -> None:
     """
-    Soft distance-from-edge map (0 at rim → 255 toward interior).
+    Paint a solid inward border along the entire piece silhouette (in place).
 
-    Built by successive MinFilter erosions so the face reads as a gentle dome
-    — the classic cardboard “swell” on die-cut puzzle tiles.
+    The stroke sits on the piece content around the whole outline (tabs, blanks,
+    and outer edges) — not only as an outward cut-line ring.
+
+    Caller must leave empty margin around `mask` so MinFilter can erode every
+    side (pieces that touch the source image edge otherwise skip that side).
     """
-    steps = max(1, steps)
-    acc = Image.new("L", mask.size, 0)
-    eroded = mask
-    # Weight later (more interior) layers slightly higher for a rounder crown.
-    for i in range(steps):
-        eroded = eroded.filter(ImageFilter.MinFilter(3))
-        weight = int(round(255.0 * ((i + 1) / steps)))
-        layer = eroded.point(lambda p, w=weight: w if p > 0 else 0)
-        acc = ImageChops.lighter(acc, layer)
-    return ImageChops.multiply(acc, mask).filter(ImageFilter.GaussianBlur(1.6))
-
-
-def _composite_overlay(
-    piece: Image.Image,
-    alpha: Image.Image,
-    color: Tuple[int, int, int],
-) -> None:
-    """Alpha-composite a solid color overlay (alpha already premultiplied 0–255)."""
-    piece_alpha = piece.getchannel("A")
-    overlay_a = ImageChops.multiply(alpha, piece_alpha)
-    layer = Image.new("RGBA", piece.size, (*color, 0))
-    layer.putalpha(overlay_a)
-    piece.paste(Image.alpha_composite(piece, layer))
-
-
-def _apply_elevation(piece: Image.Image, mask: Image.Image) -> None:
-    """
-    In-place cardboard swell so the piece reads as a raised jigsaw tile.
-
-    Combines:
-      • pillow dome (center lifts, rim settles)
-      • directional rim bevel (NW highlight / SE shade)
-      • soft specular sheen across the swollen face
-    """
-    height = _height_map(mask, SWELL_STEPS)
-
-    # --- Pillow / swell across the face ---
-    # Brighten where height is high; darken a soft band near the rim.
-    center = height.point(
-        lambda p: min(255, int(p * SWELL_CENTER_LIFT))
-    )
-    rim_settle = ImageChops.invert(height)
-    rim_settle = ImageChops.multiply(rim_settle, mask).point(
-        lambda p: min(255, int(p * SWELL_EDGE_SETTLE))
-    )
-    _composite_overlay(piece, center, (255, 255, 255))
-    _composite_overlay(piece, rim_settle, (0, 0, 0))
-
-    # --- Directional bevel on the cut rim ---
-    eroded = mask
-    for _ in range(max(1, ELEVATION_RIM_PX)):
-        eroded = eroded.filter(ImageFilter.MinFilter(3))
-    rim = ImageChops.subtract(mask, eroded)
-
-    off = max(1, ELEVATION_OFFSET)
-    # Opaque here but empty up-left → facing the light.
-    highlight = ImageChops.multiply(
-        ImageChops.subtract(mask, _shift_gray(mask, off, off)),
-        rim,
-    )
-    # Opaque here but empty down-right → facing away from the light.
-    shade = ImageChops.multiply(
-        ImageChops.subtract(mask, _shift_gray(mask, -off, -off)),
-        rim,
-    )
-    highlight = highlight.filter(ImageFilter.GaussianBlur(1.2))
-    shade = shade.filter(ImageFilter.GaussianBlur(1.4))
-    highlight = ImageChops.multiply(highlight, mask)
-    shade = ImageChops.multiply(shade, mask)
-
-    _composite_overlay(
-        piece,
-        highlight.point(lambda p: min(255, int(p * ELEVATION_HIGHLIGHT))),
-        (255, 255, 255),
-    )
-    _composite_overlay(
-        piece,
-        shade.point(lambda p: min(255, int(p * ELEVATION_SHADE))),
-        (0, 0, 0),
-    )
-
-    # --- Soft specular sheen (printed cardboard catch-light) ---
-    if SPECULAR_STRENGTH > 0:
-        # Bias the height map toward the lit side with a shifted copy.
-        lit = ImageChops.subtract(height, _shift_gray(height, off, off))
-        lit = lit.filter(ImageFilter.GaussianBlur(2.5))
-        lit = ImageChops.multiply(lit, mask)
-        _composite_overlay(
-            piece,
-            lit.point(lambda p: min(255, int(p * SPECULAR_STRENGTH))),
-            (255, 255, 255),
-        )
-
-
-def _apply_drop_shadow(canvas: Image.Image, mask: Image.Image) -> Image.Image:
-    """
-    Soft drop shadow under the silhouette (elevated-tile cue on plain backgrounds).
-    Returns a new image with shadow behind the piece.
-    """
-    ox, oy = DROP_SHADOW_OFFSET
-    shadow = mask.filter(ImageFilter.GaussianBlur(DROP_SHADOW_BLUR))
-    shadow = _shift_gray(shadow, ox, oy)
-    shadow = shadow.point(lambda p: min(255, int(p * (DROP_SHADOW_ALPHA / 255.0))))
-    # Don't draw shadow where the piece body already covers it.
-    shadow = ImageChops.subtract(shadow, mask)
-
-    out = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    shade = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    shade.putalpha(shadow)
-    out = Image.alpha_composite(out, shade)
-    out = Image.alpha_composite(out, canvas)
-    return out
-
-
-def _apply_cut_border(piece: Image.Image, mask: Image.Image, width_px: float) -> None:
-    """
-    Paint a ~width_px border along the piece silhouette (in place).
-
-    Floor(width) is a solid outward ring; the fractional part is a soft-alpha
-    outer ring. Kept thin so the swell bevel stays readable.
-    """
+    width_px = max(0, int(round(width_px)))
     if width_px <= 0:
         return
 
-    edge = ImageChops.subtract(mask, mask.filter(ImageFilter.MinFilter(3)))
-    full_px = max(1, int(math.floor(width_px)))
-    expanded = mask.filter(ImageFilter.MaxFilter(full_px * 2 + 1))
-    solid = ImageChops.lighter(edge, ImageChops.subtract(expanded, mask))
+    eroded = mask
+    for _ in range(width_px):
+        eroded = eroded.filter(ImageFilter.MinFilter(3))
+    ring = ImageChops.subtract(mask, eroded)
+    if ring.getbbox() is None:
+        return
 
     r, g, b = BORDER_COLOR
-    ink = Image.new("RGBA", piece.size, (r, g, b, 255))
-    piece.paste(ink, (0, 0), mask=solid)
-
-    frac = width_px - math.floor(width_px)
-    if frac > 0.01:
-        outer = mask.filter(ImageFilter.MaxFilter((full_px + 1) * 2 + 1))
-        soft_ring = ImageChops.subtract(outer, expanded)
-        soft = Image.new("RGBA", piece.size, (r, g, b, int(round(255 * frac))))
-        piece.paste(soft, (0, 0), mask=soft_ring)
+    # Alpha-composite so border ink reliably replaces art on every rim pixel.
+    ink = Image.new("RGBA", piece.size, (r, g, b, 0))
+    ink.putalpha(ring)
+    piece.alpha_composite(ink)
 
 
 def _render_piece(
@@ -518,31 +379,47 @@ def _render_piece(
     polygon: List[Point],
     bbox: Tuple[int, int, int, int],
 ) -> Image.Image:
-    """Mask the piece and return a raised RGBA crop (swell + border + soft shadow)."""
+    """Mask the piece and return an RGBA crop with a full-perimeter border."""
     width, height = source.size
     left, top, right, bottom = bbox
-    clamp_l = max(0, left)
-    clamp_t = max(0, top)
-    clamp_r = min(width, right)
-    clamp_b = min(height, bottom)
 
-    mask = Image.new("L", (width, height), 0)
+    # Pad the working buffer so edge-of-image pieces (row/col 0 or last) still
+    # get a full inward border — MinFilter cannot erode a silhouette that sits
+    # flush against the bitmap boundary.
+    work_pad = BORDER_WIDTH_PX + 2
+    work_w = width + 2 * work_pad
+    work_h = height + 2 * work_pad
+
+    mask = Image.new("L", (work_w, work_h), 0)
     draw = ImageDraw.Draw(mask)
-    int_poly = [(int(round(px)), int(round(py))) for px, py in polygon]
+    int_poly = [
+        (int(round(px)) + work_pad, int(round(py)) + work_pad) for px, py in polygon
+    ]
     draw.polygon(int_poly, fill=255)
 
-    piece_full = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    piece_full.paste(source, (0, 0), mask=mask)
-    # Border first, then elevation so NW/SE light catches the cut edge itself.
-    _apply_cut_border(piece_full, mask, BORDER_WIDTH_PX)
-    _apply_elevation(piece_full, mask)
-    piece_full = _apply_drop_shadow(piece_full, mask)
+    piece_full = Image.new("RGBA", (work_w, work_h), (0, 0, 0, 0))
+    piece_full.paste(source, (work_pad, work_pad))
+    # Clear outside the silhouette.
+    clear = Image.new("RGBA", (work_w, work_h), (0, 0, 0, 0))
+    piece_full = Image.composite(piece_full, clear, mask)
+    _apply_piece_border(piece_full, mask, BORDER_WIDTH_PX)
+
+    # Map the requested source-space bbox into the padded working image.
+    work_l = left + work_pad
+    work_t = top + work_pad
+    work_r = right + work_pad
+    work_b = bottom + work_pad
+
+    clamp_l = max(0, work_l)
+    clamp_t = max(0, work_t)
+    clamp_r = min(work_w, work_r)
+    clamp_b = min(work_h, work_b)
 
     crop_w = max(1, right - left)
     crop_h = max(1, bottom - top)
     canvas = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
     src_crop = piece_full.crop((clamp_l, clamp_t, clamp_r, clamp_b))
-    canvas.paste(src_crop, (clamp_l - left, clamp_t - top), src_crop)
+    canvas.paste(src_crop, (clamp_l - work_l, clamp_t - work_t), src_crop)
     return canvas
 
 
@@ -556,9 +433,22 @@ def split_puzzle(
     Cut `image_path` into interlocking jigsaw pieces and assign 3–6 per participant.
     """
     rng = random.Random(seed)
-    source = Image.open(image_path).convert("RGBA")
+    with Image.open(image_path) as opened:
+        source_dpi = opened.info.get("dpi")
+        source = opened.convert("RGBA")
     width, height = source.size
     rows, cols, assignment = _plan_assignment(participants, rng, width, height)
+
+    save_dpi: Optional[Tuple[float, float]] = None
+    if isinstance(source_dpi, (tuple, list)) and len(source_dpi) >= 2:
+        x, y = float(source_dpi[0]), float(source_dpi[1])
+        if x > 0 and y > 0:
+            save_dpi = (x, y)
+    elif isinstance(source_dpi, (int, float)) and float(source_dpi) > 0:
+        v = float(source_dpi)
+        save_dpi = (v, v)
+    if save_dpi is None:
+        save_dpi = (300.0, 300.0)
 
     cell_w = width / cols
     cell_h = height / rows
@@ -571,7 +461,7 @@ def split_puzzle(
     for index, person in enumerate(assignment):
         row, col = divmod(index, cols)
         polygon = _piece_polygon(row, col, cell_w, cell_h, tab_size, tabs, rows, cols)
-        # Pad for border ring + drop shadow blur/offset.
+        # Pad so anti-aliased edges are not clipped by the crop.
         bbox = _bbox_from_points(polygon, pad=PIECE_RENDER_PAD)
         piece_crop = _render_piece(source, polygon, bbox)
 
@@ -594,7 +484,7 @@ def split_puzzle(
 
         filename = f"cs_puzzle_piece_p{person}_{piece_id}_{uuid.uuid4().hex}.png"
         out_path = os.path.join(output_dir, filename)
-        piece_crop.save(out_path, "PNG", pnginfo=pnginfo)
+        piece_crop.save(out_path, "PNG", pnginfo=pnginfo, dpi=save_dpi, compress_level=0)
 
         pieces_meta.append(
             {
@@ -622,6 +512,7 @@ def split_puzzle(
         "cols": cols,
         "width": width,
         "height": height,
+        "dpi": [save_dpi[0], save_dpi[1]],
         "cell_w": cell_w,
         "cell_h": cell_h,
         "tab_size": tab_size,
