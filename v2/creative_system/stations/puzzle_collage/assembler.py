@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageFilter
 
 META_KEY = "puzzle_collage"
+OUTPUT_DPI = 200
 _PIECE_ID_RE = re.compile(r"r(\d+)_c(\d+)", re.IGNORECASE)
 
 
@@ -202,7 +203,9 @@ def assemble_puzzle(
     piece_ids: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
     """
-    Paste decorated puzzle pieces onto a canvas without visible seam lines.
+    Paste decorated puzzle pieces onto a canvas.
+
+    Cut borders from split are kept (including on shared joins).
 
     Placement comes from (first match):
       1. `layout` / `layout_path`
@@ -271,9 +274,6 @@ def assemble_puzzle(
         if piece.size != (expected_w, expected_h):
             piece = piece.resize((expected_w, expected_h), Image.Resampling.LANCZOS)
 
-        piece = _strip_dark_seam_outline(piece)
-        piece = _expand_piece_for_seams(piece, radius=2)
-
         paste_x, paste_y = left, top
         src_l = src_t = 0
         src_r, src_b = piece.size
@@ -299,8 +299,16 @@ def assemble_puzzle(
         return False, f"Could not assemble puzzle: {detail}"
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    canvas.convert("RGB").save(output_path, "PNG")
-    note = f"Assembled {placed} puzzle piece(s) into one image."
+    canvas.convert("RGB").save(
+        output_path,
+        "PNG",
+        optimize=True,
+        dpi=(OUTPUT_DPI, OUTPUT_DPI),
+    )
+    note = (
+        f"Assembled {placed} puzzle piece(s) into one image "
+        f"({width}x{height}px @ {OUTPUT_DPI} DPI)."
+    )
     if missing:
         note += f" Skipped {len(missing)}: " + "; ".join(missing[:3])
     return True, note
