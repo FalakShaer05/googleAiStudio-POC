@@ -12,6 +12,9 @@ META_KEY = "puzzle_collage"
 OUTPUT_DPI = 300
 # Minimal PNG compression keeps files closer to source size (lossless).
 PNG_COMPRESS_LEVEL = 0
+# Must match splitter.BORDER_* so assemble can undo the decorative stroke.
+BORDER_WIDTH_PX = 3
+BORDER_COLOR = (0x1B, 0x1B, 0x1B)
 _PIECE_ID_RE = re.compile(r"r(\d+)_c(\d+)", re.IGNORECASE)
 
 
@@ -130,6 +133,39 @@ def _infer_piece_id(filename: str, piece_ids: Optional[List[str]], index: int) -
     return None
 
 
+def _strip_split_border(piece: Image.Image, width_px: int = BORDER_WIDTH_PX) -> Image.Image:
+    """
+    Drop the decorative outward stroke by eroding the silhouette.
+
+    Split paints the rim outside the exclusive photo pixels, so shrinking
+    alpha by the border width restores the unique tile that tessellates
+    back into the original image.
+    """
+    piece = piece.convert("RGBA")
+    width_px = max(0, int(width_px))
+    if width_px <= 0:
+        return piece
+    alpha = piece.getchannel("A")
+    eroded = alpha
+    for _ in range(width_px):
+        eroded = eroded.filter(ImageFilter.MinFilter(3))
+    piece.putalpha(eroded)
+
+    # MaxFilter/MinFilter are not perfect inverses at corners — any leftover
+    # stroke is exactly BORDER_COLOR and would otherwise show as a dark seam.
+    pixels = piece.load()
+    width, height = piece.size
+    tr, tg, tb = BORDER_COLOR
+    for y in range(height):
+        for x in range(width):
+            r, g, b, a = pixels[x, y]
+            if a < 8:
+                continue
+            if r == tr and g == tg and b == tb:
+                pixels[x, y] = (0, 0, 0, 0)
+    return piece
+
+
 def _strip_dark_seam_outline(piece: Image.Image) -> Image.Image:
     """
     Remove dark fringe pixels along the transparent boundary.
@@ -232,7 +268,8 @@ def assemble_puzzle(
     """
     Paste decorated puzzle pieces onto a canvas.
 
-    Full-perimeter piece borders from split are kept (including on shared joins).
+    Decorative split-time borders are stripped so exclusive pieces tessellate
+    back into the original photo (plus any art drawn on the pieces).
 
     Placement comes from (first match):
       1. `layout` / `layout_path`
@@ -307,6 +344,8 @@ def assemble_puzzle(
         expected_h = max(1, bottom - top)
 
         piece = Image.open(path).convert("RGBA")
+        border_px = int(meta.get("border_px") or info.get("border_px") or BORDER_WIDTH_PX)
+        piece = _strip_split_border(piece, width_px=border_px)
         if piece.size != (expected_w, expected_h):
             # Prefer upscaling decorated art with high-quality filter; never
             # downscale below the layout slot when the upload is larger — crop
