@@ -347,6 +347,24 @@
     const layoutField = form.querySelector(".puzzle-layout-json");
     if (!result || !groups) return;
 
+    const lineartBox = form.querySelector(".puzzle-lineart-preview");
+    const lineartImg = form.querySelector(".puzzle-lineart-image");
+    const lineartLink = form.querySelector(".puzzle-lineart-download");
+    if (lineartBox && lineartImg) {
+      const lineSrc = data.line_art_image_url || data.line_art_local_path
+        || (data.line_art_filename ? cfg.downloadPrefix + data.line_art_filename : "");
+      if (lineSrc) {
+        lineartImg.src = cacheBust(lineSrc);
+        if (lineartLink && data.line_art_filename) {
+          lineartLink.href = cfg.downloadPrefix + data.line_art_filename;
+          lineartLink.download = data.line_art_filename;
+        }
+        lineartBox.style.display = "block";
+      } else {
+        lineartBox.style.display = "none";
+      }
+    }
+
     const byPerson = {};
     (data.pieces || []).forEach((piece) => {
       const key = String(piece.person);

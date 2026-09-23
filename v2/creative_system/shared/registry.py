@@ -77,7 +77,7 @@ STATIONS = [
     {
         "id": "puzzle-collage",
         "label": "Puzzle Collage",
-        "tagline": "Split an image into jigsaw pieces, then reassemble the art.",
+        "tagline": "Turn a photo into fillable line-art pieces, then reassemble the art.",
         "module": "puzzle_collage",
         "kind": "puzzle",
     },

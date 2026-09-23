@@ -26,7 +26,7 @@ from .shared.io import (
 from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
 from .stations.content_filter import classify_content
-from .stations.puzzle_collage import assemble_puzzle, split_puzzle
+from .stations.puzzle_collage import assemble_puzzle, render_coloring_page, split_puzzle
 
 
 def _page_context():
@@ -335,12 +335,20 @@ def _puzzle_split_impl():
         seed_raw = (request.form.get("seed") or "").strip()
         seed = int(seed_raw) if seed_raw else None
 
+        line_filename = generate_unique_filename("creative.png", "cs_puzzle_lineart")
+        line_art_path = os.path.join(output_folder(), line_filename)
+        ok, line_message = render_coloring_page(image_path, line_art_path)
+        if not ok:
+            return json_error(line_message or "Could not convert the photo to line art")
+
         result = split_puzzle(
-            image_path=image_path,
+            image_path=line_art_path,
             participants=participants,
             output_dir=output_folder(),
             seed=seed,
         )
+        result["layout"]["line_art"] = True
+        result["layout"]["line_art_filename"] = line_filename
 
         pieces_payload = []
         for piece in result["pieces"]:
@@ -364,7 +372,8 @@ def _puzzle_split_impl():
             {
                 "success": True,
                 "message": (
-                    f"Split into {result['total_pieces']} pieces for "
+                    f"Converted to a coloring-book page and split into "
+                    f"{result['total_pieces']} pieces for "
                     f"{participants} participant(s)."
                 ),
                 "participants": participants,
@@ -376,6 +385,9 @@ def _puzzle_split_impl():
                 "layout": result["layout"],
                 "layout_filename": result["layout_filename"],
                 "layout_local_path": result["layout_local_path"],
+                "line_art_filename": line_filename,
+                "line_art_local_path": f"/outputs/{line_filename}",
+                "line_art_image_url": upload_image_to_s3(line_art_path) or None,
             }
         )
     except ValueError as exc:
@@ -528,7 +540,7 @@ def puzzle_assemble():
 @require_api_key
 def api_puzzle_split():
     """
-    Split an image into jigsaw pieces assigned to participants.
+    Convert an image to a coloring-book line-art page, then split it into jigsaw pieces.
     ---
     tags:
       - Creative System
