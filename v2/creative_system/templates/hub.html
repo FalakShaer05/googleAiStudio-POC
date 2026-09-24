@@ -554,11 +554,15 @@
               id="puzzle-participants"
               name="participants"
               min="1"
-              max="40"
+              max="5"
               value="2"
               required
             />
-            <div class="form-text">The photo is traced as fillable line art on a white page, then cut into a uniform grid. Each person randomly gets <strong>3–6</strong> unique pieces to color; together they reconstruct the page.</div>
+            <div class="form-text">
+              1–5 people. One person gets the <strong>whole page</strong> as 4–6 pieces;
+              more people get more, smaller unique pieces (3–6 each). Together they
+              reconstruct the full image with no duplicates.
+            </div>
           </div>
           <button type="submit" class="convert-btn">Split into puzzle pieces</button>
           <div class="mt-3 cs-progress" style="display: none;">
@@ -598,7 +602,9 @@
             <label class="form-label fw-bold" for="puzzle-assemble-pieces">Decorated puzzle pieces</label>
             <input class="form-control" type="file" id="puzzle-assemble-pieces" name="pieces" accept="image/*" multiple required />
             <div class="form-text">
-              Prefer the PNGs from Split (they store placement metadata). Filenames like <code>r0_c1</code> also help.
+              Prefer the PNGs from Split (they store placement metadata). Upload the
+              <strong>complete unique set</strong> from one split — missing or duplicate
+              cells will be rejected. Filenames like <code>r0_c1</code> also help.
             </div>
           </div>
           <div class="mb-3">

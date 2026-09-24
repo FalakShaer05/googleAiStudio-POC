@@ -405,7 +405,8 @@
           img.alt = piece.piece_id;
           img.src = cacheBust(piece.image_url || piece.local_path || (cfg.downloadPrefix + piece.output_filename));
           const label = document.createElement("span");
-          label.textContent = piece.piece_id;
+          const num = piece.piece_number != null ? "#" + piece.piece_number + " · " : "";
+          label.textContent = num + piece.piece_id;
           const link = document.createElement("a");
           link.href = cfg.downloadPrefix + piece.output_filename;
           link.download = piece.output_filename;
@@ -429,8 +430,9 @@
       summary.textContent =
         (data.message || "") +
         " Grid " + data.rows + "×" + data.cols +
+        " · " + (data.total_pieces || "") + " unique pieces" +
         (perText ? " · " + perText : "") +
-        ". Copy the layout JSON before assembling.";
+        ". Assemble needs every piece from this split (no duplicates).";
     }
     lastPuzzleLayout = data.layout || null;
     if (layoutField) {
@@ -439,6 +441,10 @@
     const assembleLayout = document.getElementById("puzzle-assemble-layout");
     if (assembleLayout && lastPuzzleLayout) {
       assembleLayout.value = JSON.stringify(lastPuzzleLayout, null, 2);
+    }
+    const assembleLayoutFile = document.getElementById("puzzle-assemble-layout-filename");
+    if (assembleLayoutFile && data.layout_filename) {
+      assembleLayoutFile.value = data.layout_filename;
     }
     result.style.display = "block";
   }

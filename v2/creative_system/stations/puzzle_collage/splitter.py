@@ -11,14 +11,24 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 from PIL.PngImagePlugin import PngInfo
 
+from .line_art import SPLIT_LONG_EDGE, to_pure_line_art
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore
+
 META_KEY = "puzzle_collage"
 
-
+# Station rules: 1–5 people; each gets 3–6 unique pieces covering the full image.
+MAX_PARTICIPANTS = 5
 MIN_PIECES_PER_PERSON = 3
 MAX_PIECES_PER_PERSON = 6
-# Print-quality floor (matches line_art / assembler).
-TARGET_LONG_EDGE = 3840
+# Split at moderate res for API speed; assemble upscales to 4K.
+TARGET_LONG_EDGE = SPLIT_LONG_EDGE
 OUTPUT_DPI = (300.0, 300.0)
+PNG_COMPRESS_LEVEL = 1
+
 # Knob size relative to the shorter cell side — classic die-cut proportion.
 TAB_SIZE_RATIO = 0.26
 # How circular the knob head is (1.0 = pure circle). Mild undercut via center offset.
@@ -155,37 +165,43 @@ def _plan_assignment(
     img_h: int,
 ) -> Tuple[int, int, List[int]]:
     """
-    Pick a piece total (and per-person counts in [3, 6]) so the grid cells
-    are as square as possible — avoids long strip / ribbon pieces.
+    Cover the full image with a near-square grid of unique pieces.
 
-    Prefer totals divisible by `participants` so everyone gets the same
-    piece count when a valid equal grid exists.
+    - 1 participant: whole image split into 4–6 pieces (2D grid; no 1×N strips).
+    - More participants: more total pieces (up to 6 each) so tiles get smaller.
+    - Participants capped at MAX_PARTICIPANTS; equal counts when possible.
     """
     if participants < 1:
         raise ValueError("participants must be at least 1")
+    if participants > MAX_PARTICIPANTS:
+        raise ValueError(
+            f"participants cannot exceed {MAX_PARTICIPANTS} for Puzzle Collage"
+        )
 
     lo = MIN_PIECES_PER_PERSON * participants
     hi = MAX_PIECES_PER_PERSON * participants
+    # One person: never use a 3-piece strip — need a real 2D cover of the page.
+    if participants == 1:
+        lo = max(lo, 4)
 
     def _candidate(total: int) -> Optional[Tuple[float, int, int, int]]:
         rows, cols = _choose_grid(total, img_w, img_h)
         if rows * cols != total:
             return None
-        # Never fall back to a 1×N strip, or a 2×2 that covers the
-        # whole photo for 2+ people (that looks like "only 4 pieces").
-        if min(rows, cols) < 2 and total >= 4:
-            return None
-        if participants >= 2 and total < lo:
+        # Full-image cover must be a real grid, not a ribbon of giant pieces.
+        if min(rows, cols) < 2:
             return None
         score = _cell_aspect_score(rows, cols, img_w, img_h)
         score += rng.random() * 0.02
-        # Strongly prefer equal piece counts across participants.
-        if total % participants != 0:
-            score += 10.0
+        # Prefer more pieces (smaller tiles), especially as participant count rises.
+        score += (hi - total) * 0.08
         return (score, total, rows, cols)
 
-    best: Optional[Tuple[float, int, int, int]] = None  # score, total, rows, cols
-    for total in range(lo, hi + 1):
+    best: Optional[Tuple[float, int, int, int]] = None
+    # Equal counts first; scan high→low so we lock onto smaller tiles when tied.
+    for total in range(hi, lo - 1, -1):
+        if total % participants != 0:
+            continue
         cand = _candidate(total)
         if cand is None:
             continue
@@ -193,12 +209,13 @@ def _plan_assignment(
             best = cand
 
     if best is None:
-        # Last resort: smallest 2D grid inside [lo, hi].
-        for total in range(lo, hi + 1):
-            rows, cols = _choose_grid(total, img_w, img_h)
-            if rows * cols == total and min(rows, cols) >= 2:
-                best = (0.0, total, rows, cols)
-                break
+        for total in range(hi, lo - 1, -1):
+            cand = _candidate(total)
+            if cand is None:
+                continue
+            if best is None or cand[0] < best[0]:
+                best = cand
+
     if best is None:
         raise ValueError(
             f"cannot build a unique {lo}–{hi} piece grid for {participants} participant(s)"
@@ -207,10 +224,14 @@ def _plan_assignment(
     _, total, rows, cols = best
     if total < lo or rows * cols != total:
         raise RuntimeError("planned grid does not cover the image with unique pieces")
+    if min(rows, cols) < 2:
+        raise RuntimeError("grid must be at least 2×2 so the whole image is covered")
     counts = _distribute_counts(participants, total, rng)
 
     assert _counts_in_range(counts)
     assert rows * cols == sum(counts) == total
+    if total % participants == 0 and len(set(counts)) != 1:
+        raise RuntimeError("equal grid must give every participant the same piece count")
 
     # One owner per unique grid cell — never reuse a piece across people.
     assignment: List[int] = []
@@ -508,23 +529,28 @@ def _claim_tabs(
     they move from the neighbor's cell owner to `piece_idx`. Cell-body pixels
     stay with the cell owner until a neighbor claims them as a tab.
     """
-    mask = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(mask)
-    draw.polygon(
-        [(int(round(px)), int(round(py))) for px, py in polygon],
-        fill=255,
-    )
     left, top, right, bottom = _bbox_from_points(polygon, pad=2)
     left = max(0, left)
     top = max(0, top)
     right = min(width, right)
     bottom = min(height, bottom)
+    if right <= left or bottom <= top:
+        return
+
+    # Local mask only (full-image masks at 2K+ are far too slow per piece).
+    mw, mh = right - left, bottom - top
+    mask = Image.new("L", (mw, mh), 0)
+    ImageDraw.Draw(mask).polygon(
+        [(int(round(px)) - left, int(round(py)) - top) for px, py in polygon],
+        fill=255,
+    )
     cx0, cy0, cx1, cy1 = cell
     pixels = mask.load()
     for y in range(top, bottom):
         row = y * width
+        ly = y - top
         for x in range(left, right):
-            if pixels[x, y] < 128:
+            if pixels[x - left, ly] < 128:
                 continue
             if cx0 <= x < cx1 and cy0 <= y < cy1:
                 continue
@@ -582,33 +608,83 @@ def _render_exclusive_piece(
     work_h = crop_h + 2 * work_pad
     mask = Image.new("L", (work_w, work_h), 0)
     piece = Image.new("RGBA", (work_w, work_h), (0, 0, 0, 0))
-    src_px = source.load()
-    mp = mask.load()
-    pp = piece.load()
 
     x0 = max(0, left)
     y0 = max(0, top)
     x1 = min(width, right)
     y1 = min(height, bottom)
-    for y in range(y0, y1):
-        row = y * width
-        cy = y - top + work_pad
-        for x in range(x0, x1):
-            if labels[row + x] != piece_idx:
-                continue
-            cx = x - left + work_pad
-            mp[cx, cy] = 255
-            pp[cx, cy] = src_px[x, y]
+
+    if np is not None and x1 > x0 and y1 > y0:
+        label_arr = np.frombuffer(labels, dtype=np.uint8).reshape(height, width)
+        region = label_arr[y0:y1, x0:x1]
+        hit = region == piece_idx
+        if hit.any():
+            src_arr = np.array(source, dtype=np.uint8, copy=False)
+            src_region = src_arr[y0:y1, x0:x1]
+            piece_arr = np.array(piece, dtype=np.uint8, copy=True)
+            mask_arr = np.array(mask, dtype=np.uint8, copy=True)
+            dy = y0 - top + work_pad
+            dx = x0 - left + work_pad
+            dest = piece_arr[dy : dy + (y1 - y0), dx : dx + (x1 - x0)]
+            dest_m = mask_arr[dy : dy + (y1 - y0), dx : dx + (x1 - x0)]
+            dest[hit] = src_region[hit]
+            dest_m[hit] = 255
+            piece = Image.fromarray(piece_arr, mode="RGBA")
+            mask = Image.fromarray(mask_arr, mode="L")
+    else:
+        src_px = source.load()
+        mp = mask.load()
+        pp = piece.load()
+        for y in range(y0, y1):
+            row = y * width
+            cy = y - top + work_pad
+            for x in range(x0, x1):
+                if labels[row + x] != piece_idx:
+                    continue
+                cx = x - left + work_pad
+                mp[cx, cy] = 255
+                pp[cx, cy] = src_px[x, y]
 
     _apply_piece_border(piece, mask, BORDER_WIDTH_PX)
     return piece.crop((work_pad, work_pad, work_pad + crop_w, work_pad + crop_h))
 
 
+def _verify_exclusive_labels(
+    labels: bytearray,
+    width: int,
+    height: int,
+    piece_count: int,
+) -> None:
+    """Every pixel must belong to exactly one piece in 1..piece_count."""
+    expected = set(range(1, piece_count + 1))
+    if np is not None:
+        arr = np.frombuffer(labels, dtype=np.uint8)
+        if arr.min() < 1 or arr.max() > piece_count:
+            raise RuntimeError(
+                f"split label out of range ({int(arr.min())}–{int(arr.max())}); "
+                "pieces would be incomplete"
+            )
+        seen = set(int(v) for v in np.unique(arr))
+    else:
+        seen = set()
+        for value in labels:
+            if value < 1 or value > piece_count:
+                raise RuntimeError(
+                    f"split label out of range ({value}); pieces would be incomplete"
+                )
+            seen.add(value)
+    if seen != expected:
+        missing = sorted(expected - seen)
+        raise RuntimeError(
+            f"split missed piece index(es) {missing[:8]}; pieces would be incomplete"
+        )
+
+
 def _ensure_print_resolution(source: Image.Image) -> Image.Image:
-    """Upscale so the long edge is at least TARGET_LONG_EDGE (LANCZOS)."""
+    """Downscale only when larger than TARGET_LONG_EDGE (keeps split fast)."""
     width, height = source.size
     long_edge = max(width, height)
-    if long_edge <= 0 or long_edge >= TARGET_LONG_EDGE:
+    if long_edge <= 0 or long_edge <= TARGET_LONG_EDGE:
         return source
     scale = TARGET_LONG_EDGE / float(long_edge)
     new_size = (
@@ -616,6 +692,62 @@ def _ensure_print_resolution(source: Image.Image) -> Image.Image:
         max(1, int(round(height * scale))),
     )
     return source.resize(new_size, Image.Resampling.LANCZOS)
+
+
+def piece_silhouette_mask(
+    layout: Dict[str, Any],
+    piece_id: str,
+    size: Tuple[int, int],
+) -> Optional[Image.Image]:
+    """
+    Rebuild the jigsaw silhouette for `piece_id` as an L mask matching `size`.
+
+    Used at assemble time to punch out photo backgrounds that appear inside
+    blank (innie) holes when decorated pieces are re-photographed.
+    """
+    rows = int(layout.get("rows") or 0)
+    cols = int(layout.get("cols") or 0)
+    xs = layout.get("xs")
+    ys = layout.get("ys")
+    tabs = layout.get("tabs")
+    tab_size = float(layout.get("tab_size") or 0)
+    pieces = layout.get("pieces") or []
+    if rows < 1 or cols < 1 or not xs or not ys or not tabs or tab_size <= 0:
+        return None
+
+    info = None
+    for item in pieces:
+        if str(item.get("piece_id") or "").strip().lower() == piece_id.lower():
+            info = item
+            break
+    if not info:
+        return None
+
+    row = int(info.get("row", -1))
+    col = int(info.get("col", -1))
+    bbox = info.get("bbox") or {}
+    if row < 0 or col < 0:
+        return None
+
+    try:
+        xs_i = [int(v) for v in xs]
+        ys_i = [int(v) for v in ys]
+        tabs_i = {str(k): int(v) for k, v in tabs.items()}
+    except (TypeError, ValueError):
+        return None
+
+    h_edges, v_edges = _build_shared_edges(rows, cols, xs_i, ys_i, tabs_i, tab_size)
+    polygon = _piece_polygon(row, col, xs_i, ys_i, h_edges, v_edges, rows, cols)
+    left = int(bbox.get("left", 0))
+    top = int(bbox.get("top", 0))
+    local = [(px - left, py - top) for px, py in polygon]
+    mask = Image.new("L", size, 0)
+    if len(local) >= 3:
+        ImageDraw.Draw(mask).polygon(
+            [(int(round(px)), int(round(py))) for px, py in local],
+            fill=255,
+        )
+    return mask
 
 
 def split_puzzle(
@@ -632,9 +764,12 @@ def split_puzzle(
     original image when assembled.
     """
     rng = random.Random(seed)
+    split_id = uuid.uuid4().hex
     with Image.open(image_path) as opened:
-        source = opened.convert("RGBA")
-    source = _ensure_print_resolution(source)
+        source = opened.convert("RGB")
+    # Safety net: force pure B&W even if line-art step left tints.
+    source = to_pure_line_art(source)
+    source = _ensure_print_resolution(source).convert("RGBA")
     width, height = source.size
     rows, cols, assignment = _plan_assignment(participants, rng, width, height)
     if len(assignment) != rows * cols:
@@ -667,24 +802,26 @@ def split_puzzle(
     h_edges, v_edges = _build_shared_edges(rows, cols, xs, ys, tabs, tab_size)
 
     labels = _init_cell_labels(width, height, rows, cols, xs, ys)
-    polygons: List[List[Point]] = []
     cells: List[Tuple[int, int, int, int]] = []
     for index in range(rows * cols):
         row, col = divmod(index, cols)
         polygon = _piece_polygon(row, col, xs, ys, h_edges, v_edges, rows, cols)
         cell = (xs[col], ys[row], xs[col + 1], ys[row + 1])
-        polygons.append(polygon)
         cells.append(cell)
         _claim_tabs(labels, width, height, index + 1, polygon, cell)
+
+    _verify_exclusive_labels(labels, width, height, rows * cols)
 
     pieces_meta: List[Dict[str, Any]] = []
     os.makedirs(output_dir, exist_ok=True)
     seen_ids: set[str] = set()
     seen_cells: set[Tuple[int, int]] = set()
+    seen_persons: Dict[int, List[str]] = {}
 
     for index, person in enumerate(assignment):
         row, col = divmod(index, cols)
         piece_id = f"r{row}_c{col}"
+        piece_number = index + 1  # stable 1..N in row-major grid order
         if piece_id in seen_ids or (row, col) in seen_cells:
             raise RuntimeError(f"duplicate piece generated for {piece_id}")
         seen_ids.add(piece_id)
@@ -705,10 +842,12 @@ def split_puzzle(
 
         piece_meta = {
             "piece_id": piece_id,
+            "piece_number": piece_number,
             "person": person,
             "row": row,
             "col": col,
             "index": index,
+            "split_id": split_id,
             "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
             "width": width,
             "height": height,
@@ -718,13 +857,24 @@ def split_puzzle(
         pnginfo = PngInfo()
         pnginfo.add_text(META_KEY, json.dumps(piece_meta))
 
-        filename = f"cs_puzzle_piece_p{person}_{piece_id}_{uuid.uuid4().hex}.png"
+        filename = (
+            f"cs_puzzle_piece_p{person}_n{piece_number:02d}_{piece_id}_"
+            f"{uuid.uuid4().hex}.png"
+        )
         out_path = os.path.join(output_dir, filename)
-        piece_crop.save(out_path, "PNG", pnginfo=pnginfo, dpi=save_dpi, compress_level=0)
+        piece_crop.save(
+            out_path,
+            "PNG",
+            pnginfo=pnginfo,
+            dpi=save_dpi,
+            compress_level=PNG_COMPRESS_LEVEL,
+        )
 
+        seen_persons.setdefault(person, []).append(piece_id)
         pieces_meta.append(
             {
                 "piece_id": piece_id,
+                "piece_number": piece_number,
                 "person": person,
                 "person_tag": f"person {person}",
                 "row": row,
@@ -744,6 +894,13 @@ def split_puzzle(
 
     if len(seen_ids) != rows * cols:
         raise RuntimeError("split did not produce one unique piece per grid cell")
+    if len(pieces_meta) != rows * cols:
+        raise RuntimeError("piece list does not match grid size")
+    if len(seen_persons) != participants:
+        raise RuntimeError("not every participant received unique pieces")
+    for person, ids in seen_persons.items():
+        if len(ids) != len(set(ids)):
+            raise RuntimeError(f"person {person} received duplicate piece ids")
     if len(pieces_meta) < MIN_PIECES_PER_PERSON * participants:
         raise RuntimeError(
             f"split produced {len(pieces_meta)} pieces for {participants} "
@@ -751,7 +908,8 @@ def split_puzzle(
         )
 
     layout = {
-        "version": 3,
+        "version": 4,
+        "split_id": split_id,
         "rows": rows,
         "cols": cols,
         "width": width,
@@ -768,9 +926,11 @@ def split_puzzle(
         "partition": "exclusive",
         "border_px": BORDER_WIDTH_PX,
         "participants": participants,
+        "total_pieces": len(pieces_meta),
         "pieces": [
             {
                 "piece_id": p["piece_id"],
+                "piece_number": p["piece_number"],
                 "person": p["person"],
                 "row": p["row"],
                 "col": p["col"],
@@ -795,6 +955,7 @@ def split_puzzle(
         "rows": rows,
         "cols": cols,
         "total_pieces": len(pieces_meta),
+        "split_id": split_id,
         "pieces_per_person": {str(k): len(v) for k, v in sorted(by_person.items())},
         "pieces": pieces_meta,
         "layout": layout,
