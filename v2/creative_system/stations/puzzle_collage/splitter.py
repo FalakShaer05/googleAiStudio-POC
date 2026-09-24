@@ -164,14 +164,34 @@ def _plan_assignment(
     best: Optional[Tuple[float, int, int, int]] = None  # score, total, rows, cols
     for total in range(lo, hi + 1):
         rows, cols = _choose_grid(total, img_w, img_h)
+        if rows * cols != total:
+            continue
+        # Never fall back to a 1×N strip, or a 2×2 that covers the
+        # whole photo for 2+ people (that looks like "only 4 pieces").
+        if min(rows, cols) < 2 and total >= 4:
+            continue
+        if participants >= 2 and total < lo:
+            continue
         score = _cell_aspect_score(rows, cols, img_w, img_h)
-        # Tiny jitter so ties don't always pick the smallest total.
         score += rng.random() * 0.02
         if best is None or score < best[0]:
             best = (score, total, rows, cols)
 
-    assert best is not None
+    if best is None:
+        # Last resort: smallest 2D grid inside [lo, hi].
+        for total in range(lo, hi + 1):
+            rows, cols = _choose_grid(total, img_w, img_h)
+            if rows * cols == total and min(rows, cols) >= 2:
+                best = (0.0, total, rows, cols)
+                break
+    if best is None:
+        raise ValueError(
+            f"cannot build a unique {lo}–{hi} piece grid for {participants} participant(s)"
+        )
+
     _, total, rows, cols = best
+    if total < lo or rows * cols != total:
+        raise RuntimeError("planned grid does not cover the image with unique pieces")
     counts = _distribute_counts(participants, total, rng)
 
     assert _counts_in_range(counts)
@@ -701,6 +721,11 @@ def split_puzzle(
 
     if len(seen_ids) != rows * cols:
         raise RuntimeError("split did not produce one unique piece per grid cell")
+    if len(pieces_meta) < MIN_PIECES_PER_PERSON * participants:
+        raise RuntimeError(
+            f"split produced {len(pieces_meta)} pieces for {participants} "
+            f"participant(s); need at least {MIN_PIECES_PER_PERSON * participants}"
+        )
 
     layout = {
         "version": 3,

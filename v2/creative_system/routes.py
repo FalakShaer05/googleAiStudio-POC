@@ -93,7 +93,7 @@ def _generate_impl():
             if not kwargs["user_prompt"]:
                 return json_error("A prompt is required")
 
-        elif station_id == "selfie-becoming":
+        elif station_id in {"selfie-becoming", "me-remix"}:
             kwargs["selfie_path"] = save_named_upload("selfie", "cs_selfie", required=True)
             temp_paths.append(kwargs["selfie_path"])
 
@@ -297,7 +297,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, classic-my-way, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
+        description: holding-hands, make-art-yours, classic-my-way, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
     responses:
       200:
         description: Artwork generated

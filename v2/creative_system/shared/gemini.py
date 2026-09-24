@@ -839,6 +839,8 @@ def generate_composed_image(
     obscure_style_radius: Optional[int] = None,
     trailing_instruction: Optional[str] = None,
     clip_to_stencil: Optional[Image.Image] = None,
+    image_size: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Send prompt + labeled images + optional style target to Gemini and save PNG.
@@ -879,11 +881,12 @@ def generate_composed_image(
         seed = (generate_seed_from_prompt(normalized) ^ random.randint(1, 2**31 - 1)) % (2**31)
         response = _generate_content_image(
             client=client,
-            model=get_gemini_image_model(),
+            model=model or get_gemini_image_model(),
             contents=contents,
             seed=seed,
             temperature=temperature,
             aspect_ratio=aspect_ratio,
+            image_size=image_size,
             operation=operation,
         )
         img = _extract_final_image_from_response(response)

@@ -133,6 +133,19 @@ def _infer_piece_id(filename: str, piece_ids: Optional[List[str]], index: int) -
     return None
 
 
+def _restore_piece_opacity(piece: Image.Image) -> Image.Image:
+    """
+    Split pieces are exported at 30% opacity as a coloring guide.
+    Assemble lifts visible pixels back to full opacity so decorations
+    and cut borders read clearly on the joined page.
+    """
+    piece = piece.convert("RGBA")
+    alpha = piece.getchannel("A")
+    solid = alpha.point(lambda p: 255 if p >= 1 else 0)
+    piece.putalpha(solid)
+    return piece
+
+
 def _strip_split_border(piece: Image.Image, width_px: int = BORDER_WIDTH_PX) -> Image.Image:
     """
     Drop the decorative outward stroke by eroding the silhouette.
@@ -268,8 +281,9 @@ def assemble_puzzle(
     """
     Paste decorated puzzle pieces onto a canvas.
 
-    Decorative split-time borders are stripped so exclusive pieces tessellate
-    back into the original photo (plus any art drawn on the pieces).
+    Split-time cut borders stay visible so the jigsaw seams persist.
+    The original photo is never used as a fill — that hid the cuts and
+    made a 2×2 of the source look like the whole puzzle.
 
     Placement comes from (first match):
       1. `layout` / `layout_path`
@@ -301,18 +315,15 @@ def assemble_puzzle(
     else:
         out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
 
-    # Prefer the original photo as underlay so any tiny gaps stay invisible.
-    if original_path and os.path.isfile(original_path):
-        base = Image.open(original_path).convert("RGBA")
-        if width <= 0 or height <= 0:
-            width, height = base.size
-        elif base.size != (width, height):
-            base = base.resize((width, height), Image.Resampling.LANCZOS)
-        canvas = base
-    else:
-        if width <= 0 or height <= 0:
+    # White canvas only. Using the original photo as an underlay made a
+    # 2×2 of the source show through 30% pieces and erased the cut lines.
+    if width <= 0 or height <= 0:
+        if original_path and os.path.isfile(original_path):
+            with Image.open(original_path) as base:
+                width, height = base.size
+        else:
             return False, "Layout is missing canvas size"
-        canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
 
     if not piece_paths:
         return False, "At least one puzzle piece image is required"
@@ -344,8 +355,7 @@ def assemble_puzzle(
         expected_h = max(1, bottom - top)
 
         piece = Image.open(path).convert("RGBA")
-        border_px = int(meta.get("border_px") or info.get("border_px") or BORDER_WIDTH_PX)
-        piece = _strip_split_border(piece, width_px=border_px)
+        piece = _restore_piece_opacity(piece)
         if piece.size != (expected_w, expected_h):
             # Prefer upscaling decorated art with high-quality filter; never
             # downscale below the layout slot when the upload is larger — crop

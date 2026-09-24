@@ -176,17 +176,41 @@
   <div class="main-container content-section" id="section-selfie-becoming">
     <div class="header">
       <h1 class="h3 mb-1">Selfie Becoming</h1>
-      <p class="mb-0">Upload a selfie. Gemini converts it to a fading line-art portrait on a transparent background.</p>
+      <p class="mb-0">Upload a selfie. Get a vertical split on white: full-color cutout on the left, light pencil sketch on the right.</p>
     </div>
     <div class="p-4">
-      <form data-station-form="selfie-becoming" enctype="multipart/form-data">
-        <div class="mb-3">
-          <label class="form-label fw-bold">Selfie (required)</label>
-          <input type="file" class="form-control" name="selfie" accept="image/*" required />
-        </div>
-        <button type="submit" class="convert-btn">Generate</button>
-        {% include "partials/form_result.html" %}
-      </form>
+      <ul class="nav nav-pills mb-4 puzzle-subtabs selfie-subtabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link active" data-selfie-panel="becoming">Selfie Becoming</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button type="button" class="nav-link" data-selfie-panel="remix">Me Remix</button>
+        </li>
+      </ul>
+
+      <div data-selfie-view="becoming">
+        <p class="text-muted small mb-3">Background removed. Half realistic color cutout, half light pencil sketch — joined at the center of the face.</p>
+        <form data-station-form="selfie-becoming" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Selfie (required)</label>
+            <input type="file" class="form-control" name="selfie" accept="image/*" required />
+          </div>
+          <button type="submit" class="convert-btn">Generate</button>
+          {% include "partials/form_result.html" %}
+        </form>
+      </div>
+
+      <div data-selfie-view="remix" style="display: none;">
+        <p class="text-muted small mb-3">Remix your selfie into the same half-photo cutout / half pencil-sketch look on white.</p>
+        <form data-station-form="me-remix" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label class="form-label fw-bold">Selfie (required)</label>
+            <input type="file" class="form-control" name="selfie" accept="image/*" required />
+          </div>
+          <button type="submit" class="convert-btn">Generate</button>
+          {% include "partials/form_result.html" %}
+        </form>
+      </div>
     </div>
   </div>
 </div>
@@ -568,7 +592,7 @@
           <div class="mb-3">
             <label class="form-label fw-bold" for="puzzle-assemble-original">Original image (optional)</label>
             <input class="form-control" type="file" id="puzzle-assemble-original" name="original" accept="image/*" />
-            <div class="form-text">Optional underlay. Prefer the coloring-book page from split if you have it.</div>
+            <div class="form-text">Used only for canvas size if layout is missing. The original photo is not drawn under the pieces, so jigsaw cuts stay visible.</div>
           </div>
           <div class="mb-3">
             <label class="form-label fw-bold" for="puzzle-assemble-pieces">Decorated puzzle pieces</label>

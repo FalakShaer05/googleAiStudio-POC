@@ -323,6 +323,21 @@
     });
   });
 
+  // --- Selfie Becoming / Me Remix subtabs ---
+  document.querySelectorAll("[data-selfie-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panel = button.getAttribute("data-selfie-panel");
+      const section = button.closest("#section-selfie-becoming");
+      if (!section) return;
+      section.querySelectorAll("[data-selfie-panel]").forEach((btn) => {
+        btn.classList.toggle("active", btn === button);
+      });
+      section.querySelectorAll("[data-selfie-view]").forEach((view) => {
+        view.style.display = view.getAttribute("data-selfie-view") === panel ? "block" : "none";
+      });
+    });
+  });
+
   // --- Puzzle Collage ---
   let lastPuzzleLayout = null;
 
