@@ -6,16 +6,33 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageFilter
+from PIL import Image, ImageChops, ImageFilter
+
+from .splitter import piece_silhouette_mask
 
 META_KEY = "puzzle_collage"
 OUTPUT_DPI = 300
+TARGET_LONG_EDGE = 3840
 # Minimal PNG compression keeps files closer to source size (lossless).
 PNG_COMPRESS_LEVEL = 0
 # Must match splitter.BORDER_* so assemble can undo the decorative stroke.
 BORDER_WIDTH_PX = 3
 BORDER_COLOR = (0x1B, 0x1B, 0x1B)
 _PIECE_ID_RE = re.compile(r"r(\d+)_c(\d+)", re.IGNORECASE)
+
+
+def _ensure_print_resolution(img: Image.Image, long_edge: int = TARGET_LONG_EDGE) -> Image.Image:
+    """Upscale so the long edge is at least `long_edge` (LANCZOS)."""
+    width, height = img.size
+    current = max(width, height)
+    if current <= 0 or current >= long_edge:
+        return img
+    scale = long_edge / float(current)
+    new_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+    return img.resize(new_size, Image.Resampling.LANCZOS)
 
 
 def _dpi_tuple(value: Any, fallback: int = OUTPUT_DPI) -> Tuple[float, float]:
@@ -131,6 +148,19 @@ def _infer_piece_id(filename: str, piece_ids: Optional[List[str]], index: int) -
     if match:
         return f"r{match.group(1)}_c{match.group(2)}"
     return None
+
+
+def _restore_piece_opacity(piece: Image.Image) -> Image.Image:
+    """
+    Split pieces are exported at 30% opacity as a coloring guide.
+    Assemble lifts visible pixels back to full opacity so decorations
+    and cut borders read clearly on the joined page.
+    """
+    piece = piece.convert("RGBA")
+    alpha = piece.getchannel("A")
+    solid = alpha.point(lambda p: 255 if p >= 1 else 0)
+    piece.putalpha(solid)
+    return piece
 
 
 def _strip_split_border(piece: Image.Image, width_px: int = BORDER_WIDTH_PX) -> Image.Image:
@@ -257,6 +287,27 @@ def _expand_piece_for_seams(piece: Image.Image, radius: int = 2) -> Image.Image:
     return out
 
 
+def _apply_silhouette_mask(
+    piece: Image.Image,
+    layout: Dict[str, Any],
+    piece_id: str,
+) -> Image.Image:
+    """
+    Restrict the upload to the true jigsaw silhouette from layout.
+
+    Clears photo backgrounds that show through blank (innie) holes when
+    decorated pieces are re-photographed — those looked like colored circles
+    at seams after assemble.
+    """
+    mask = piece_silhouette_mask(layout, piece_id, piece.size)
+    if mask is None:
+        return piece
+    out = piece.convert("RGBA")
+    combined = ImageChops.darker(out.getchannel("A"), mask)
+    out.putalpha(combined)
+    return out
+
+
 def assemble_puzzle(
     piece_paths: List[str],
     output_path: str,
@@ -268,12 +319,15 @@ def assemble_puzzle(
     """
     Paste decorated puzzle pieces onto a canvas.
 
-    Decorative split-time borders are stripped so exclusive pieces tessellate
-    back into the original photo (plus any art drawn on the pieces).
+    Requires the complete unique set from one split (no duplicates, no
+    missing cells, no mixed split_ids). Silhouettes are remasked from layout
+    so photo backgrounds in blank holes cannot leak color into the join.
 
     Placement comes from (first match):
       1. `layout` / `layout_path`
       2. PNG metadata embedded in the piece files at split time
+
+    Output is always tagged 300 DPI and upscaled to >=4K long edge when needed.
     """
     if layout is None and not layout_path:
         layout = _layout_from_pieces(piece_paths, piece_ids=piece_ids)
@@ -291,34 +345,34 @@ def assemble_puzzle(
 
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
-    # DPI preference: original upload → layout metadata → first piece → 300.
-    if original_path and os.path.isfile(original_path):
-        out_dpi = _dpi_from_image(original_path, fallback=OUTPUT_DPI)
-    elif meta.get("dpi") is not None:
-        out_dpi = _dpi_tuple(meta.get("dpi"), fallback=OUTPUT_DPI)
-    elif piece_paths:
-        out_dpi = _dpi_from_image(piece_paths[0], fallback=OUTPUT_DPI)
-    else:
-        out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
+    out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
+    layout_split_id = str(meta.get("split_id") or "").strip()
 
-    # Prefer the original photo as underlay so any tiny gaps stay invisible.
-    if original_path and os.path.isfile(original_path):
-        base = Image.open(original_path).convert("RGBA")
-        if width <= 0 or height <= 0:
-            width, height = base.size
-        elif base.size != (width, height):
-            base = base.resize((width, height), Image.Resampling.LANCZOS)
-        canvas = base
-    else:
-        if width <= 0 or height <= 0:
+    if width <= 0 or height <= 0:
+        if original_path and os.path.isfile(original_path):
+            with Image.open(original_path) as base:
+                width, height = base.size
+        else:
             return False, "Layout is missing canvas size"
-        canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+    canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
 
     if not piece_paths:
         return False, "At least one puzzle piece image is required"
 
+    expected_ids = {
+        str(item.get("piece_id") or "").strip()
+        for item in (meta.get("pieces") or [])
+        if str(item.get("piece_id") or "").strip()
+    }
+    if not expected_ids:
+        return False, "Layout has no piece ids"
+
+    placed_ids: set[str] = set()
     placed = 0
     missing: List[str] = []
+    duplicates: List[str] = []
+    split_ids_seen: set[str] = set()
+
     for index, path in enumerate(piece_paths):
         if not path or not os.path.isfile(path):
             missing.append(f"missing file at index {index}")
@@ -327,9 +381,18 @@ def assemble_puzzle(
         if not piece_id:
             missing.append(f"could not determine piece_id for {os.path.basename(path)}")
             continue
+        if piece_id.lower() in {p.lower() for p in placed_ids}:
+            duplicates.append(piece_id)
+            continue
+
+        file_meta = _read_piece_meta(path)
+        if file_meta:
+            sid = str(file_meta.get("split_id") or "").strip()
+            if sid:
+                split_ids_seen.add(sid)
+
         info = lookup.get(piece_id) or lookup.get(piece_id.lower())
         if not info:
-            file_meta = _read_piece_meta(path)
             if file_meta and file_meta.get("bbox"):
                 info = file_meta
             else:
@@ -344,13 +407,14 @@ def assemble_puzzle(
         expected_h = max(1, bottom - top)
 
         piece = Image.open(path).convert("RGBA")
-        border_px = int(meta.get("border_px") or info.get("border_px") or BORDER_WIDTH_PX)
-        piece = _strip_split_border(piece, width_px=border_px)
+        piece = _restore_piece_opacity(piece)
         if piece.size != (expected_w, expected_h):
-            # Prefer upscaling decorated art with high-quality filter; never
-            # downscale below the layout slot when the upload is larger — crop
-            # via paste bounds instead only when sizes already match layout.
             piece = piece.resize((expected_w, expected_h), Image.Resampling.LANCZOS)
+
+        # Punch silhouette so blanks stay empty (no photo-bg color circles).
+        piece = _apply_silhouette_mask(piece, meta, piece_id)
+        # Drop decorative split stroke so exclusive tiles tessellate cleanly.
+        piece = _strip_split_border(piece, BORDER_WIDTH_PX)
 
         paste_x, paste_y = left, top
         src_l = src_t = 0
@@ -370,14 +434,46 @@ def assemble_puzzle(
             continue
         clipped = piece.crop((src_l, src_t, src_r, src_b))
         canvas.alpha_composite(clipped, dest=(paste_x, paste_y))
+        placed_ids.add(piece_id)
         placed += 1
+
+    if duplicates:
+        uniq = ", ".join(sorted(set(duplicates))[:5])
+        return False, f"Duplicate piece_id(s) uploaded: {uniq}. Each cell may appear only once."
+
+    if len(split_ids_seen) > 1:
+        return (
+            False,
+            "Pieces come from different splits. Upload pieces from a single Split run "
+            "with that run's layout so the image is complete and not scrambled.",
+        )
+    if layout_split_id and split_ids_seen and layout_split_id not in split_ids_seen:
+        return (
+            False,
+            "Uploaded pieces do not match this layout's split_id. Use the layout JSON "
+            "from the same Split that created the pieces.",
+        )
 
     if placed == 0:
         detail = "; ".join(missing[:5]) if missing else "no pieces placed"
         return False, f"Could not assemble puzzle: {detail}"
 
+    placed_norm = {p.lower() for p in placed_ids}
+    absent = sorted(pid for pid in expected_ids if pid.lower() not in placed_norm)
+    if absent:
+        return (
+            False,
+            f"Incomplete puzzle: {len(absent)} of {len(expected_ids)} unique pieces "
+            f"missing ({', '.join(absent[:8])}"
+            + ("…" if len(absent) > 8 else "")
+            + "). Upload every piece from the split — no extras, no duplicates.",
+        )
+
+    # Upscale older/low-res layouts so assembled art meets 4K long edge.
+    canvas = _ensure_print_resolution(canvas)
+    out_w, out_h = canvas.size
+
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    # Lossless PNG at print DPI; minimal compression preserves file size / fidelity.
     canvas.convert("RGB").save(
         output_path,
         "PNG",
@@ -386,8 +482,8 @@ def assemble_puzzle(
     )
     dpi_label = int(round(out_dpi[0]))
     note = (
-        f"Assembled {placed} puzzle piece(s) into one image "
-        f"({width}x{height}px @ {dpi_label} DPI)."
+        f"Assembled complete puzzle ({placed}/{len(expected_ids)} unique pieces) "
+        f"into one image ({out_w}x{out_h}px @ {dpi_label} DPI)."
     )
     if missing:
         note += f" Skipped {len(missing)}: " + "; ".join(missing[:3])

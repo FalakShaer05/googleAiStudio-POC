@@ -27,10 +27,15 @@ STATIONS = [
     {
         "id": "selfie-becoming",
         "label": "Selfie Becoming",
-        "tagline": "A line-art portrait that fades into being.",
+        "tagline": "Half photo, half light line art — a portrait becoming a sketch.",
         "module": "selfie_becoming",
     },
-
+    {
+        "id": "me-remix",
+        "label": "Me Remix",
+        "tagline": "Your selfie remixed: color photo meets light line art.",
+        "module": "me_remix",
+    },
     {
         "id": "tracing-hand",
         "label": "Tracing Hand",

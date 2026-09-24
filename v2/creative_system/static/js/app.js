@@ -323,6 +323,21 @@
     });
   });
 
+  // --- Selfie Becoming / Me Remix subtabs ---
+  document.querySelectorAll("[data-selfie-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const panel = button.getAttribute("data-selfie-panel");
+      const section = button.closest("#section-selfie-becoming");
+      if (!section) return;
+      section.querySelectorAll("[data-selfie-panel]").forEach((btn) => {
+        btn.classList.toggle("active", btn === button);
+      });
+      section.querySelectorAll("[data-selfie-view]").forEach((view) => {
+        view.style.display = view.getAttribute("data-selfie-view") === panel ? "block" : "none";
+      });
+    });
+  });
+
   // --- Puzzle Collage ---
   let lastPuzzleLayout = null;
 
@@ -390,7 +405,8 @@
           img.alt = piece.piece_id;
           img.src = cacheBust(piece.image_url || piece.local_path || (cfg.downloadPrefix + piece.output_filename));
           const label = document.createElement("span");
-          label.textContent = piece.piece_id;
+          const num = piece.piece_number != null ? "#" + piece.piece_number + " · " : "";
+          label.textContent = num + piece.piece_id;
           const link = document.createElement("a");
           link.href = cfg.downloadPrefix + piece.output_filename;
           link.download = piece.output_filename;
@@ -414,8 +430,9 @@
       summary.textContent =
         (data.message || "") +
         " Grid " + data.rows + "×" + data.cols +
+        " · " + (data.total_pieces || "") + " unique pieces" +
         (perText ? " · " + perText : "") +
-        ". Copy the layout JSON before assembling.";
+        ". Assemble needs every piece from this split (no duplicates).";
     }
     lastPuzzleLayout = data.layout || null;
     if (layoutField) {
@@ -424,6 +441,10 @@
     const assembleLayout = document.getElementById("puzzle-assemble-layout");
     if (assembleLayout && lastPuzzleLayout) {
       assembleLayout.value = JSON.stringify(lastPuzzleLayout, null, 2);
+    }
+    const assembleLayoutFile = document.getElementById("puzzle-assemble-layout-filename");
+    if (assembleLayoutFile && data.layout_filename) {
+      assembleLayoutFile.value = data.layout_filename;
     }
     result.style.display = "block";
   }

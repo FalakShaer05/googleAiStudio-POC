@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import jsonify, render_template, request
 
@@ -93,7 +94,7 @@ def _generate_impl():
             if not kwargs["user_prompt"]:
                 return json_error("A prompt is required")
 
-        elif station_id == "selfie-becoming":
+        elif station_id in {"selfie-becoming", "me-remix"}:
             kwargs["selfie_path"] = save_named_upload("selfie", "cs_selfie", required=True)
             temp_paths.append(kwargs["selfie_path"])
 
@@ -297,7 +298,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, classic-my-way, selfie-becoming, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
+        description: holding-hands, make-art-yours, classic-my-way, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
     responses:
       200:
         description: Artwork generated
@@ -321,8 +322,8 @@ def _parse_participants() -> int:
         raise ValueError("participants must be an integer") from exc
     if value < 1:
         raise ValueError("participants must be at least 1")
-    if value > 40:
-        raise ValueError("participants cannot exceed 40 for this POC")
+    if value > 5:
+        raise ValueError("participants must be between 1 and 5")
     return value
 
 
@@ -351,9 +352,11 @@ def _puzzle_split_impl():
         result["layout"]["line_art_filename"] = line_filename
 
         pieces_payload = []
+        upload_jobs: list[tuple[dict, str]] = []
         for piece in result["pieces"]:
             item = {
                 "piece_id": piece["piece_id"],
+                "piece_number": piece.get("piece_number"),
                 "person": piece["person"],
                 "person_tag": piece["person_tag"],
                 "row": piece["row"],
@@ -363,23 +366,34 @@ def _puzzle_split_impl():
                 "output_filename": piece["output_filename"],
                 "local_path": piece["local_path"],
             }
-            cloudfront_url = upload_image_to_s3(piece["abs_path"])
+            pieces_payload.append(item)
+            upload_jobs.append((item, piece["abs_path"]))
+
+        # Parallel S3 uploads — sequential uploads dominated wall time after Gemini.
+        def _upload_one(job: tuple[dict, str]) -> None:
+            item, abs_path = job
+            cloudfront_url = upload_image_to_s3(abs_path)
             if cloudfront_url:
                 item["image_url"] = cloudfront_url
-            pieces_payload.append(item)
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(upload_jobs)))) as pool:
+            list(pool.map(_upload_one, upload_jobs))
+            line_art_url = upload_image_to_s3(line_art_path) or None
 
         return jsonify(
             {
                 "success": True,
                 "message": (
                     f"Converted to a coloring-book page and split into "
-                    f"{result['total_pieces']} pieces for "
-                    f"{participants} participant(s)."
+                    f"{result['total_pieces']} unique pieces for "
+                    f"{participants} participant(s) "
+                    f"({result['rows']}×{result['cols']} grid)."
                 ),
                 "participants": participants,
                 "rows": result["rows"],
                 "cols": result["cols"],
                 "total_pieces": result["total_pieces"],
+                "split_id": result.get("split_id"),
                 "pieces_per_person": result["pieces_per_person"],
                 "pieces": pieces_payload,
                 "layout": result["layout"],
@@ -387,7 +401,7 @@ def _puzzle_split_impl():
                 "layout_local_path": result["layout_local_path"],
                 "line_art_filename": line_filename,
                 "line_art_local_path": f"/outputs/{line_filename}",
-                "line_art_image_url": upload_image_to_s3(line_art_path) or None,
+                "line_art_image_url": line_art_url,
             }
         )
     except ValueError as exc:
@@ -558,7 +572,7 @@ def api_puzzle_split():
         name: participants
         type: integer
         required: true
-        description: Number of people (each gets 3-6 pieces)
+        description: Number of people (1–5). One person gets the full page as 4–6 pieces; more people get more, smaller unique pieces (3–6 each).
     responses:
       200:
         description: Pieces tagged by person plus layout JSON for assemble
