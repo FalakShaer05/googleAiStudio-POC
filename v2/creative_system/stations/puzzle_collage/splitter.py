@@ -16,6 +16,9 @@ META_KEY = "puzzle_collage"
 
 MIN_PIECES_PER_PERSON = 3
 MAX_PIECES_PER_PERSON = 6
+# Print-quality floor (matches line_art / assembler).
+TARGET_LONG_EDGE = 3840
+OUTPUT_DPI = (300.0, 300.0)
 # Knob size relative to the shorter cell side — classic die-cut proportion.
 TAB_SIZE_RATIO = 0.26
 # How circular the knob head is (1.0 = pure circle). Mild undercut via center offset.
@@ -154,6 +157,9 @@ def _plan_assignment(
     """
     Pick a piece total (and per-person counts in [3, 6]) so the grid cells
     are as square as possible — avoids long strip / ribbon pieces.
+
+    Prefer totals divisible by `participants` so everyone gets the same
+    piece count when a valid equal grid exists.
     """
     if participants < 1:
         raise ValueError("participants must be at least 1")
@@ -161,21 +167,30 @@ def _plan_assignment(
     lo = MIN_PIECES_PER_PERSON * participants
     hi = MAX_PIECES_PER_PERSON * participants
 
-    best: Optional[Tuple[float, int, int, int]] = None  # score, total, rows, cols
-    for total in range(lo, hi + 1):
+    def _candidate(total: int) -> Optional[Tuple[float, int, int, int]]:
         rows, cols = _choose_grid(total, img_w, img_h)
         if rows * cols != total:
-            continue
+            return None
         # Never fall back to a 1×N strip, or a 2×2 that covers the
         # whole photo for 2+ people (that looks like "only 4 pieces").
         if min(rows, cols) < 2 and total >= 4:
-            continue
+            return None
         if participants >= 2 and total < lo:
-            continue
+            return None
         score = _cell_aspect_score(rows, cols, img_w, img_h)
         score += rng.random() * 0.02
-        if best is None or score < best[0]:
-            best = (score, total, rows, cols)
+        # Strongly prefer equal piece counts across participants.
+        if total % participants != 0:
+            score += 10.0
+        return (score, total, rows, cols)
+
+    best: Optional[Tuple[float, int, int, int]] = None  # score, total, rows, cols
+    for total in range(lo, hi + 1):
+        cand = _candidate(total)
+        if cand is None:
+            continue
+        if best is None or cand[0] < best[0]:
+            best = cand
 
     if best is None:
         # Last resort: smallest 2D grid inside [lo, hi].
@@ -203,6 +218,8 @@ def _plan_assignment(
         assignment.extend([person_idx] * count)
     if len(assignment) != rows * cols:
         raise RuntimeError("assignment length must equal unique grid cells")
+    if len(set(assignment)) != participants:
+        raise RuntimeError("every participant must receive at least one unique piece")
     rng.shuffle(assignment)
     return rows, cols, assignment
 
@@ -587,6 +604,20 @@ def _render_exclusive_piece(
     return piece.crop((work_pad, work_pad, work_pad + crop_w, work_pad + crop_h))
 
 
+def _ensure_print_resolution(source: Image.Image) -> Image.Image:
+    """Upscale so the long edge is at least TARGET_LONG_EDGE (LANCZOS)."""
+    width, height = source.size
+    long_edge = max(width, height)
+    if long_edge <= 0 or long_edge >= TARGET_LONG_EDGE:
+        return source
+    scale = TARGET_LONG_EDGE / float(long_edge)
+    new_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+    return source.resize(new_size, Image.Resampling.LANCZOS)
+
+
 def split_puzzle(
     image_path: str,
     participants: int,
@@ -602,23 +633,15 @@ def split_puzzle(
     """
     rng = random.Random(seed)
     with Image.open(image_path) as opened:
-        source_dpi = opened.info.get("dpi")
         source = opened.convert("RGBA")
+    source = _ensure_print_resolution(source)
     width, height = source.size
     rows, cols, assignment = _plan_assignment(participants, rng, width, height)
     if len(assignment) != rows * cols:
         raise RuntimeError("planned assignment does not cover the grid")
 
-    save_dpi: Optional[Tuple[float, float]] = None
-    if isinstance(source_dpi, (tuple, list)) and len(source_dpi) >= 2:
-        x, y = float(source_dpi[0]), float(source_dpi[1])
-        if x > 0 and y > 0:
-            save_dpi = (x, y)
-    elif isinstance(source_dpi, (int, float)) and float(source_dpi) > 0:
-        v = float(source_dpi)
-        save_dpi = (v, v)
-    if save_dpi is None:
-        save_dpi = (300.0, 300.0)
+    # Always tag print DPI; pixel size is already >=4K long edge above.
+    save_dpi = OUTPUT_DPI
 
     xs = _partition_bounds(width, cols)
     ys = _partition_bounds(height, rows)

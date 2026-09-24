@@ -11,7 +11,8 @@ def build_prompt() -> str:
 ART EFFECT — fillable line art:
 - Clean dark ink contour lines only (fine-liner / pen-and-ink).
 - Every area that was colored in the photo becomes an EMPTY region the user can color in.
-- No photographic color, no grayscale shading, no hatching fills, no gray wash.
+- Pure black ink on pure white only — zero color, zero tint, zero halftone dots.
+- No photographic color, no blue/cyan screen tones, no yellow flecks, no grayscale shading, no hatching fills, no gray wash.
 - Lines stay complete on every side — do not fade, dissolve, or drop out.
 - Keep the same composition, subjects, objects, and crop so the page is recognizable.
 

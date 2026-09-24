@@ -10,12 +10,27 @@ from PIL import Image, ImageFilter
 
 META_KEY = "puzzle_collage"
 OUTPUT_DPI = 300
+TARGET_LONG_EDGE = 3840
 # Minimal PNG compression keeps files closer to source size (lossless).
 PNG_COMPRESS_LEVEL = 0
 # Must match splitter.BORDER_* so assemble can undo the decorative stroke.
 BORDER_WIDTH_PX = 3
 BORDER_COLOR = (0x1B, 0x1B, 0x1B)
 _PIECE_ID_RE = re.compile(r"r(\d+)_c(\d+)", re.IGNORECASE)
+
+
+def _ensure_print_resolution(img: Image.Image, long_edge: int = TARGET_LONG_EDGE) -> Image.Image:
+    """Upscale so the long edge is at least `long_edge` (LANCZOS)."""
+    width, height = img.size
+    current = max(width, height)
+    if current <= 0 or current >= long_edge:
+        return img
+    scale = long_edge / float(current)
+    new_size = (
+        max(1, int(round(width * scale))),
+        max(1, int(round(height * scale))),
+    )
+    return img.resize(new_size, Image.Resampling.LANCZOS)
 
 
 def _dpi_tuple(value: Any, fallback: int = OUTPUT_DPI) -> Tuple[float, float]:
@@ -288,6 +303,8 @@ def assemble_puzzle(
     Placement comes from (first match):
       1. `layout` / `layout_path`
       2. PNG metadata embedded in the piece files at split time
+
+    Output is always tagged 300 DPI and upscaled to >=4K long edge when needed.
     """
     if layout is None and not layout_path:
         layout = _layout_from_pieces(piece_paths, piece_ids=piece_ids)
@@ -305,15 +322,8 @@ def assemble_puzzle(
 
     width = int(meta.get("width") or 0)
     height = int(meta.get("height") or 0)
-    # DPI preference: original upload → layout metadata → first piece → 300.
-    if original_path and os.path.isfile(original_path):
-        out_dpi = _dpi_from_image(original_path, fallback=OUTPUT_DPI)
-    elif meta.get("dpi") is not None:
-        out_dpi = _dpi_tuple(meta.get("dpi"), fallback=OUTPUT_DPI)
-    elif piece_paths:
-        out_dpi = _dpi_from_image(piece_paths[0], fallback=OUTPUT_DPI)
-    else:
-        out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
+    # Always emit print DPI; pixel size is enforced via TARGET_LONG_EDGE below.
+    out_dpi = (float(OUTPUT_DPI), float(OUTPUT_DPI))
 
     # White canvas only. Using the original photo as an underlay made a
     # 2×2 of the source show through 30% pieces and erased the cut lines.
@@ -328,8 +338,16 @@ def assemble_puzzle(
     if not piece_paths:
         return False, "At least one puzzle piece image is required"
 
+    expected_ids = {
+        str(item.get("piece_id") or "").strip()
+        for item in (meta.get("pieces") or [])
+        if str(item.get("piece_id") or "").strip()
+    }
+    placed_ids: set[str] = set()
     placed = 0
     missing: List[str] = []
+    duplicates: List[str] = []
+
     for index, path in enumerate(piece_paths):
         if not path or not os.path.isfile(path):
             missing.append(f"missing file at index {index}")
@@ -337,6 +355,9 @@ def assemble_puzzle(
         piece_id = _infer_piece_id(path, piece_ids, index)
         if not piece_id:
             missing.append(f"could not determine piece_id for {os.path.basename(path)}")
+            continue
+        if piece_id.lower() in {p.lower() for p in placed_ids}:
+            duplicates.append(piece_id)
             continue
         info = lookup.get(piece_id) or lookup.get(piece_id.lower())
         if not info:
@@ -380,11 +401,20 @@ def assemble_puzzle(
             continue
         clipped = piece.crop((src_l, src_t, src_r, src_b))
         canvas.alpha_composite(clipped, dest=(paste_x, paste_y))
+        placed_ids.add(piece_id)
         placed += 1
+
+    if duplicates:
+        uniq = ", ".join(sorted(set(duplicates))[:5])
+        return False, f"Duplicate piece_id(s) uploaded: {uniq}"
 
     if placed == 0:
         detail = "; ".join(missing[:5]) if missing else "no pieces placed"
         return False, f"Could not assemble puzzle: {detail}"
+
+    # Upscale older/low-res layouts so assembled art meets 4K long edge.
+    canvas = _ensure_print_resolution(canvas)
+    out_w, out_h = canvas.size
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     # Lossless PNG at print DPI; minimal compression preserves file size / fidelity.
@@ -397,8 +427,15 @@ def assemble_puzzle(
     dpi_label = int(round(out_dpi[0]))
     note = (
         f"Assembled {placed} puzzle piece(s) into one image "
-        f"({width}x{height}px @ {dpi_label} DPI)."
+        f"({out_w}x{out_h}px @ {dpi_label} DPI)."
     )
+    placed_norm = {p.lower() for p in placed_ids}
+    absent = sorted(pid for pid in expected_ids if pid.lower() not in placed_norm)
+    if absent:
+        note += f" Incomplete: {len(absent)} cell(s) missing ({', '.join(absent[:5])}"
+        if len(absent) > 5:
+            note += ", …"
+        note += ")."
     if missing:
         note += f" Skipped {len(missing)}: " + "; ".join(missing[:3])
     return True, note
