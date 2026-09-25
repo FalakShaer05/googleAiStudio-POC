@@ -54,12 +54,19 @@ def upload_image_to_s3(
             print(f"❌ Image file not found: {image_path}")
             return None
         
-        # Initialize S3 client
+        # Initialize S3 client with hard timeouts so uploads can't hang forever.
+        from botocore.config import Config
+
         s3_client = boto3.client(
             's3',
             aws_access_key_id=aws_access_key,
             aws_secret_access_key=aws_secret_key,
-            region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+            region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+            config=Config(
+                connect_timeout=10,
+                read_timeout=60,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
         )
         
         # Generate S3 key (filename with optional prefix)
@@ -226,12 +233,18 @@ def upload_zip_to_s3(zip_path: str, prefix: Optional[str] = None) -> Optional[st
             print(f"❌ Zip file not found: {zip_path}")
             return None
         
-        # Initialize S3 client
+        from botocore.config import Config
+
         s3_client = boto3.client(
             's3',
             aws_access_key_id=aws_access_key,
             aws_secret_access_key=aws_secret_key,
-            region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
+            region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1'),
+            config=Config(
+                connect_timeout=10,
+                read_timeout=60,
+                retries={"max_attempts": 2, "mode": "standard"},
+            ),
         )
         
         # Generate S3 key

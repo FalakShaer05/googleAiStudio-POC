@@ -8,11 +8,18 @@ services:
       - "5000:5000"
     environment:
       - FLASK_ENV=production
+      - FLASK_DEBUG=false
+      - U2NET_HOME=/app/.u2net
+      - REMBG_MODEL_ORDER=u2net
+      - REMBG_MAX_SIDE=2048
     env_file:
       - .env
     volumes:
       - ./v2/uploads:/app/uploads
       - ./v2/outputs:/app/outputs
+      - ./v2/creative_system:/app/creative_system
+      - ./v2/utils:/app/utils
+      - rembg-models:/app/.u2net
       - ./.env:/app/.env:ro
     restart: unless-stopped
     healthcheck:
@@ -20,7 +27,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 90s
     networks:
       - character-generator-network
 
@@ -67,6 +74,7 @@ networks:
     driver: bridge
 
 volumes:
+  rembg-models:
   certbot-etc:
   certbot-var:
   certbot-www:

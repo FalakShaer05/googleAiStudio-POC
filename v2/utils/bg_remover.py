@@ -56,9 +56,28 @@ def _has_real_transparency(image: Image.Image, min_ratio: float = 0.02) -> bool:
 
 
 def _rembg_model_names() -> List[str]:
-    raw = os.getenv("REMBG_MODEL_ORDER", "u2net,isnet-general-use,birefnet-general")
+    # Default to u2net only — extra models (isnet/birefnet) are huge cold downloads.
+    raw = os.getenv("REMBG_MODEL_ORDER", "u2net")
     names = [part.strip() for part in raw.split(",") if part.strip()]
     return names or ["u2net"]
+
+
+def _rembg_max_side() -> int:
+    try:
+        return max(512, int(os.getenv("REMBG_MAX_SIDE", "2048")))
+    except ValueError:
+        return 2048
+
+
+def _load_rgb_for_rembg(image_path: str) -> Image.Image:
+    """Load RGB and downscale large images so ONNX inference stays responsive."""
+    source = Image.open(image_path).convert("RGB")
+    max_side = _rembg_max_side()
+    width, height = source.size
+    if max(width, height) > max_side:
+        source.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        print(f"📐 rembg input resized {width}x{height} → {source.size[0]}x{source.size[1]}")
+    return source
 
 
 def _get_rembg_session(model_name: str):
@@ -69,6 +88,20 @@ def _get_rembg_session(model_name: str):
     session = new_session(model_name)
     _REMBG_SESSIONS[model_name] = session
     return session
+
+
+def warmup_rembg_sessions() -> None:
+    """
+    Pre-load the first rembg model so the first selfie / Me Remix request
+    does not pay download + ONNX session init latency.
+    """
+    model_name = (_rembg_model_names() or ["u2net"])[0]
+    try:
+        print(f"🔧 Warming rembg session model={model_name}...")
+        _get_rembg_session(model_name)
+        print(f"✅ rembg warmup complete model={model_name}")
+    except Exception as exc:
+        print(f"⚠️ rembg warmup skipped: {exc}")
 
 
 def _decontaminate_cutout_edges(image: Image.Image) -> Image.Image:
@@ -148,7 +181,7 @@ def remove_background_with_rembg(image_path: str) -> Optional[str]:
     try:
         print("🔧 Requesting background removal from rembg (local)...")
         started = time.perf_counter()
-        source = Image.open(image_path).convert("RGB")
+        source = _load_rgb_for_rembg(image_path)
         last_error = None
 
         for model_name in _rembg_model_names():
@@ -321,22 +354,21 @@ def remove_background_with_removebg_api(image_path: str) -> Optional[str]:
 def remove_background(image_path: str) -> Tuple[Optional[str], str, str]:
     """
     Remove background using providers in order:
-      1. Freepik (unless SKIP_FREEPIK=true)
+      1. rembg local (fast, true PNG alpha — already warmed in Docker)
       2. remove.bg (requires valid REMOVE_BG_API_KEY)
-      3. rembg local (true PNG alpha — internal fallback)
+      3. Freepik (unless SKIP_FREEPIK=true; needs public S3 URL)
 
     Returns:
         (result_path, method, error_summary)
     """
     errors = []
 
-    if not _should_skip_freepik():
-        result = remove_background_with_freepik_api(image_path)
-        if result:
-            return result, "freepik", ""
-        errors.append("Freepik unavailable or out of credits")
-    else:
-        print("⚡ SKIP_FREEPIK enabled — skipping Freepik")
+    # Local first: avoids S3 upload + cloud round-trips that often hang /remove-bg.
+    print("🔧 Trying rembg (local) first...")
+    result = remove_background_with_rembg(image_path)
+    if result:
+        return result, "rembg", ""
+    errors.append("rembg local did not return a transparent image")
 
     print("⚠️ Falling back to remove.bg...")
     if _is_placeholder_key(os.getenv("REMOVE_BG_API_KEY", "")):
@@ -347,12 +379,15 @@ def remove_background(image_path: str) -> Tuple[Optional[str], str, str]:
             return result, "removebg", ""
         errors.append("remove.bg rejected the request (check REMOVE_BG_API_KEY is valid)")
 
-    print("⚠️ Falling back to rembg (local true-alpha)...")
-    result = remove_background_with_rembg(image_path)
-    if result:
-        return result, "rembg", ""
+    if not _should_skip_freepik():
+        print("⚠️ Falling back to Freepik...")
+        result = remove_background_with_freepik_api(image_path)
+        if result:
+            return result, "freepik", ""
+        errors.append("Freepik unavailable or out of credits")
+    else:
+        print("⚡ SKIP_FREEPIK enabled — skipping Freepik")
 
-    errors.append("rembg local fallback did not return a transparent image")
     return None, "none", "; ".join(errors)
 
 

@@ -11,7 +11,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     FLASK_ENV=production \
     NUMBA_CACHE_DIR=/tmp/numba-cache \
     HOME=/app \
-    REMBG_MODEL_ORDER=u2net,isnet-general-use,birefnet-general \
+    U2NET_HOME=/app/.u2net \
+    REMBG_MODEL_ORDER=u2net \
+    REMBG_MAX_SIDE=2048 \
     SKIP_FREEPIK=false
 
 # Decode MP3/WebM/M4A for Audio Type; DejaVu for neon type rendering
@@ -24,9 +26,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better caching
 COPY v2/requirements.txt .
 
-# Install Python dependencies (no system dependencies needed for basic functionality)
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (no pip self-upgrade — flaky on slow networks)
+ENV PIP_DEFAULT_TIMEOUT=120 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_RETRIES=10
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
+
+# Bake rembg u2net weights so first Me Remix / Selfie Becoming request is not a cold download
+RUN mkdir -p /app/.u2net && \
+    python -c "from rembg import new_session; new_session('u2net')"
 
 # Copy v2 application code
 COPY v2/ .
@@ -34,7 +43,7 @@ COPY v2/ .
 # Create necessary directories
 RUN mkdir -p uploads outputs
 
-# Writable home for rembg/pooch (~/.u2net model cache)
+# Writable home for rembg/pooch (U2NET_HOME=/app/.u2net)
 RUN groupadd -r -g 1000 appuser && useradd -m -u 1000 -g appuser -d /home/appuser appuser
 RUN chown -R appuser:appuser /app /home/appuser
 
@@ -42,7 +51,7 @@ RUN chown -R appuser:appuser /app /home/appuser
 RUN echo '#!/bin/bash\n\
 # Fix permissions for mounted volumes\n\
 chmod -R 755 /app/uploads /app/outputs 2>/dev/null || true\n\
-chown -R appuser:appuser /app/uploads /app/outputs 2>/dev/null || true\n\
+chown -R appuser:appuser /app/uploads /app/outputs /app/.u2net 2>/dev/null || true\n\
 # Start the application\n\
 exec "$@"' > /app/start.sh && chmod +x /app/start.sh
 
@@ -52,7 +61,7 @@ USER appuser
 EXPOSE 5000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=30s --start-period=90s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
 
 # Run the application with permission fix

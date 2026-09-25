@@ -24,15 +24,20 @@ from .shared.io import (
     success_payload,
     upload_folder,
 )
+from .shared.fonts import FONTS, get_font
 from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
 from .stations.content_filter import classify_content
 from .stations.puzzle_collage import assemble_puzzle, render_coloring_page, split_puzzle
 
+HOLDING_HANDS_TEXT_MAX = 30
+
 
 def _page_context():
     return {
         "stations": STATIONS,
+        "fonts": FONTS,
+        "holding_hands_text_max": HOLDING_HANDS_TEXT_MAX,
         "word_chips": {
             "tracing-hand": _station_chips("tracing_hand"),
             "word-art-heart": _station_chips("word_art_heart"),
@@ -76,8 +81,13 @@ def _generate_impl():
             kwargs["name_b"] = (request.form.get("name_b") or "").strip()
             kwargs["date_text"] = (request.form.get("date") or "").strip()
             kwargs["caption"] = (request.form.get("caption") or "").strip()
-            if not kwargs["name_a"] or not kwargs["name_b"] or not kwargs["date_text"]:
-                return json_error("Both names and a date are required")
+            kwargs["font_id"] = get_font(request.form.get("font"))["id"]
+            if not kwargs["name_a"] or not kwargs["name_b"]:
+                return json_error("Both names are required")
+            if not kwargs["caption"]:
+                return json_error("A custom text is required")
+            if len(kwargs["caption"]) > HOLDING_HANDS_TEXT_MAX:
+                return json_error(f"Custom text must be {HOLDING_HANDS_TEXT_MAX} characters or fewer")
 
         elif station_id == "make-art-yours":
             kwargs["artwork_path"] = save_named_upload("artwork", "cs_artwork", required=True)
@@ -87,9 +97,11 @@ def _generate_impl():
                 return json_error("A prompt is required")
 
         elif station_id == "classic-my-way":
-            kwargs["template_path"] = save_named_upload("template", "cs_classic_template", required=True)
+            kwargs["template_path"] = save_named_upload("template", "cs_classic_template", required=False)
             kwargs["artwork_path"] = save_named_upload("artwork", "cs_classic_my_way", required=True)
-            temp_paths.extend([kwargs["template_path"], kwargs["artwork_path"]])
+            if kwargs["template_path"]:
+                temp_paths.append(kwargs["template_path"])
+            temp_paths.append(kwargs["artwork_path"])
             kwargs["user_prompt"] = (request.form.get("prompt") or "").strip()
             if not kwargs["user_prompt"]:
                 return json_error("A prompt is required")
@@ -106,6 +118,20 @@ def _generate_impl():
                 return json_error("Pick or enter at least 3 words")
 
         elif station_id == "word-art-heart":
+            art_style = (
+                request.form.get("art_style")
+                or request.form.get("style")
+                or "word-heart"
+            ).strip().lower()
+            if art_style.replace("_", "-") in {"word", "words", "anatomical", "calligram"}:
+                art_style = "word-heart"
+            elif art_style.replace("_", "-") in {"sticky", "stickies", "sticky-notes", "notes"}:
+                art_style = "sticky-heart"
+            else:
+                art_style = art_style.replace("_", "-")
+            if art_style not in {"word-heart", "sticky-heart"}:
+                return json_error("Choose an art style: word-heart or sticky-heart")
+            kwargs["art_style"] = art_style
             kwargs["words"] = parse_word_list()
             if len(kwargs["words"]) < 3:
                 return json_error("Pick or enter at least 3 words")

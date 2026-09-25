@@ -41,7 +41,7 @@ from utils.character_utils import (
     normalize_image_size,
     get_canvas_size_pixels,
 )
-from utils.bg_remover import remove_background
+from utils.bg_remover import remove_background, warmup_rembg_sessions
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, COMPOSITING_PROMPT_NO_BACKGROUND, BIRTHDAY_STATION_PREFILLED_PROMPTS
@@ -2318,4 +2318,7 @@ def api_docs_redirect():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    warmup_rembg_sessions()
+    # Prefer threaded so rembg/S3 work does not freeze /health and other routes.
+    debug = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+    app.run(debug=debug, host="0.0.0.0", port=5000, threaded=True)

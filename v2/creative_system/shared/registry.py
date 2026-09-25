@@ -9,7 +9,7 @@ STATIONS = [
     {
         "id": "holding-hands",
         "label": "Holding Hands",
-        "tagline": "Two photos, two names, one keepsake.",
+        "tagline": "Two hand photos, two names, one keepsake.",
         "module": "holding_hands",
     },
     {
@@ -21,7 +21,7 @@ STATIONS = [
     {
         "id": "classic-my-way",
         "label": "Classic My Way",
-        "tagline": "Template + user art + prompt. Enhance the additions.",
+        "tagline": "User art + prompt (+ optional template). Enhance the additions.",
         "module": "classic_my_way",
     },
     {
@@ -45,7 +45,7 @@ STATIONS = [
     {
         "id": "word-art-heart",
         "label": "Word Art — Heart",
-        "tagline": "A colorful word-cloud heart made of your words.",
+        "tagline": "Word Heart or Sticky Heart — transparent PNG cutout of your words.",
         "module": "word_art_heart",
     },
     {
