@@ -7,42 +7,38 @@ BACKGROUND_LOCK = (
 STYLE_INSTRUCTION = (
     "Pencil technique: fine light-gray continuous graphite line art on pure white, "
     "delicate strand-by-strand strokes for hair, soft clean contour lines, "
-    "minimal shading — no charcoal blocks, no gray fills."
+    "minimal shading — no charcoal blocks, no gray fills, no stipple dots."
 )
 
 
-def build_split_prompt() -> str:
-    """In-place edit: left half untouched photo, right half becomes pencil of the SAME pixels."""
-    return """IN-PLACE EDIT of the uploaded photo. This is ONE continuous portrait, not two images.
+def build_line_art_prompt() -> str:
+    """Full-face in-place trace — then we hard-split color | pencil in post."""
+    return """Convert the uploaded selfie into a fine light-gray PENCIL LINE-ART drawing
+on pure white. This is a TRACE of the photo, not a new portrait.
 
-LEFT HALF (x < 50%): DO NOT CHANGE. Leave every pixel of the color photo exactly as it is.
-
-RIGHT HALF (x >= 50%): redraw ONLY this half as a fine light-gray PENCIL LINE-ART drawing,
-tracing the photo that is already there:
-- Trace ONLY what is visible in the photo. Do NOT add any feature, facial hair, accessory,
-  or object that is not in the photo. Do NOT remove anything that is in it.
-- Every line sits exactly on top of the photo detail it replaces — same position, size and angle.
-- The face must continue seamlessly across the vertical center line so both halves read as
-  one person in one pose.
-- Keep the same pose and viewpoint (front, three-quarter or profile). Do NOT turn the head,
-  shrink, enlarge, move, or re-center the face. Do NOT draw a new portrait.
+GEOMETRY LOCK:
+- Trace ONLY what is visible in the photo. Do NOT add or remove features.
+- Every line sits exactly on top of the photo detail it replaces — same position,
+  size, and angle. Do NOT turn the head, shrink, enlarge, move, or re-center.
+- Keep the same pose and viewpoint (front, three-quarter or profile).
 - Same person, same gender, same expression. Do not beautify.
 
-PENCIL STYLE (right half only):
+PENCIL STYLE:
 - Delicate continuous graphite strokes, strand-by-strand hair, soft clean contours.
-- Minimal shading, light-gray lines, pure white background — no gray paper, no box, no border.
+- Light-gray lines on pure white — no gray paper, no box, no border, no heavy fills.
+- Minimal shading. No charcoal blocks. No stipple or noise.
 
-OUTPUT: the same canvas and framing as the input — left half color photo, right half pencil,
-one aligned portrait with a sharp vertical cut exactly in the middle."""
+OUTPUT: the same canvas and framing as the input — one aligned pencil portrait of
+the same person in the same place."""
+
+
+def build_split_prompt() -> str:
+    return build_line_art_prompt()
 
 
 def build_sketch_prompt() -> str:
-    return build_split_prompt()
-
-
-def build_line_art_prompt() -> str:
-    return build_split_prompt()
+    return build_line_art_prompt()
 
 
 def build_prompt() -> str:
-    return build_split_prompt()
+    return build_line_art_prompt()
