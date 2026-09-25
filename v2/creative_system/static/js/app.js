@@ -220,6 +220,16 @@
     btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab")));
   });
 
+  document.querySelectorAll("[data-char-count]").forEach((input) => {
+    const counter = input.parentElement.querySelector("[data-char-counter]");
+    if (!counter) return;
+    const update = () => {
+      counter.textContent = input.value.length + "/" + input.maxLength;
+    };
+    input.addEventListener("input", update);
+    update();
+  });
+
   document.querySelectorAll("form[data-station-form]").forEach((form) => {
     form.setAttribute("novalidate", "");
     form.querySelectorAll('input[type="file"]').forEach((input) => {

@@ -659,6 +659,165 @@ def knockout_cream_card_background(img: Image.Image) -> Image.Image:
     return Image.fromarray(arr, "RGBA")
 
 
+def knockout_sticky_collage_background(img: Image.Image) -> Image.Image:
+    """
+    True-alpha cutout for sticky-note hearts.
+
+    Keeps yellow paper + red ink (+ warm contact shadows). Clears cream, white,
+    black, gray, and speckled fringe so the PNG composites cleanly.
+    """
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    if w < 2 or h < 2:
+        return rgba
+
+    if not NUMPY_AVAILABLE:
+        return knockout_cream_card_background(rgba)
+
+    arr = np.array(rgba)
+    r = arr[:, :, 0].astype(np.float32)
+    g = arr[:, :, 1].astype(np.float32)
+    b = arr[:, :, 2].astype(np.float32)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+
+    # Post-it yellow (bright body + slightly darker adhesive band).
+    yellow = (
+        (r >= 155)
+        & (g >= 125)
+        & (b <= 185)
+        & (g > b + 12)
+        & (r >= g - 25)
+        & (sat >= 22)
+        & (lum >= 95)
+    )
+
+    # Red marker lettering / tiny hearts on the notes.
+    red = (
+        (r >= 105)
+        & (r > g + 22)
+        & (r > b + 22)
+        & (g <= 170)
+        & (b <= 160)
+    )
+
+    keep = yellow | red
+    if SCIPY_AVAILABLE:
+        yellow_near = _ndimage.binary_dilation(yellow, iterations=3)
+        # Soft warm shadows sitting on / under notes (not page noise).
+        warm_shadow = (
+            yellow_near
+            & (lum >= 35)
+            & (lum <= 165)
+            & (r >= g - 12)
+            & (g >= b - 18)
+            & (sat >= 8)
+            & ~((lum <= 55) & (sat <= 25))  # avoid pure black page
+        )
+        keep = keep | warm_shadow
+        keep = _ndimage.binary_closing(keep, iterations=2)
+        keep = _ndimage.binary_dilation(keep, iterations=1)
+        keep = _ndimage.binary_erosion(keep, iterations=1)
+
+        labeled, count = _ndimage.label(keep)
+        if count:
+            sizes = np.bincount(labeled.ravel())
+            if sizes.size > 1:
+                # Drop dust / fringe islands; keep the heart mass.
+                min_size = max(80, int(w * h * 0.00025))
+                keep_labels = np.where(sizes >= min_size)[0]
+                keep_labels = keep_labels[keep_labels > 0]
+                if keep_labels.size:
+                    keep = np.isin(labeled, keep_labels)
+                # Always retain the largest component even if tiny threshold fails.
+                largest = int(np.argmax(sizes[1:]) + 1) if sizes.size > 1 else 0
+                if largest:
+                    keep = keep | (labeled == largest)
+
+    out = np.zeros_like(arr)
+    out[keep, :3] = arr[keep, :3]
+    out[keep, 3] = 255
+
+    # Kill near-transparent / pale fringe that survived as "keep".
+    if SCIPY_AVAILABLE:
+        border = keep & ~_ndimage.binary_erosion(keep, iterations=1)
+    else:
+        border = keep
+    pale_fringe = (
+        border
+        & (sat <= 35)
+        & (lum >= 200)
+        & ~yellow
+        & ~red
+    )
+    out[pale_fringe, :] = 0
+
+    # If almost nothing survived, fall back to cream knockout.
+    if float((out[:, :, 3] > 0).mean()) < 0.02:
+        return knockout_cream_card_background(rgba)
+
+    return Image.fromarray(out, "RGBA")
+
+
+def knockout_word_ink_background(img: Image.Image) -> Image.Image:
+    """
+    True-alpha cutout for monochrome red word-heart calligrams.
+
+    Keeps red ink / hatching; clears cream and speckled page noise.
+    """
+    rgba = img.convert("RGBA")
+    w, h = rgba.size
+    if w < 2 or h < 2:
+        return rgba
+
+    if not NUMPY_AVAILABLE:
+        return knockout_cream_card_background(rgba)
+
+    arr = np.array(rgba)
+    r = arr[:, :, 0].astype(np.float32)
+    g = arr[:, :, 1].astype(np.float32)
+    b = arr[:, :, 2].astype(np.float32)
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+
+    red_ink = (
+        (r >= 90)
+        & (r > g + 18)
+        & (r > b + 18)
+        & (g <= 180)
+        & (lum <= 210)
+    )
+    # Darker hatch / contour strokes that are still warm.
+    warm_dark = (
+        (lum <= 120)
+        & (r >= g - 5)
+        & (r >= b)
+        & (sat >= 12)
+        & (r >= 40)
+    )
+    keep = red_ink | warm_dark
+
+    if SCIPY_AVAILABLE:
+        keep = _ndimage.binary_closing(keep, iterations=1)
+        labeled, count = _ndimage.label(keep)
+        if count:
+            sizes = np.bincount(labeled.ravel())
+            if sizes.size > 1:
+                min_size = max(40, int(w * h * 0.00015))
+                keep_labels = np.where(sizes >= min_size)[0]
+                keep_labels = keep_labels[keep_labels > 0]
+                if keep_labels.size:
+                    keep = np.isin(labeled, keep_labels)
+
+    out = np.zeros_like(arr)
+    out[keep, :3] = arr[keep, :3]
+    out[keep, 3] = 255
+
+    if float((out[:, :, 3] > 0).mean()) < 0.01:
+        return knockout_cream_card_background(rgba)
+    return Image.fromarray(out, "RGBA")
+
+
 def _knockout_cream_card_background_pil(rgba: Image.Image) -> Image.Image:
     """PIL fallback when numpy is unavailable."""
     w, h = rgba.size

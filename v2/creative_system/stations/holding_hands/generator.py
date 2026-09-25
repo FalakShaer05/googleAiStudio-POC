@@ -1,5 +1,9 @@
-from ...shared.gemini import generate_composed_image, load_rgb, style_target_path
-from .prompts import STYLE_INSTRUCTION, build_prompt
+from PIL import Image
+
+from ...shared.fonts import DEFAULT_FONT_ID, get_font
+from ...shared.gemini import generate_composed_image, load_rgb
+from .layout import compose_artwork, hand_map_path, plate_path
+from .prompts import HAND_MAP_LABEL, PERSON_A_LABEL, PERSON_B_LABEL, PLATE_LABEL, build_prompt
 
 
 def generate(
@@ -8,31 +12,34 @@ def generate(
     photo_b_path: str,
     name_a: str,
     name_b: str,
-    date_text: str,
+    date_text: str = "",
     caption: str = "",
+    font_id: str = DEFAULT_FONT_ID,
     **_kwargs,
 ):
-    prompt = build_prompt(name_a, name_b, date_text, caption)
-    return generate_composed_image(
+    font = get_font(font_id)
+    plate = plate_path()
+    hand_map = hand_map_path()
+    if not plate or not hand_map:
+        return False, "Holding Hands template is missing"
+
+    success, message = generate_composed_image(
         output_path=output_path,
-        prompt=prompt,
+        prompt=build_prompt(),
         role_images=[
-            (
-                "PERSON A PHOTO. Use this person ONLY for the LEFT hand/arm skin tone, "
-                f"age impression, and identity cues belonging to the name {name_a}. "
-                "Do not paste the original photo. Draw an illustrated hand instead.",
-                load_rgb(photo_a_path),
-            ),
-            (
-                "PERSON B PHOTO. Use this person ONLY for the RIGHT hand/arm skin tone, "
-                f"age impression, and identity cues belonging to the name {name_b}. "
-                "Do not paste the original photo. Draw an illustrated hand instead.",
-                load_rgb(photo_b_path),
-            ),
+            (PLATE_LABEL, load_rgb(plate)),
+            (HAND_MAP_LABEL, load_rgb(hand_map)),
+            (PERSON_A_LABEL, load_rgb(photo_a_path)),
+            (PERSON_B_LABEL, load_rgb(photo_b_path)),
         ],
-        style_target=style_target_path("holding-hands"),
-        style_instruction=STYLE_INSTRUCTION,
-        aspect_ratio="1:1",
-        temperature=0.35,
+        aspect_ratio="4:5",
+        temperature=0.3,
         operation="art_generation:creative:holding-hands",
     )
+    if not success:
+        return success, message
+
+    with Image.open(output_path) as hands:
+        art = compose_artwork(hands, name_a, name_b, caption, date_text, font["id"])
+    art.save(output_path, format="PNG", optimize=True)
+    return True, message

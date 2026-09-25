@@ -100,6 +100,7 @@
       border-radius: 8px;
       border: 1px solid #dee2e6;
     }
+    #section-holding-hands .preview-image,
     #section-tracing-hand .preview-image,
     #section-apimh-new .preview-image {
       background-color: #fff;
@@ -277,6 +278,60 @@
       border-radius: 8px;
       padding: 0.9rem 1rem;
       font-size: 0.95rem;
+    }
+    {% for font in fonts or [] %}
+    @font-face {
+      font-family: "cs-{{ font.id }}";
+      src: url("{{ url_for('creative_system.static', filename='fonts/' ~ font.file) }}") format("truetype");
+      font-display: swap;
+    }
+    {% endfor %}
+    .char-counter {
+      position: absolute;
+      top: 50%;
+      right: 0.75rem;
+      transform: translateY(-50%);
+      font-size: 0.8rem;
+      color: #8a8a8a;
+      pointer-events: none;
+    }
+    .font-picker {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+    .font-card {
+      position: relative;
+      margin: 0;
+      cursor: pointer;
+    }
+    .font-card input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .font-sample {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 100px;
+      height: 50px;
+      padding: 0 0.85rem;
+      border: 1px solid #ced4da;
+      border-radius: 8px;
+      background: #fff;
+      color: #111;
+      font-size: 1.35rem;
+      line-height: 1;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .font-card input:checked + .font-sample {
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.25);
+    }
+    .font-card input:focus-visible + .font-sample {
+      outline: 2px solid #667eea;
+      outline-offset: 2px;
     }
     .chip-wrap { display: flex; flex-wrap: wrap; gap: 0.35rem; }
     .chip-wrap .form-check {
@@ -526,6 +581,6 @@
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=classic-my-way2"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=holding-hands-fonts1"></script>
 </body>
 </html>

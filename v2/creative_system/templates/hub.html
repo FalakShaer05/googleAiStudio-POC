@@ -52,17 +52,19 @@
   <div class="main-container content-section active" id="section-holding-hands">
     <div class="header">
       <h1 class="h3 mb-1">Holding Hands</h1>
-      <p class="mb-0">Two photos, two names, and a date. Gemini paints the keepsake.</p>
+      <p class="mb-0">Two hand photos, two names, your custom text, and a font. Add a date to make it even more meaningful.</p>
     </div>
     <div class="p-4">
       <form data-station-form="holding-hands" enctype="multipart/form-data">
         <div class="mb-3">
-          <label class="form-label fw-bold">Photo 1 (required)</label>
+          <label class="form-label fw-bold">Hand photo 1 (required)</label>
           <input type="file" class="form-control" name="photo_a" accept="image/*" required />
+          <div class="form-text">Left hand in the art, next to Name 1.</div>
         </div>
         <div class="mb-3">
-          <label class="form-label fw-bold">Photo 2 (required)</label>
+          <label class="form-label fw-bold">Hand photo 2 (required)</label>
           <input type="file" class="form-control" name="photo_b" accept="image/*" required />
+          <div class="form-text">Right hand in the art, next to Name 2.</div>
         </div>
         <div class="row">
           <div class="col-md-6 mb-3">
@@ -75,12 +77,28 @@
           </div>
         </div>
         <div class="mb-3">
-          <label class="form-label fw-bold">Date</label>
-          <input type="date" class="form-control" name="date" required />
+          <label class="form-label fw-bold">Custom text (required)</label>
+          <div class="position-relative">
+            <input type="text" class="form-control pe-5" name="caption" required
+                   maxlength="{{ holding_hands_text_max }}" placeholder="Type your custom text here... (e.g. Forever)"
+                   data-char-count />
+            <span class="char-counter" data-char-counter>0/{{ holding_hands_text_max }}</span>
+          </div>
         </div>
         <div class="mb-3">
-          <label class="form-label fw-bold">Caption (optional)</label>
-          <input type="text" class="form-control" name="caption" />
+          <label class="form-label fw-bold">Special date (optional)</label>
+          <input type="date" class="form-control" name="date" />
+        </div>
+        <div class="mb-3">
+          <span class="form-label fw-bold d-block">Select font (required)</span>
+          <div class="font-picker">
+            {% for font in fonts %}
+            <label class="font-card">
+              <input type="radio" name="font" value="{{ font.id }}" required {% if loop.first %}checked{% endif %} />
+              <span class="font-sample" style="font-family: 'cs-{{ font.id }}', cursive;">{{ font.label }}</span>
+            </label>
+            {% endfor %}
+          </div>
         </div>
         <button type="submit" class="convert-btn">Generate</button>
         {% include "partials/form_result.html" %}
@@ -116,19 +134,19 @@
   <div class="main-container content-section" id="section-classic-my-way">
     <div class="header">
       <h1 class="h3 mb-1">Classic My Way</h1>
-      <p class="mb-0">Upload the original art, your art on it, and a prompt. AI enhances while keeping the template intact.</p>
+      <p class="mb-0">Upload your art and a prompt. Optionally include the original template so AI can keep it intact while enhancing.</p>
     </div>
     <div class="p-4">
       <form data-station-form="classic-my-way" data-progress="Polishing your artwork..." enctype="multipart/form-data">
         <div class="mb-3">
-          <label class="form-label fw-bold">Original art image (required)</label>
-          <input type="file" class="form-control" name="template" accept="image/*" required />
-          <div class="form-text">The blank / base template before user edits.</div>
+          <label class="form-label fw-bold">Original art image (optional)</label>
+          <input type="file" class="form-control" name="template" accept="image/*" />
+          <div class="form-text">The blank / base template before user edits. Helps AI preserve the template layout.</div>
         </div>
         <div class="mb-3">
           <label class="form-label fw-bold">User art image (required)</label>
           <input type="file" class="form-control" name="artwork" accept="image/*" required data-cmw-source />
-          <div class="form-text">Your version with art, text, and edits on the template.</div>
+          <div class="form-text">Your version with art, text, and edits.</div>
         </div>
         <div class="mb-3">
           <label class="form-label fw-bold">Prompt (required)</label>
@@ -253,10 +271,34 @@
   <div class="main-container content-section" id="section-word-art-heart">
     <div class="header">
       <h1 class="h3 mb-1">Word Art — Heart</h1>
-      <p class="mb-0">Pick words. Gemini fills an anatomical heart as a dense colorful word cloud.</p>
+      <p class="mb-0">Choose the version that feels most like you, then fill it with your words. Output is a transparent PNG cutout.</p>
     </div>
     <div class="p-4">
       <form data-station-form="word-art-heart" enctype="multipart/form-data">
+        <div class="mb-3">
+          <label class="form-label fw-bold">Art style</label>
+          <div class="apimh-type-picker">
+            <label class="apimh-type-card">
+              <input type="radio" name="art_style" value="word-heart" required checked />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/word-art-heart.png') }}?v=wah2"
+                alt="Word Heart — anatomical heart made of words"
+              />
+              <span class="apimh-type-title">Word Heart</span>
+              <span class="apimh-type-tagline">A heart made of your words.</span>
+            </label>
+            <div class="apimh-type-or" aria-hidden="true">OR</div>
+            <label class="apimh-type-card">
+              <input type="radio" name="art_style" value="sticky-heart" />
+              <img
+                src="{{ url_for('creative_system.static', filename='images/samples/word-art-sticky-heart.png') }}?v=wah6"
+                alt="Sticky Heart — sticky notes forming a heart"
+              />
+              <span class="apimh-type-title">Sticky Heart</span>
+              <span class="apimh-type-tagline">A heart filled with your words.</span>
+            </label>
+          </div>
+        </div>
         <div class="mb-3">
           <label class="form-label fw-bold">Predefined words</label>
           <div class="chip-wrap">

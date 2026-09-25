@@ -1,38 +1,46 @@
 BACKGROUND_LOCK = (
-    "BACKGROUND LOCK: solid pure white RGB(255,255,255) behind the whole portrait. "
-    "No checkerboard, gray squares, beige, or paper texture."
+    "BACKGROUND LOCK: solid pure white RGB(255,255,255) across the whole image. "
+    "No gray paper, no paper texture, no border, no rectangle, no checkerboard."
 )
 
+# Never list specific features/accessories here — the image model treats them as things to draw.
 STYLE_INSTRUCTION = (
-    "STYLE TARGET — copy this exact ART EFFECT only: "
-    "vertical midline split, LEFT half full-color photo cutout, "
-    "RIGHT half light-gray pencil sketch, both on pure white, features aligned. "
-    "Do NOT copy this person's face or identity — only the half-photo / half-pencil treatment."
+    "Pencil technique: fine light-gray continuous graphite line art on pure white, "
+    "delicate strand-by-strand strokes for hair, soft clean contour lines, "
+    "minimal shading — no charcoal blocks, no gray fills."
 )
 
 
 def build_split_prompt() -> str:
-    """One-shot split: photo left | pencil right, locked to the selfie geometry."""
-    return """Edit the uploaded selfie into a vertical half-and-half portrait of THE SAME person.
+    """In-place edit: left half untouched photo, right half becomes pencil of the SAME pixels."""
+    return """IN-PLACE EDIT of the uploaded photo. This is ONE continuous portrait, not two images.
 
-CRITICAL — geometry lock (do not break the face):
-- Keep the exact same crop, scale, head position, pose, and camera angle as the selfie.
-- Do NOT reframe, zoom, mirror, or redraw the person in a new pose.
-- Features must meet seamlessly at the vertical center line (eyes, nose, lips, chin, hair).
+LEFT HALF (x < 50%): DO NOT CHANGE. Leave every pixel of the color photo exactly as it is.
 
-ART EFFECT:
-- Exact vertical midline through the center of the face.
-- LEFT half: keep as the realistic full-color photograph of this person (skin, hair, clothes, jewelry).
-- RIGHT half: convert to a refined light-gray PENCIL SKETCH of the matching half
-  (thin continuous graphite lines, hair strands, facial features, jewelry, clothing — finished sketch, not sparse outlines).
-- Sharp hard cut at the midline — no soft blend.
-- Background on BOTH halves: flat pure white RGB(255,255,255). Subject already on white — keep it white.
+RIGHT HALF (x >= 50%): redraw ONLY this half as a fine light-gray PENCIL LINE-ART drawing,
+tracing the photo that is already there:
+- Trace ONLY what is visible in the photo. Do NOT add any feature, facial hair, accessory,
+  or object that is not in the photo. Do NOT remove anything that is in it.
+- Every line sits exactly on top of the photo detail it replaces — same position, size and angle.
+- The face must continue seamlessly across the vertical center line so both halves read as
+  one person in one pose.
+- Keep the same pose and viewpoint (front, three-quarter or profile). Do NOT turn the head,
+  shrink, enlarge, move, or re-center the face. Do NOT draw a new portrait.
+- Same person, same gender, same expression. Do not beautify.
 
-OUTPUT: portrait 3:4, one subject, white background, perfectly aligned split."""
+PENCIL STYLE (right half only):
+- Delicate continuous graphite strokes, strand-by-strand hair, soft clean contours.
+- Minimal shading, light-gray lines, pure white background — no gray paper, no box, no border.
+
+OUTPUT: the same canvas and framing as the input — left half color photo, right half pencil,
+one aligned portrait with a sharp vertical cut exactly in the middle."""
+
+
+def build_sketch_prompt() -> str:
+    return build_split_prompt()
 
 
 def build_line_art_prompt() -> str:
-    """Kept for imports; split flow uses build_split_prompt()."""
     return build_split_prompt()
 
 
