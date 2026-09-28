@@ -148,26 +148,37 @@ def comma_word_list(words: list[str]) -> str:
 def forbidden_style_words(words: list[str], art_style: str | None = None) -> list[str]:
     chosen = normalize_art_style(art_style)
     allowed = {word.lower() for word in _normalized_words(words)}
-    # Common style-target / invented leaks beyond the active sample.
+    # Ban every chip + style-sample phrase the user did not pick (stops sample leaks).
     extras = (
-        "love",
-        "family",
-        "passion",
-        "kindness",
-        "compassion",
-        "courage",
-        "strength",
-        "hope",
-        "joy",
-        "create",
-        "you",
-        "unity",
         "together forever",
         "support each other",
+        "be you",
+        "forever",
+        "always",
+        "soulmate",
+        "valentine",
+        "heart",
+        "hearts",
+        "romance",
+        "romantic",
+        "beautiful",
+        "wonderful",
+        "amazing",
+        "blessed",
+        "inspire",
+        "believe",
+        "share",
+        "grow",
+        "change",
+        "play",
+        "engage",
+        "future",
+        "imagine",
+        "explore",
     )
     blocked: list[str] = []
     seen: set[str] = set()
-    for word in (*STYLE_TARGET_WORDS.get(chosen, ()), *extras):
+    for word in (*WORD_CHIPS, *STYLE_TARGET_WORDS.get(chosen, ()), *extras):
         key = word.lower()
         if key not in allowed and key not in seen:
             seen.add(key)
@@ -200,13 +211,14 @@ def style_instruction(art_style: str | None = None) -> str:
             "Deep top cleft, two rounded lobes, sharp pointed tip at the bottom. "
             "Bright yellow notes + red handwritten lettering. Cream/off-white page. "
             "Do NOT copy any words from this image — they are unreadable on purpose. "
-            "Print ONLY words from the user's numbered vocabulary list."
+            "Print ONLY the user's numbered vocabulary list, each word EXACTLY ONCE."
         )
     return (
         "LAYOUT / COLOR TARGET only (text is intentionally blurred). "
         "Clone the anatomical heart silhouette, monochrome vibrant red ink, warped typography density, "
         "thin red vessel hatching, and cream page. Do NOT copy any words from this image — "
-        "they are unreadable on purpose. Print ONLY words from the user's numbered vocabulary list."
+        "they are unreadable on purpose. Print ONLY the user's numbered vocabulary list, "
+        "each word EXACTLY ONCE."
     )
 
 
@@ -241,31 +253,31 @@ def vocabulary_lock(words: list[str], art_style: str | None = None) -> str:
     forbidden = forbidden_style_words(cleaned, chosen)
     hero = _hero_word(cleaned)
     forbid_line = (
-        "BAN these words if they are not on the list: " + ", ".join(forbidden) + "."
+        "Never write these (style-reference or invented): " + ", ".join(forbidden) + "."
         if forbidden
         else "Do not invent extra words."
     )
     coverage = (
-        f"COMPLETE COVERAGE (non-negotiable): all {count} list entries MUST appear "
-        "at least once as readable text. Missing even one word = failed output.\n"
-        "Mentally tick every box before finishing:\n"
-        f"{checklist}\n"
-        "Only AFTER every box is covered may you repeat words to fill leftover space."
+        f"VOCABULARY — EXACTLY ONCE (non-negotiable):\n"
+        f"- Use EACH of these {count} words EXACTLY ONCE. No duplicates. No repeats.\n"
+        f"- Every list entry MUST appear as readable text. Missing even one = failed output.\n"
+        f"- Do NOT invent fillers, synonyms, or style-sample words.\n"
+        f"Tick every box before finishing:\n"
+        f"{checklist}"
     )
     shape = shape_lock(chosen)
     if chosen == "sticky-heart":
-        # Prefer one note per word; a few extras only if needed to complete the ♥ outline.
-        note_count = count if count >= 18 else max(count, 18)
         return (
             "VOCABULARY LOCK (final instruction, highest priority).\n"
             "The style image is blurred — ignore any guessed reference words.\n"
-            f"Closed list of {count} words (spell exactly):\n"
+            f"Closed list of {count} words — spell each EXACTLY ONCE:\n"
             f"{listed}\n"
             f"{forbid_line}\n"
             f"{coverage}\n"
             f"{shape}\n"
-            f"Use about {note_count} sticky notes: one note per list entry first, "
-            "then only add repeat notes if the ♥ outline still has holes.\n"
+            f"Use EXACTLY {count} sticky notes — one note per list entry, one word per note. "
+            "Do NOT add blank notes, decoy notes, or second copies of any word. "
+            "Form the ♥ by overlapping / scaling / rotating those notes only.\n"
             "Keep the heart compact (~half the frame) with cream margin around it — "
             "notes form the silhouette, not a giant yellow plate.\n"
             "Plain cream or white page behind the heart (real transparency is applied after). "
@@ -274,12 +286,14 @@ def vocabulary_lock(words: list[str], art_style: str | None = None) -> str:
     return (
         "VOCABULARY LOCK (final instruction, highest priority).\n"
         "The style image is blurred — ignore any guessed reference words.\n"
-        f"Closed list of {count} words (spell exactly):\n"
+        f"Closed list of {count} words — spell each EXACTLY ONCE:\n"
         f"{listed}\n"
         f"{forbid_line}\n"
         f"{coverage}\n"
-        f"Make \"{hero}\" the single largest central word inside the heart body.\n"
-        "Do not add synonyms unless they are on the list.\n"
+        f"Make \"{hero}\" the single largest central word inside the heart body "
+        "(still only once).\n"
+        "Fill leftover cracks with thin red vessel hatching / contour lines only — "
+        "never extra words.\n"
         "Keep the monochrome red anatomical calligram on a plain cream page "
         "(real transparency is applied after generation)."
     )
@@ -300,7 +314,6 @@ def build_prompt(words: list[str], art_style: str | None = None) -> str:
         else "Do not invent extra words."
     )
     if chosen == "sticky-heart":
-        note_count = count if count >= 18 else max(count, 18)
         return f"""Draw a COMPACT sticky-note valentine ♥ (notes form the shape).
 
 Clone the attached style target for LAYOUT/COLOR only (its text is blurred — do not invent words from it).
@@ -308,34 +321,37 @@ Match THAT scale and look: medium heart with margin, notes overlapping into a �
 
 {shape_lock(chosen)}
 
-COMPLETE COVERAGE FIRST:
-You have exactly {count} required words. Every one MUST appear as readable text on its own sticky note before any repeats:
+VOCABULARY — NO DUPLICATES (highest priority with shape):
+You have exactly {count} required words. Write EACH EXACTLY ONCE. Never repeat. Never invent.
+Every word MUST appear as readable text on its own sticky note:
 {listed}
 
 Quick scan: {csv_words}
 
-Tick before finishing:
+Tick before finishing (all must be present, none repeated):
 {checklist}
 
 WHAT TO DRAW:
-- ~{note_count} bright yellow sticky notes, slightly rotated, overlapping with soft drop shadows.
-- Arrange notes into a classic ♥: deep top cleft, two lobes, sharp pointed tip at bottom.
+- EXACTLY {count} bright yellow sticky notes — one note per list entry. No more, no less.
+- Slightly rotated, overlapping with soft drop shadows so they form a classic ♥.
 - Heart height about 45–55% of the canvas; keep clear cream margin on every side.
-- Notes should be large enough to read easily and should define the outline themselves.
+- Scale / nestle / overlap those {count} notes to complete the silhouette — do NOT add extra notes or repeat text.
 - Optional thin yellow under-edge only in tiny gaps / tip — never a big solid yellow heart showing around the collage.
-- Each note shows ONE list entry in casual red handwritten capital letters.
+- Each note shows ONE unique list entry in casual red handwritten capital letters.
 - Most notes include a tiny hand-drawn red heart under the text (optional dashes/underlines like the sample).
 - No anatomical vessels, chambers, aorta, or medical sketch lines.
 
 {forbid_line}
 
 FORBIDDEN:
+- Duplicating any list word
+- Adding words not on the numbered list
 - Oversized heart filling most of the frame
 - Giant solid yellow ♥ plate with tiny notes stuck on top
 - Blunt / flat / square bottom tip
 - Circle / oval / blob arrangements that do not read as ♥
 - Skipping any numbered word
-- Copying style-sample vocabulary (LOVE, JOY, YOU, CREATE, UNITY, etc. unless listed above)
+- Copying style-sample vocabulary unless that exact phrase is listed above
 - Anatomical heart / dense red calligram / UI / captions / buttons
 - Black background
 
@@ -343,41 +359,43 @@ BACKGROUND:
 - Plain soft cream / off-white field only. No paper grain, no UI, no frame, no black page.
 - Do NOT fake checkerboard transparency — leave a solid cream page; real PNG alpha is added afterward.
 
-OUTPUT: compact sticky-note ♥ with sharp tip, generous margin, all {count} words visible. Huge yellow plate = wrong."""
+OUTPUT: compact sticky-note ♥ with sharp tip, generous margin, all {count} words visible once each. Huge yellow plate = wrong."""
 
     return f"""Draw an ANATOMICAL human heart that IS a monochrome red typography calligram.
 
 Clone the attached style target for LAYOUT/COLOR only (its text is blurred — do not invent words from it).
 Vibrant RED warped lettering forming a realistic anatomical heart on soft cream paper.
 
-COMPLETE COVERAGE FIRST (highest priority after style):
-You have exactly {count} required words. Place EVERY numbered word at least once as readable text BEFORE repeating any word to fill gaps:
+VOCABULARY — NO DUPLICATES (highest priority after style):
+You have exactly {count} required words. Write EACH EXACTLY ONCE. Never repeat. Never invent.
+Place EVERY numbered word as readable text — no extras, no copies:
 {listed}
 
 Quick scan of required vocabulary: {csv_words}
 
-Coverage checklist — every box must be satisfied:
+Coverage checklist — every box once, none twice:
 {checklist}
 
 WHAT TO DRAW:
 - Anatomical heart (atria, ventricles, aorta/pulmonary vessels on top). Slight tilt. NOT a valentine ♥.
-- Silhouette built from words; vessels also packed with curved/vertical words.
-- "{hero}" is the HERO word: largest, boldest, centered in the main heart body.
-- Distribute the other {count - 1} words across chambers and vessels so none are omitted.
-- Warp/rotate lettering to follow walls. Thin red contour/hatching between clusters.
-- ALL lettering and linework ONE vibrant red. Dense packing after full coverage.
+- Silhouette built from the {count} words only; scale / warp / rotate them to follow chambers and vessels.
+- "{hero}" is the HERO word: largest, boldest, centered in the main heart body (still only once).
+- Distribute the other {count - 1} words across chambers and vessels so none are omitted and none are repeated.
+- Warp/rotate lettering to follow walls. Thin red contour/hatching between clusters for density — not extra words.
+- ALL lettering and linework ONE vibrant red.
 - Clean bold mixed typography — readable, not messy scribbles.
 
 {forbid_line}
 
 FORBIDDEN:
+- Duplicating any list word
 - Skipping any numbered word
-- Copying style-sample leftovers (FAMILY, COURAGE, STRENGTH, HOPE, JOY, PASSION, KINDNESS, COMPASSION, LOVE unless listed above)
+- Inventing fillers / synonyms / style-sample leftovers not listed above
 - Multi-color doodles, sticky-note collage, UI, captions, buttons
 
 BACKGROUND:
 - Plain soft cream / off-white field only. No paper grain, no watercolor corners, no UI, no frame.
 - Do NOT fake checkerboard transparency — leave a solid cream page; real PNG alpha is added afterward.
 
-OUTPUT: monochrome red anatomical word-heart where all {count} user words appear at least once.
-Missing even one list word = failed output. Hero "{hero}" must stay visually dominant."""
+OUTPUT: monochrome red anatomical word-heart where all {count} user words appear exactly once.
+Missing or duplicating any list word = failed output. Hero "{hero}" must stay visually dominant."""

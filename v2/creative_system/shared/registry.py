@@ -25,6 +25,18 @@ STATIONS = [
         "module": "classic_my_way",
     },
     {
+        "id": "color-enhance",
+        "label": "Color Enhance",
+        "tagline": "Fill missing color and polish the finish on user-colored art.",
+        "module": "color_enhance",
+    },
+    {
+        "id": "origami",
+        "label": "Origami",
+        "tagline": "Target model + unfolded pattern → centered transparent PNG.",
+        "module": "origami",
+    },
+    {
         "id": "selfie-becoming",
         "label": "Selfie Becoming",
         "tagline": "Half photo, half light line art — a portrait becoming a sketch.",

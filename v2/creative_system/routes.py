@@ -34,10 +34,13 @@ HOLDING_HANDS_TEXT_MAX = 30
 
 
 def _page_context():
+    from .stations.tracing_hand.prompts import COLOR_ROWS
+
     return {
         "stations": STATIONS,
         "fonts": FONTS,
         "holding_hands_text_max": HOLDING_HANDS_TEXT_MAX,
+        "tracing_hand_color_rows": COLOR_ROWS,
         "word_chips": {
             "tracing-hand": _station_chips("tracing_hand"),
             "word-art-heart": _station_chips("word_art_heart"),
@@ -84,9 +87,7 @@ def _generate_impl():
             kwargs["font_id"] = get_font(request.form.get("font"))["id"]
             if not kwargs["name_a"] or not kwargs["name_b"]:
                 return json_error("Both names are required")
-            if not kwargs["caption"]:
-                return json_error("A custom text is required")
-            if len(kwargs["caption"]) > HOLDING_HANDS_TEXT_MAX:
+            if kwargs["caption"] and len(kwargs["caption"]) > HOLDING_HANDS_TEXT_MAX:
                 return json_error(f"Custom text must be {HOLDING_HANDS_TEXT_MAX} characters or fewer")
 
         elif station_id == "make-art-yours":
@@ -106,13 +107,57 @@ def _generate_impl():
             if not kwargs["user_prompt"]:
                 return json_error("A prompt is required")
 
+        elif station_id == "color-enhance":
+            kwargs["template_path"] = save_named_upload("template", "cs_color_template", required=False)
+            kwargs["artwork_path"] = save_named_upload("artwork", "cs_color_enhance", required=True)
+            if kwargs["template_path"]:
+                temp_paths.append(kwargs["template_path"])
+            temp_paths.append(kwargs["artwork_path"])
+            kwargs["user_prompt"] = (request.form.get("prompt") or "").strip()
+
+        elif station_id == "origami":
+            kwargs["template_path"] = save_named_upload("template", "cs_origami_template", required=True)
+            kwargs["artwork_path"] = save_named_upload("artwork", "cs_origami", required=True)
+            temp_paths.extend([kwargs["template_path"], kwargs["artwork_path"]])
+            kwargs["user_prompt"] = (request.form.get("prompt") or "").strip()
+
         elif station_id in {"selfie-becoming", "me-remix"}:
             kwargs["selfie_path"] = save_named_upload("selfie", "cs_selfie", required=True)
             temp_paths.append(kwargs["selfie_path"])
 
         elif station_id == "tracing-hand":
+            from .stations.tracing_hand.prompts import (
+                MAX_COLORS,
+                lettering_colors,
+                normalize_colors,
+                parse_color_list,
+            )
+
             kwargs["hand_path"] = save_named_upload("hand", "cs_hand", required=True)
             temp_paths.append(kwargs["hand_path"])
+            # Colors as a JSON array only, e.g. colors=["#C8D42E","#D62828",...]
+            colors_payload = (request.form.get("colors") or "").strip()
+            if not colors_payload.startswith("["):
+                return json_error(
+                    f'Pass colors as a JSON array '
+                    f'(e.g. colors=["#C8D42E","#D62828","#F0A878"])'
+                )
+            raw_colors = parse_color_list(colors_payload)
+            normalized = normalize_colors(raw_colors, fallback=False)
+            if not normalized:
+                return json_error(
+                    f"Pick 1 to {MAX_COLORS} colors as a hex array "
+                    '(e.g. colors=["#C8D42E","#D62828","#F0A878"])'
+                )
+            if len(normalized) > MAX_COLORS:
+                return json_error(f"Select up to {MAX_COLORS} colors")
+            # Drop black/near-black so lettering stays visible.
+            visible = lettering_colors(normalized, fallback=False)
+            if not visible:
+                return json_error(
+                    "At least one non-black color is required for lettering"
+                )
+            kwargs["colors"] = visible
             kwargs["words"] = parse_word_list()
             if len(kwargs["words"]) < 3:
                 return json_error("Pick or enter at least 3 words")
@@ -324,7 +369,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, classic-my-way, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
+        description: holding-hands, make-art-yours, classic-my-way, color-enhance, origami, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
     responses:
       200:
         description: Artwork generated
