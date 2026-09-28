@@ -71,29 +71,147 @@ def _mask_is_usable(mask) -> bool:
 
 
 def _rembg_hand_mask(rgb: Image.Image):
+    """Hand mask via the shared warmed rembg session (no cold model download)."""
     if not NUMPY_AVAILABLE:
         return None
     try:
         from rembg import remove
+        from utils.bg_remover import _get_rembg_session, _rembg_max_side, _rembg_model_names
     except Exception:
         return None
     try:
-        cut = remove(rgb)
+        source = to_rgb(rgb)
+        max_side = _rembg_max_side()
+        if max(source.size) > max_side:
+            source = source.copy()
+            source.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        model_name = (_rembg_model_names() or ["u2net"])[0]
+        session = _get_rembg_session(model_name)
+        cut = remove(source, session=session)
         if not isinstance(cut, Image.Image):
             from io import BytesIO
             cut = Image.open(BytesIO(cut))
         alpha = np.array(cut.convert("RGBA"))[:, :, 3]
         mask = alpha > 40
+        if mask.shape[:2] != (rgb.size[1], rgb.size[0]):
+            mask_img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
+            mask_img = mask_img.resize(rgb.size, Image.Resampling.NEAREST)
+            mask = np.array(mask_img) > 127
         return mask if _mask_is_usable(mask) else None
     except Exception as exc:
         print(f"tracing-hand rembg stencil skip: {exc}")
         return None
 
 
+def _is_sparse_line_drawing(rgb: Image.Image) -> bool:
+    """True for canvas / marker outlines: mostly white with thin dark strokes."""
+    if not NUMPY_AVAILABLE:
+        return False
+    arr = np.array(to_rgb(rgb))
+    lum = arr.astype(np.int16).mean(axis=2)
+    ink = lum <= 150
+    frac = float(ink.mean())
+    # Thin outline on white — not a filled photo hand.
+    return 0.0015 <= frac <= 0.14 and float((lum >= 200).mean()) >= 0.72
+
+
+def _seal_open_wrist(ink):
+    """Close gaps where a canvas outline opens at the image edge (common at wrist)."""
+    if not SCIPY_AVAILABLE:
+        return ink
+    sealed = ink.copy()
+    h, w = sealed.shape
+    band = max(4, h // 40)
+    for edge, slicer in (
+        ("bottom", (slice(-band, None), slice(None))),
+        ("top", (slice(0, band), slice(None))),
+        ("left", (slice(None), slice(0, band))),
+        ("right", (slice(None), slice(-band, None))),
+    ):
+        region = sealed[slicer]
+        if not region.any():
+            continue
+        if edge in {"bottom", "top"}:
+            cols = np.where(region.any(axis=0))[0]
+            if len(cols) < 2:
+                continue
+            y = h - 1 if edge == "bottom" else 0
+            sealed[y, cols[0] : cols[-1] + 1] = True
+            if edge == "bottom":
+                sealed[max(0, y - 1), cols[0] : cols[-1] + 1] = True
+            else:
+                sealed[min(h - 1, y + 1), cols[0] : cols[-1] + 1] = True
+        else:
+            rows = np.where(region.any(axis=1))[0]
+            if len(rows) < 2:
+                continue
+            x = 0 if edge == "left" else w - 1
+            sealed[rows[0] : rows[-1] + 1, x] = True
+    return sealed
+
+
+def _smooth_hand_fill_mask(mask):
+    """
+    Turn a jagged / holey canvas fill into one solid silhouette.
+    Seals pen gaps and vertical seams, keeps the largest blob, grows slightly
+    so word packing can reach the outer rough stroke (not stop at every wiggle).
+    """
+    if not SCIPY_AVAILABLE:
+        return mask
+    h, w = mask.shape
+    k = max(5, min(h, w) // 70)
+    if k % 2 == 0:
+        k += 1
+    closed = _ndimage.binary_closing(mask, structure=np.ones((k, k), dtype=int), iterations=2)
+    closed = _ndimage.binary_fill_holes(closed)
+    labeled, count = _ndimage.label(closed)
+    if count > 1:
+        sizes = _ndimage.sum(closed, labeled, index=range(1, count + 1))
+        closed = labeled == (int(np.argmax(sizes)) + 1)
+    # Grow out to the rough outer edge so fingertips / palm pockets fill.
+    grow = max(3, min(h, w) // 90)
+    closed = _ndimage.binary_dilation(closed, iterations=grow)
+    closed = _ndimage.binary_fill_holes(closed)
+    # Soft boundary — avoids razor-cut mid-letter clips from pen wobble.
+    sigma = max(1.8, min(h, w) / 160.0)
+    soft = _ndimage.gaussian_filter(closed.astype(np.float32), sigma=sigma)
+    return soft >= 0.42
+
+
+def _line_drawing_interior_mask(rgb: Image.Image):
+    """Fill the interior of a canvas hand outline (works even if wrist is open)."""
+    if not NUMPY_AVAILABLE or not SCIPY_AVAILABLE:
+        return None
+    arr = np.array(to_rgb(rgb))
+    lum = arr.astype(np.int16).mean(axis=2)
+    ink = lum <= 150
+    if not ink.any():
+        return None
+    closed = _ndimage.binary_closing(ink, structure=np.ones((5, 5), dtype=int), iterations=5)
+    closed = _ndimage.binary_dilation(closed, iterations=3)
+    closed = _seal_open_wrist(closed)
+    filled = _ndimage.binary_fill_holes(closed)
+    # Prefer the filled interior; fall back to edge-flood if holes failed.
+    if _mask_is_usable(filled) and float(filled.mean()) >= float(ink.mean()) * 2.5:
+        return _smooth_hand_fill_mask(filled)
+    paper = lum >= 200
+    outer = _flood_from_edges(paper | ~closed)
+    interior = ~outer
+    if _mask_is_usable(interior):
+        return _smooth_hand_fill_mask(interior)
+    if _mask_is_usable(filled):
+        return _smooth_hand_fill_mask(filled)
+    return None
+
+
 def _ink_or_paper_mask(rgb: Image.Image):
     """Filled interior for a photo hand or a pencil tracing on paper."""
     if not NUMPY_AVAILABLE:
         return None
+    if _is_sparse_line_drawing(rgb):
+        line_mask = _line_drawing_interior_mask(rgb)
+        if line_mask is not None:
+            return line_mask
     arr = np.array(rgb)
     lum = arr.astype(np.int16).mean(axis=2)
     sat = np.maximum.reduce([arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]]) - np.minimum.reduce(
@@ -114,6 +232,7 @@ def _ink_or_paper_mask(rgb: Image.Image):
 
 
 def _render_hand_stencil(mask) -> Image.Image:
+    """Dark fill used for post-clip only (not shown as a plate to paint)."""
     canvas = np.full((*mask.shape, 3), 255, dtype=np.uint8)
     canvas[mask] = (18, 18, 18)
     if SCIPY_AVAILABLE:
@@ -121,6 +240,34 @@ def _render_hand_stencil(mask) -> Image.Image:
         dilated = _ndimage.binary_dilation(mask, iterations=ring)
         canvas[dilated & ~mask] = (255, 32, 96)
     return Image.fromarray(canvas, "RGB")
+
+
+def _render_hand_zone_guide(
+    photo: Image.Image,
+    mask,
+    *,
+    show_strokes: bool = True,
+) -> Image.Image:
+    """
+    Pale filled silhouette + magenta rim.
+    For rough canvas draws, omit jagged stroke overlay so the model packs into
+    the solid fill zone (including edge pockets) instead of hugging pen wiggles.
+    """
+    arr = np.array(to_rgb(photo))
+    h, w = mask.shape
+    guide = np.full((h, w, 3), 255, dtype=np.uint8)
+    guide[mask] = (255, 232, 240)  # pale pink = word zone only
+    if SCIPY_AVAILABLE:
+        ring = max(3, min(h, w) // 140)
+        dilated = _ndimage.binary_dilation(mask, iterations=ring)
+        eroded = _ndimage.binary_erosion(mask, iterations=max(1, ring // 2))
+        edge = dilated & ~eroded
+        guide[edge] = (255, 32, 96)
+    if show_strokes:
+        lum = arr.astype(np.int16).mean(axis=2)
+        strokes = lum <= 150
+        guide[strokes] = (25, 25, 25)
+    return Image.fromarray(guide, "RGB")
 
 
 def _overlay_hand_contour(photo: Image.Image, mask) -> Image.Image:
@@ -137,71 +284,125 @@ def _overlay_hand_contour(photo: Image.Image, mask) -> Image.Image:
 
 
 def build_hand_alignment_images(hand_path: str) -> Tuple[list[RoleImage], Optional[Image.Image]]:
-    """Photo + stencil so word art must follow the uploaded hand only."""
+    """
+    Canvas outline or photo + zone guide so word art follows the upload only.
+    Returns (role_images, clip_stencil). Clip stencil is dark; the model sees a
+    pale zone guide so it does not paint a solid black hand plate.
+    """
     photo = load_rgb(hand_path)
     roles: list[RoleImage] = []
     mask = None
+    line_drawing = _is_sparse_line_drawing(photo)
     if NUMPY_AVAILABLE:
-        mask = _rembg_hand_mask(photo)
+        # Canvas sketches: skip rembg (it invents a filled blob).
+        if line_drawing:
+            mask = _line_drawing_interior_mask(photo)
+        else:
+            mask = _rembg_hand_mask(photo)
+            if mask is not None and SCIPY_AVAILABLE:
+                mask = _smooth_hand_fill_mask(mask)
         if mask is None:
             mask = _ink_or_paper_mask(photo)
+            if mask is not None and SCIPY_AVAILABLE and not line_drawing:
+                mask = _smooth_hand_fill_mask(mask)
 
     if mask is not None and _mask_is_usable(mask):
-        stencil = _render_hand_stencil(mask)
-        roles.append((
-            "USER HAND PHOTO with a magenta contour on the real outline. "
-            "The word-art hand MUST match this pose exactly (thumb side, finger "
-            "count, lengths, gaps, rotation, left vs right). Put letters ONLY "
-            "inside the magenta outline. Keep the same crop/position as this photo. "
-            "Do not invent a generic spread-finger hand.",
-            _overlay_hand_contour(photo, mask),
-        ))
-        roles.append((
-            "HAND STENCIL from the same upload. Dark shape = the ONLY region "
-            "that may contain words. White = empty/transparent. Fill this "
-            "silhouette with lettering. No letters outside the dark shape. "
-            "Do not copy any other hand's outline.",
-            stencil,
-        ))
-        return roles, stencil
+        clip_stencil = _render_hand_stencil(mask)
+        if line_drawing:
+            # Clean filled zone (no jagged stroke overlay) — pack words to the rim.
+            zone = _render_hand_zone_guide(photo, mask, show_strokes=False)
+            roles.append((
+                "USER ROUGH HAND DRAWING. Magenta rim = silhouette to FILL completely. "
+                "Pack glossy sticker WORDS densely into every finger tip, gap, and palm "
+                "pocket of THIS pose. Scale/rotate whole words to fit — do NOT slice "
+                "letters mid-glyph. Keep the same crop/position. No solid black plate. "
+                "Do NOT invent a different hand pose.",
+                _overlay_hand_contour(photo, mask),
+            ))
+            roles.append((
+                "WORD FILL ZONE (smoothed from the rough drawing). Pale pink = fill this "
+                "ENTIRE region with packed sticker words out to the magenta edge — "
+                "including rough edge pockets and fingertips. Tiny stars/dots only in "
+                "leftover cracks. CRITICAL: words only (no solid plate); outside = transparent.",
+                zone,
+            ))
+        else:
+            zone = _render_hand_zone_guide(photo, mask, show_strokes=True)
+            roles.append((
+                "USER HAND PHOTO with a magenta contour on the real outline. "
+                "The word-art hand MUST match this pose exactly (thumb side, finger "
+                "count, lengths, gaps, rotation, left vs right). Pack letters densely "
+                "INSIDE the magenta outline — complete words, not sliced glyphs. "
+                "Keep the same crop/position. No solid black hand plate.",
+                _overlay_hand_contour(photo, mask),
+            ))
+            roles.append((
+                "WORD ZONE GUIDE. Pale pink = pack sticker words here out to the edge. "
+                "Magenta = rim. Do NOT fill with a solid color plate — letters only.",
+                zone,
+            ))
+        return roles, clip_stencil
 
     guide = ImageOps.autocontrast(photo.convert("L"))
     guide = guide.point(lambda px: 0 if px < 150 else 255)
     roles.append((
-        "USER HAND PHOTO. Trace THIS exact outline as the word-art silhouette. "
-        "Same thumb side, finger lengths, gaps, and rotation. Letters stay "
-        "inside the hand. Keep the same crop as this photo. "
+        "USER HAND OUTLINE / PHOTO. Trace THIS exact outline as the word-art silhouette. "
+        "Same thumb side, finger lengths, gaps, and rotation. Pack complete words "
+        "inside the hand out to the edges. Keep the same crop. No solid black plate. "
         "Do not replace it with a generic open palm.",
         photo,
     ))
     roles.append((
         "HIGH-CONTRAST GUIDE of the same upload. Follow this outline. "
-        "Words only on the hand shape.",
+        "Words only inside the hand shape; transparent outside.",
         Image.merge("RGB", (guide, guide, guide)),
     ))
     return roles, None
 
 
 def clip_image_to_stencil(img: Image.Image, stencil: Image.Image) -> Image.Image:
-    """Make pixels outside the dark stencil transparent, if the hand still overlaps."""
+    """
+    Fade pixels outside the stencil. Uses a soft edge so rough canvas outlines
+    do not razor-cut mid-letter; only clearly-outside ink is cleared.
+    """
     rgba = img.convert("RGBA")
     if not NUMPY_AVAILABLE:
         return rgba
     guide = to_rgb(stencil).resize(rgba.size, Image.Resampling.BILINEAR)
     arr = np.array(rgba)
-    keep = np.array(guide).astype(np.int16).mean(axis=2) < 150
+    dark = np.array(guide).astype(np.float32).mean(axis=2)
+    # Soft keep weight: 1 inside hand, 0 far outside (feathered rim).
+    if SCIPY_AVAILABLE:
+        hard = dark < 150
+        # Generous keep so rough-edge packing isn't chopped.
+        hard = _ndimage.binary_dilation(hard, iterations=max(4, min(hard.shape) // 100))
+        dist_out = _ndimage.distance_transform_edt(~hard)
+        feather = max(6.0, min(hard.shape) / 70.0)
+        weight = np.ones(hard.shape, dtype=np.float32)
+        # Inside stays fully opaque; only fade ink that spilled past the rim.
+        weight[~hard] = np.clip(1.0 - (dist_out[~hard] / feather), 0.0, 1.0)
+        keep = hard
+    else:
+        keep = dark < 150
+        weight = keep.astype(np.float32)
+
     rgb = arr[:, :, :3].astype(np.int16)
     lum = rgb.mean(axis=2)
     sat = np.maximum.reduce([rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]]) - np.minimum.reduce(
         [rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]]
     )
-    ink = (arr[:, :, 3] > 16) & ((sat > 25) | ((lum < 210) & (lum > 18)))
+    ink = (arr[:, :, 3] > 16) & (sat > 28) & (lum > 24) & (lum < 250)
     ink_count = int(ink.sum())
     if ink_count < 80:
+        ink = (arr[:, :, 3] > 16) & ((sat > 25) | ((lum < 210) & (lum > 18)))
+        ink_count = int(ink.sum())
+    if ink_count < 80:
         return rgba
-    if int((ink & keep).sum()) / ink_count < 0.35:
+    overlap = int((ink & keep).sum()) / ink_count
+    if overlap < 0.22:
         return rgba
-    arr[~keep, 3] = 0
+    alpha = arr[:, :, 3].astype(np.float32) * weight
+    arr[:, :, 3] = np.clip(alpha, 0, 255).astype(np.uint8)
     return Image.fromarray(arr, "RGBA")
 
 
@@ -304,6 +505,109 @@ def _drop_large_dark_plate(arr, lum, sat, opaque):
     return arr, arr[:, :, 3] > 0
 
 
+def _knockout_cream_fill(arr):
+    """Clear beige/cream hand FILL so only colored letter ink remains."""
+    r = arr[:, :, 0].astype(np.int16)
+    g = arr[:, :, 1].astype(np.int16)
+    b = arr[:, :, 2].astype(np.int16)
+    a = arr[:, :, 3]
+    lum = (r + g + b) / 3.0
+    sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+    cream = ((lum >= 178) & (sat <= 58)) | (
+        (r >= 220) & (g >= 210) & (b >= 190) & (sat <= 48)
+    )
+    arr[cream & (a > 0), 3] = 0
+    return arr
+
+
+def _drop_uniform_hand_plate(arr):
+    """
+    If the subject is mostly one flat color (solid embossed hand), clear the
+    flat fill and keep only letter-like relief / edges / saturated ink.
+    """
+    if not SCIPY_AVAILABLE:
+        return arr, arr[:, :, 3] > 0
+    opaque = arr[:, :, 3] > 0
+    if opaque.sum() < 200:
+        return arr, opaque
+    rgb = arr[:, :, :3].astype(np.float32)
+    lum = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+    sat = np.maximum(np.maximum(rgb[:, :, 0], rgb[:, :, 1]), rgb[:, :, 2]) - np.minimum(
+        np.minimum(rgb[:, :, 0], rgb[:, :, 1]), rgb[:, :, 2]
+    )
+    med = np.median(rgb[opaque], axis=0)
+    dist = np.abs(rgb - med).sum(axis=2)
+    near = opaque & (dist <= 60)
+    if float(near.sum()) / float(opaque.sum()) < 0.52:
+        return arr, opaque  # already a multi-color word cloud
+
+    gy, gx = np.gradient(lum)
+    grad = np.hypot(gx, gy)
+    local = _ndimage.uniform_filter(lum, size=9)
+    relief = np.abs(lum - local)
+    letterish = opaque & ((grad >= 3.0) | (relief >= 5.5) | (sat > 48))
+    letterish = _ndimage.binary_dilation(letterish, iterations=2)
+    clear = near & ~letterish
+    kept = opaque & ~clear
+    if kept.sum() >= max(120, int(opaque.sum() * 0.04)):
+        arr[clear, 3] = 0
+    return arr, arr[:, :, 3] > 0
+
+
+def _keep_bubble_letters_only(arr):
+    """
+    Words-only cutout for bubble sticker hands: keep saturated letter ink +
+    tiny star/dot fillers; drop solid black plates, cream underlays, and
+    pink/blue speckled noise backgrounds.
+    """
+    if not SCIPY_AVAILABLE:
+        return arr
+    opaque = arr[:, :, 3] > 0
+    if opaque.sum() < 80:
+        return arr
+    r = arr[:, :, 0].astype(np.int16)
+    g = arr[:, :, 1].astype(np.int16)
+    b = arr[:, :, 2].astype(np.int16)
+    lum = (r + g + b) / 3.0
+    sat = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+
+    # Solid letter bodies + glossy highlights sitting on letters.
+    letter_core = opaque & (sat >= 36) & (lum >= 28) & (lum <= 245)
+    soft_highlight = opaque & (lum >= 200) & (sat <= 55)
+    if SCIPY_AVAILABLE:
+        near_core = _ndimage.binary_dilation(letter_core, iterations=2)
+        soft_highlight = soft_highlight & near_core
+
+    keep = letter_core | soft_highlight
+    if not keep.any():
+        return arr
+
+    labeled, count = _ndimage.label(keep)
+    sizes = _ndimage.sum(keep, labeled, index=range(1, count + 1)) if count else []
+    # Drop isolated speckles smaller than a tiny star; keep letter blobs + dots.
+    min_keep = 6
+    max_noise = 28
+    cleaned = np.zeros_like(keep)
+    for index, size in enumerate(sizes, 1):
+        size = int(size)
+        if size < min_keep:
+            continue
+        region = labeled == index
+        # Tiny saturated dots/stars are OK; tiny low-sat noise is not.
+        if size <= max_noise:
+            if float(sat[region].mean()) < 40:
+                continue
+        cleaned[region] = True
+
+    if cleaned.sum() < max(60, int(opaque.sum() * 0.02)):
+        return arr
+
+    # Expand so soft letter edges / thin outlines survive, then clear the rest.
+    keep = _ndimage.binary_dilation(cleaned, iterations=2)
+    arr[~keep, 3] = 0
+    return arr
+
+
 def _knockout_fill_pixels(arr):
     """
     Make paper-like pixels transparent everywhere (not just the page edge).
@@ -355,32 +659,133 @@ def _punch_enclosed_counters(arr):
     return arr
 
 
-def _colorize_word_blobs(arr):
-    """Assign each word-like blob a random palette color."""
-    if not SCIPY_AVAILABLE or _WORD_COLOR_PALETTE is None:
+def _filter_visible_palette(color_palette):
+    """Drop black/near-black swatches so lettering never disappears."""
+    if color_palette is None:
+        return _WORD_COLOR_PALETTE
+    visible = []
+    for color in color_palette:
+        r, g, b = (int(color[0]), int(color[1]), int(color[2]))
+        lum = 0.299 * r + 0.587 * g + 0.114 * b
+        if lum < 72 or max(r, g, b) < 58:
+            continue
+        visible.append((r, g, b))
+    if visible:
+        return np.asarray(visible, dtype=np.uint8)
+    if _WORD_COLOR_PALETTE is not None:
+        return _WORD_COLOR_PALETTE
+    return np.asarray([(232, 64, 128), (255, 140, 40), (32, 186, 196)], dtype=np.uint8)
+
+
+def _recolor_dark_ink_blobs(arr, palette):
+    """Force any leftover black/grey words onto the visible user palette."""
+    if not SCIPY_AVAILABLE or palette is None or len(palette) == 0:
         return arr
     opaque = arr[:, :, 3] > 0
     if not opaque.any():
         return arr
-    merged = opaque
-    labeled, count = _ndimage.label(merged, structure=np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=int))
-    if count < 1:
+    rgb = arr[:, :, :3].astype(np.int16)
+    lum = (0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2])
+    sat = np.maximum(np.maximum(rgb[:, :, 0], rgb[:, :, 1]), rgb[:, :, 2]) - np.minimum(
+        np.minimum(rgb[:, :, 0], rgb[:, :, 1]), rgb[:, :, 2]
+    )
+    dark = opaque & (lum <= 85) & (sat <= 55)
+    if not dark.any():
         return arr
-    rng = np.random.default_rng()
-    palette = _WORD_COLOR_PALETTE
-    last_idx = -1
+    labeled, count = _ndimage.label(
+        dark,
+        structure=np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=int),
+    )
+    n_colors = len(palette)
+    usage = [0] * n_colors
     for index in range(1, count + 1):
-        region = (labeled == index) & opaque
+        region = labeled == index
         if int(region.sum()) < 8:
             continue
-        color_idx = int(rng.integers(0, len(palette)))
-        if color_idx == last_idx:
-            color_idx = (color_idx + 1) % len(palette)
-        last_idx = color_idx
-        arr[region, 0] = palette[color_idx][0]
-        arr[region, 1] = palette[color_idx][1]
-        arr[region, 2] = palette[color_idx][2]
+        color_idx = min(range(n_colors), key=lambda i: (usage[i], i))
+        usage[color_idx] += 1
+        base = palette[color_idx]
+        arr[region, 0] = base[0]
+        arr[region, 1] = base[1]
+        arr[region, 2] = base[2]
     return arr
+
+
+def _colorize_word_blobs(arr, color_palette=None, preserve_shading: bool = False):
+    """
+    Assign each word-like blob one palette color.
+
+    preserve_shading=True joins letter gaps first so a whole WORD gets one color.
+    Colors are balanced across the full user palette (not stuck on 1–2 inks).
+    Black/near-black swatches are filtered out so words stay visible.
+    """
+    if not SCIPY_AVAILABLE:
+        return arr
+    palette = _filter_visible_palette(color_palette)
+    if palette is None or len(palette) == 0:
+        return arr
+    opaque = arr[:, :, 3] > 0
+    if not opaque.any():
+        return arr
+    # Close gaps between letters so one WORD gets one solid color (not per-letter rainbow).
+    # Keep closing mild so neighboring words stay separate and can take different inks.
+    if preserve_shading:
+        merged = _ndimage.binary_closing(opaque, structure=np.ones((3, 3), dtype=int), iterations=2)
+        merged = _ndimage.binary_dilation(merged, iterations=1)
+    else:
+        merged = opaque
+    labeled, count = _ndimage.label(
+        merged,
+        structure=np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=int),
+    )
+    if count < 1:
+        return arr
+
+    # Collect eligible word blobs (largest first so hero words get distinct inks).
+    blobs = []
+    for index in range(1, count + 1):
+        region = (labeled == index) & opaque
+        n = int(region.sum())
+        if n < 8:
+            continue
+        rgb = arr[region, :3].astype(np.float32)
+        lum = 0.299 * rgb[:, 0] + 0.587 * rgb[:, 1] + 0.114 * rgb[:, 2]
+        sat = np.maximum(np.maximum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]) - np.minimum(
+            np.minimum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]
+        )
+        # Keep soft white/cream hand rim — do not force a palette hue onto it.
+        if preserve_shading and float(np.median(sat)) < 28 and float(np.median(lum)) > 200:
+            continue
+        # Skip giant plate blobs so we never paint the whole hand one color.
+        if n > max(8000, int(opaque.sum() * 0.28)):
+            continue
+        cy, cx = _ndimage.center_of_mass(region)
+        blobs.append((n, float(cy), float(cx), region))
+
+    if not blobs:
+        return _recolor_dark_ink_blobs(arr, palette)
+
+    blobs.sort(key=lambda item: (-item[0], item[1], item[2]))
+    n_colors = len(palette)
+    usage = [0] * n_colors
+    last_idx = -1
+
+    for _, _, _, region in blobs:
+        # Prefer the least-used swatch; avoid repeating the previous word's ink.
+        ranked = sorted(range(n_colors), key=lambda i: (usage[i], i))
+        color_idx = ranked[0]
+        if color_idx == last_idx and n_colors > 1:
+            color_idx = ranked[1]
+        usage[color_idx] += 1
+        last_idx = color_idx
+        base = palette[color_idx]
+        # Flat solid word color from the user palette (one color for the whole word).
+        arr[region, 0] = base[0]
+        arr[region, 1] = base[1]
+        arr[region, 2] = base[2]
+
+    # Second pass: any still-black/grey words get forced onto the palette.
+    return _recolor_dark_ink_blobs(arr, palette)
 
 
 def isolate_word_hand_cutout(
@@ -388,11 +793,18 @@ def isolate_word_hand_cutout(
     crop: bool = True,
     pad: int = 8,
     randomize_colors: bool = True,
+    color_palette=None,
+    letter_style: str = "marker",
 ) -> Image.Image:
     """
-    Transparent word-art hand: drop page/checkerboard and any filled silhouette
-    behind the letters. Keep (or randomly assign) per-word colors.
+    Transparent word-art hand: drop page/checkerboard/black and any filled
+    silhouette behind the letters. Keep (or assign) per-word colors.
+
+    letter_style:
+      - "marker": hollow counters, knockout fills (legacy tracing-hand)
+      - "bubble": solid glossy letters; keep fills/highlights; strip black/cream bg
     """
+    bubble = str(letter_style or "marker").lower() == "bubble"
     rgba = img.convert("RGBA")
     w, h = rgba.size
     if w < 2 or h < 2:
@@ -410,7 +822,19 @@ def isolate_word_hand_cutout(
             (r >= 238) & (g >= 230) & (b >= 210) & (sat <= 55)
         )
         checker = (sat <= 14) & (lum >= 38) & (lum <= 150)
-        walkable = paper | checker | (a < 16)
+        near_black = (lum <= 28) & (sat <= 45)
+        # Speckle / static backdrops (pink-blue noise) are walkable if not letter-like.
+        # High local color churn + small structure ≈ noise, not bubble sticker ink.
+        if SCIPY_AVAILABLE and bubble:
+            local_sat = _ndimage.uniform_filter(sat.astype(np.float32), size=5)
+            local_lum = _ndimage.uniform_filter(lum.astype(np.float32), size=5)
+            sat_var = _ndimage.uniform_filter((sat.astype(np.float32) - local_sat) ** 2, size=5)
+            lum_var = _ndimage.uniform_filter((lum.astype(np.float32) - local_lum) ** 2, size=5)
+            speckled = (sat_var > 180) & (lum_var > 120) & (sat < 90)
+        else:
+            speckled = np.zeros_like(paper, dtype=bool)
+
+        walkable = paper | checker | near_black | speckled | (a < 16)
         outer = _flood_from_edges(walkable)
         if (1.0 - outer.mean()) >= 0.03:
             arr[outer, 3] = 0
@@ -423,13 +847,23 @@ def isolate_word_hand_cutout(
 
         opaque = a > 0
         arr, opaque = _drop_large_dark_plate(arr, lum, sat, opaque)
-        arr = _knockout_fill_pixels(arr)
-        arr = _punch_enclosed_counters(arr)
+        if bubble:
+            # Words-only: strip cream/beige fill + solid plates + leftover noise.
+            arr = _knockout_cream_fill(arr)
+            arr, opaque = _drop_uniform_hand_plate(arr)
+            arr = _keep_bubble_letters_only(arr)
+        else:
+            arr = _knockout_fill_pixels(arr)
+            arr = _punch_enclosed_counters(arr)
         opaque = arr[:, :, 3] > 0
         if opaque.mean() < 0.02:
             return rgba
         if randomize_colors:
-            arr = _colorize_word_blobs(arr)
+            arr = _colorize_word_blobs(
+                arr,
+                color_palette=color_palette,
+                preserve_shading=bubble,
+            )
         out = Image.fromarray(arr, "RGBA")
     else:
         pixels = rgba.load()
@@ -1000,6 +1434,9 @@ def generate_composed_image(
     clip_to_stencil: Optional[Image.Image] = None,
     image_size: Optional[str] = None,
     model: Optional[str] = None,
+    seed: Optional[int] = None,
+    word_color_palette: Optional[Sequence[tuple]] = None,
+    letter_style: str = "marker",
 ) -> Tuple[bool, str]:
     """
     Send prompt + labeled images + optional style target to Gemini and save PNG.
@@ -1020,7 +1457,11 @@ def generate_composed_image(
         if style_target and os.path.isfile(style_target):
             style_image = Image.open(style_target)
             if isolate_subject:
-                style_image = isolate_word_hand_cutout(style_image, randomize_colors=False)
+                style_image = isolate_word_hand_cutout(
+                    style_image,
+                    randomize_colors=False,
+                    letter_style=letter_style,
+                )
             if isolate_line_art:
                 style_image = isolate_line_art_cutout(style_image)
             if obscure_style_text:
@@ -1036,8 +1477,12 @@ def generate_composed_image(
             contents.append(trailing_instruction)
 
         client = get_gemini_client()
-        # New seed on every request so "Generate again" is a fresh Gemini call.
-        seed = (generate_seed_from_prompt(normalized) ^ random.randint(1, 2**31 - 1)) % (2**31)
+        # Default: new seed each request so "Generate again" is fresh.
+        # Callers may pass seed= for deterministic / locked framing.
+        if seed is None:
+            seed = (generate_seed_from_prompt(normalized) ^ random.randint(1, 2**31 - 1)) % (2**31)
+        else:
+            seed = int(seed) % (2**31)
         response = _generate_content_image(
             client=client,
             model=model or get_gemini_image_model(),
@@ -1054,7 +1499,12 @@ def generate_composed_image(
         if clip_to_stencil is not None:
             img = clip_image_to_stencil(img, clip_to_stencil)
         if isolate_subject:
-            img = isolate_word_hand_cutout(img, randomize_colors=True)
+            img = isolate_word_hand_cutout(
+                img,
+                randomize_colors=True,
+                color_palette=word_color_palette,
+                letter_style=letter_style,
+            )
         elif isolate_line_art:
             img = isolate_line_art_cutout(img)
         elif img.mode not in ("RGB", "RGBA"):

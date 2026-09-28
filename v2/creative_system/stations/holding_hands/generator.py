@@ -2,8 +2,16 @@ from PIL import Image
 
 from ...shared.fonts import DEFAULT_FONT_ID, get_font
 from ...shared.gemini import generate_composed_image, load_rgb
+from .colorfix import strip_map_colors
 from .layout import compose_artwork, hand_map_path, plate_path
-from .prompts import HAND_MAP_LABEL, PERSON_A_LABEL, PERSON_B_LABEL, PLATE_LABEL, build_prompt
+from .prompts import (
+    COLOR_LOCK,
+    HAND_MAP_LABEL,
+    PERSON_A_LABEL,
+    PERSON_B_LABEL,
+    PLATE_LABEL,
+    build_prompt,
+)
 
 
 def generate(
@@ -23,23 +31,28 @@ def generate(
     if not plate or not hand_map:
         return False, "Holding Hands template is missing"
 
+    photo_a = load_rgb(photo_a_path)
+    photo_b = load_rgb(photo_b_path)
+
     success, message = generate_composed_image(
         output_path=output_path,
         prompt=build_prompt(),
         role_images=[
             (PLATE_LABEL, load_rgb(plate)),
             (HAND_MAP_LABEL, load_rgb(hand_map)),
-            (PERSON_A_LABEL, load_rgb(photo_a_path)),
-            (PERSON_B_LABEL, load_rgb(photo_b_path)),
+            (PERSON_A_LABEL, photo_a),
+            (PERSON_B_LABEL, photo_b),
         ],
         aspect_ratio="4:5",
         temperature=0.3,
         operation="art_generation:creative:holding-hands",
+        trailing_instruction=COLOR_LOCK,
     )
     if not success:
         return success, message
 
     with Image.open(output_path) as hands:
-        art = compose_artwork(hands, name_a, name_b, caption, date_text, font["id"])
+        cleaned = strip_map_colors(hands, photo_a, photo_b)
+        art = compose_artwork(cleaned, name_a, name_b, caption, date_text, font["id"])
     art.save(output_path, format="PNG", optimize=True)
     return True, message

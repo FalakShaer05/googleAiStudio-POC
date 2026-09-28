@@ -21,9 +21,9 @@ def generate(output_path: str, words: list, art_style: str = "word-heart", **_kw
     chosen = normalize_art_style(art_style)
     meta = ART_STYLE_META[chosen]
     style = style_target_path(meta["style_target_id"])
-    # Sticky heart needs a readable ♥ silhouette; light blur only so lettering is unreadable.
-    # Word heart is denser type — stronger blur to stop sample vocabulary leaking.
-    obscure_radius = 12 if chosen == "sticky-heart" else 28
+    # Blur style-target lettering hard so sample vocabulary cannot be read/copied.
+    # Sticky keeps a slightly lighter blur so the note collage silhouette still reads.
+    obscure_radius = 20 if chosen == "sticky-heart" else 32
     ok, message_out = generate_composed_image(
         output_path=output_path,
         prompt=build_prompt(selected, chosen),
@@ -31,7 +31,7 @@ def generate(output_path: str, words: list, art_style: str = "word-heart", **_kw
         style_target=style,
         style_instruction=style_instruction(chosen),
         aspect_ratio=aspect_from_image(style, fallback="1:1"),
-        temperature=0.3 if chosen == "sticky-heart" else 0.35,
+        temperature=0.2 if chosen == "sticky-heart" else 0.25,
         operation=f"art_generation:creative:word-art-heart:{chosen}",
         obscure_style_text=True,
         obscure_style_radius=obscure_radius,

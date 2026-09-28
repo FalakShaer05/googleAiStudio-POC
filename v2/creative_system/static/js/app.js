@@ -17,6 +17,29 @@
     return Array.from(form.querySelectorAll(".word-chip:checked")).map((el) => el.value);
   }
 
+  function selectedColors(form) {
+    return Array.from(form.querySelectorAll(".th-color-chip:checked")).map((el) => el.value);
+  }
+
+  function syncColorPicker(picker) {
+    if (!picker) return;
+    const max = parseInt(picker.getAttribute("data-max-colors") || "5", 10);
+    const checked = picker.querySelectorAll(".th-color-chip:checked");
+    const countEl = picker.closest(".mb-3") && picker.closest(".mb-3").querySelector("[data-color-count]");
+    if (countEl) {
+      countEl.textContent = checked.length + " / " + max + " selected";
+    }
+    picker.querySelectorAll(".th-color-chip").forEach((input) => {
+      if (!input.checked && checked.length >= max) {
+        input.disabled = true;
+        input.closest(".th-color-swatch")?.classList.add("is-disabled");
+      } else {
+        input.disabled = false;
+        input.closest(".th-color-swatch")?.classList.remove("is-disabled");
+      }
+    });
+  }
+
   function fileCache(form) {
     if (!form._fileCache) form._fileCache = {};
     return form._fileCache;
@@ -51,6 +74,11 @@
     if (form.querySelector(".word-chip")) {
       body.set("words", JSON.stringify(selectedWords(form)));
     }
+    if (form.querySelector("[data-color-picker]")) {
+      // Send colors as a JSON array only — never repeated form fields.
+      body.delete("colors");
+      body.set("colors", JSON.stringify(selectedColors(form)));
+    }
     Object.entries(fileCache(form)).forEach(([name, files]) => {
       if (!files || !files.length) return;
       const current = body.getAll(name).filter((value) => value instanceof File && value.size);
@@ -78,8 +106,10 @@
       const stationId = form.getAttribute("data-station-form");
       if (stationId === "audio-to-text") {
         submitBtn.textContent = "Transcribe again";
-      } else if (stationId === "classic-my-way") {
+      } else if (stationId === "classic-my-way" || stationId === "color-enhance") {
         submitBtn.textContent = "Enhance again";
+      } else if (stationId === "origami") {
+        submitBtn.textContent = "Fold again";
       } else {
         submitBtn.textContent = "Generate again";
       }
@@ -186,7 +216,7 @@
           img.style.display = "";
           img.src = cacheBust(imageUrl);
         }
-        if (stationId === "classic-my-way") {
+        if (stationId === "classic-my-way" || stationId === "color-enhance" || stationId === "origami") {
           syncClassicMyWayOriginal(form);
         }
       }
@@ -230,18 +260,46 @@
     update();
   });
 
+  document.querySelectorAll("[data-color-picker]").forEach((picker) => {
+    syncColorPicker(picker);
+    picker.addEventListener("change", (event) => {
+      if (!(event.target instanceof HTMLInputElement) || !event.target.classList.contains("th-color-chip")) {
+        return;
+      }
+      const max = parseInt(picker.getAttribute("data-max-colors") || "5", 10);
+      const checked = picker.querySelectorAll(".th-color-chip:checked");
+      if (checked.length > max) {
+        event.target.checked = false;
+      }
+      syncColorPicker(picker);
+    });
+  });
+
   document.querySelectorAll("form[data-station-form]").forEach((form) => {
     form.setAttribute("novalidate", "");
     form.querySelectorAll('input[type="file"]').forEach((input) => {
       input.addEventListener("change", () => {
         rememberFileInput(form, input);
-        if (form.getAttribute("data-station-form") === "classic-my-way" && input.hasAttribute("data-cmw-source")) {
+        const sid = form.getAttribute("data-station-form");
+        if ((sid === "classic-my-way" || sid === "color-enhance" || sid === "origami") && input.hasAttribute("data-cmw-source")) {
           syncClassicMyWayOriginal(form);
         }
       });
     });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      if (form.getAttribute("data-station-form") === "tracing-hand") {
+        const colors = selectedColors(form);
+        if (!colors.length) {
+          const status = form.querySelector(".cs-status");
+          if (status) {
+            status.className = "status-message status-error";
+            status.textContent = "Pick at least 1 color (up to 5).";
+            status.style.display = "block";
+          }
+          return;
+        }
+      }
       submitForm(form);
     });
   });
