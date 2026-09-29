@@ -113,7 +113,8 @@ STYLE_INSTRUCTION = (
     "speckle/noise backgrounds, digits/numbers, or writing color codes as text. "
     "IGNORE every word printed on this reference and IGNORE its black/speckled backdrop. "
     "Do NOT copy this reference's hand pose or its repeated words. "
-    "User canvas outline / photo = the ONLY silhouette to fill with words."
+    "User canvas outline / photo = the ONLY silhouette to fill with words. "
+    "User vocabulary checklist = the ONLY words to print — every listed word once."
 )
 
 POSE_LOCK = (
@@ -121,8 +122,11 @@ POSE_LOCK = (
     "The upload is a ROUGH HAND DRAWING or photo — that silhouette is the ONLY shape. "
     "Match its thumb side, finger count, finger lengths, gaps, rotation, and left vs right. "
     "PACK complete sticker words densely into the WHOLE silhouette — fingertips, "
-    "finger gaps, palm pockets, and rough edge regions. Scale and rotate whole words "
-    "to fit; do NOT slice or crop letters mid-glyph. Tiny stars/dots fill leftover cracks. "
+    "finger gaps, palm pockets, wrist band, and rough edge regions. Scale and rotate whole words "
+    "to fit; do NOT slice or crop letters mid-glyph. "
+    "If the wrist outline is open / unfinished, still treat the hand as a CLOSED packing region "
+    "and place a FULL uncut word row across the wrist — never leave the bottom breaking off. "
+    "Tiny stars/dots fill leftover cracks. "
     "Outside the silhouette stays fully transparent. "
     "Do NOT paint a solid black (or any solid) hand plate behind the words. "
     "Do NOT add speckles, noise, checkerboard, or a filled backdrop. "
@@ -151,6 +155,18 @@ def numbered_word_list(words: list[str]) -> str:
         f"- {word.upper()}"
         for word in _normalized_words(words)
     )
+
+
+def coverage_checklist(words: list[str]) -> str:
+    """Checkbox list without digit prefixes (digits leak into sticker lettering)."""
+    return "\n".join(
+        f"[ ] {word.upper()}"
+        for word in _normalized_words(words)
+    )
+
+
+def comma_word_list(words: list[str]) -> str:
+    return ", ".join(word.upper() for word in _normalized_words(words))
 
 
 def forbidden_style_words(words: list[str]) -> list[str]:
@@ -292,6 +308,8 @@ def palette_swatch_lines(colors: list[str]) -> str:
 def vocabulary_lock(words: list[str], colors: list[str] | None = None) -> str:
     vocab = _normalized_words(words)
     listed = numbered_word_list(vocab)
+    checklist = coverage_checklist(vocab)
+    csv_words = comma_word_list(vocab)
     forbidden = forbidden_style_words(vocab)
     forbid_line = (
         "Never write these (style-reference or invented): " + ", ".join(forbidden) + "."
@@ -301,13 +319,17 @@ def vocabulary_lock(words: list[str], colors: list[str] | None = None) -> str:
     swatches = palette_swatch_lines(colors)
     count = len(vocab)
     return (
-        "VOCABULARY LOCK (final instruction, highest priority).\n"
+        "VOCABULARY LOCK (final instruction, highest priority — above packing style).\n"
         "The layout/style image may contain other words — ignore them completely.\n"
-        f"Use EACH of these {count} words EXACTLY ONCE — no duplicates, no repeats:\n"
+        f"Closed list of {count} words — spell EACH EXACTLY ONCE as readable sticker text:\n"
         f"{listed}\n"
+        f"Quick scan: {csv_words}\n"
+        f"Coverage checklist — tick EVERY box (missing even one = failed output):\n"
+        f"{checklist}\n"
+        f"Finished hand MUST contain exactly {count} distinct list words — no fewer, no extras.\n"
         f"{forbid_line}\n"
-        "Do NOT repeat any word. Do NOT invent fillers. "
-        "Leftover space = tiny stars/dots only (no extra words).\n"
+        "Do NOT skip long words to save space — shrink or rotate them to fit. "
+        "Do NOT invent fillers. Leftover cracks = tiny stars/dots only (no extra words).\n"
         "NEVER write digits, numerals, numbers (0-9), years, or strings like 69. "
         "NEVER write hex codes, hash marks, RGB values, or ink/swatch names as text.\n\n"
         "STRUCTURE LOCK — WORDS ONLY:\n"
@@ -334,6 +356,8 @@ def build_prompt(
     cleaned = _normalized_words(words)
     hero = cleaned[0].upper() if cleaned else "KINDNESS"
     listed = numbered_word_list(cleaned)
+    checklist = coverage_checklist(cleaned)
+    csv_words = comma_word_list(cleaned)
     forbidden = forbidden_style_words(cleaned)
     forbid_line = (
         "Never write: " + ", ".join(forbidden) + "."
@@ -355,11 +379,19 @@ MATCH THE STYLE TARGET LOOK (letters only, not its black background):
 - One solid ink color per whole word.
 - Dense packed composition like the style target — the hand shape is made OF words.
 
-VOCABULARY — NO DUPLICATES:
-- Write each of these {word_count} words EXACTLY ONCE. Never repeat a word.
+VOCABULARY — EXACT COUNT + NO DUPLICATES (highest priority with pose):
+You have exactly {word_count} required words. Write EACH EXACTLY ONCE as readable sticker text.
+Never repeat. Never invent. Never skip a word to "fit" — shrink / rotate / nestle instead.
+Every list entry MUST appear; missing even one = failed output:
 {listed}
+
+Quick scan: {csv_words}
+
+Tick before finishing (all must be present, none repeated):
+{checklist}
+
 {forbid_line}
-- Do not invent new words. Do not duplicate. Leftover cracks get dots/stars only.
+- Leftover cracks get dots/stars only — never substitute an unlisted word.
 - LETTERS ONLY — never write digits, numerals, or numbers (no 0-9, no "69", no years).
 
 CRITICAL — NEVER DO THIS:
@@ -367,7 +399,9 @@ CRITICAL — NEVER DO THIS:
 - Speckle, noise, pink/blue static, checkerboard, or filled page backgrounds.
 - Sliced / cropped letters at the silhouette edge (fit whole words instead).
 - Empty fingertips or empty edge pockets — fill them with a word or stars.
+- A broken / open / sliced-off wrist — the bottom must be a full closed word row.
 - Any digits / numerals / numbers anywhere in the artwork.
+- Skipping or omitting any word from the required list of {word_count}.
 - Duplicate any word from the list.
 - Write color codes, hash tags, RGB values, or ink names as readable text.
 - Rainbow / multi-color letters inside a single word.
@@ -384,6 +418,7 @@ ALIGNMENT:
 - Thumb / fingers: vertical or angled words that fit EACH digit fully.
 - Palm: larger words; hero "{hero}" largest in the center.
 - Pack out to the magenta/pale-pink fill zone edge.
+- Place ALL {word_count} words inside the silhouette — fingers, palm, AND wrist band.
 
 COLOR (user-selected inks only — paint with them, never write them as text):
 {swatches}
@@ -397,4 +432,4 @@ BACKGROUND:
 - Fully TRANSPARENT outside letters/rim and between words.
 - No black page, no cream underlay plate, no checkerboard, no noise.
 
-OUTPUT: densely packed sticker-word hand on transparency matching the rough drawing — each listed word once, each word one solid user-selected color."""
+OUTPUT: densely packed sticker-word hand on transparency matching the rough drawing — exactly {word_count} listed words once each, each word one solid user-selected color. Fewer than {word_count} readable list words = wrong."""

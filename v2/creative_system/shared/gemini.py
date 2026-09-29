@@ -115,8 +115,27 @@ def _is_sparse_line_drawing(rgb: Image.Image) -> bool:
     return 0.0015 <= frac <= 0.14 and float((lum >= 200).mean()) >= 0.72
 
 
+def _draw_thick_segment(mask, y0: int, x0: int, y1: int, x1: int, radius: int) -> None:
+    """Rasterize a thick line segment into a boolean mask (in place)."""
+    length = int(max(abs(y1 - y0), abs(x1 - x0), 1))
+    ys = np.linspace(y0, y1, length + 1)
+    xs = np.linspace(x0, x1, length + 1)
+    h, w = mask.shape
+    r = max(1, int(radius))
+    for y, x in zip(ys, xs):
+        yi, xi = int(round(y)), int(round(x))
+        y_lo, y_hi = max(0, yi - r), min(h, yi + r + 1)
+        x_lo, x_hi = max(0, xi - r), min(w, xi + r + 1)
+        mask[y_lo:y_hi, x_lo:x_hi] = True
+
+
 def _seal_open_wrist(ink):
-    """Close gaps where a canvas outline opens at the image edge (common at wrist)."""
+    """
+    Close gaps where a canvas outline opens (common at the wrist).
+
+    Handles strokes that reach the image border AND open wrist gaps that sit
+    above the canvas edge (users often stop short of the bottom).
+    """
     if not SCIPY_AVAILABLE:
         return ink
     sealed = ink.copy()
@@ -147,7 +166,137 @@ def _seal_open_wrist(ink):
                 continue
             x = 0 if edge == "left" else w - 1
             sealed[rows[0] : rows[-1] + 1, x] = True
+
+    # Bridge open wrist / contour ends floating above the image border.
+    ys, xs = np.where(sealed)
+    if len(ys) < 8:
+        return sealed
+    y0, y1 = int(ys.min()), int(ys.max())
+    x0, x1 = int(xs.min()), int(xs.max())
+    ink_h = max(1, y1 - y0 + 1)
+    ink_w = max(1, x1 - x0 + 1)
+    # Bottom band of the drawing itself (not the canvas).
+    band_h = max(10, ink_h // 7)
+    band_top = max(y0, y1 - band_h)
+    bottom = sealed[band_top : y1 + 1, x0 : x1 + 1]
+    if not bottom.any():
+        return sealed
+
+    # Column occupancy in the bottom band → contiguous stroke "feet".
+    col_hit = bottom.any(axis=0)
+    cols = np.where(col_hit)[0]
+    if len(cols) < 2:
+        return sealed
+    split_gap = max(6, ink_w // 25)
+    breaks = np.where(np.diff(cols) > split_gap)[0]
+    if len(breaks) == 0:
+        return sealed
+
+    groups: list[np.ndarray] = []
+    start = 0
+    for br in breaks:
+        groups.append(cols[start : br + 1])
+        start = br + 1
+    groups.append(cols[start:])
+    if len(groups) < 2:
+        return sealed
+
+    def _group_mass(group_cols: np.ndarray) -> int:
+        return int(bottom[:, group_cols].sum())
+
+    # Ignore dense feet (filled UI chrome) — wrist strokes are sparse ribbons.
+    stroke_groups = []
+    for gr in groups:
+        local = bottom[:, gr]
+        # Vertical stroke tip: moderate column width, not a solid block.
+        if float(local.mean()) <= 0.72 and len(gr) <= max(14, ink_w // 8):
+            stroke_groups.append(gr)
+    if len(stroke_groups) >= 2:
+        groups = stroke_groups
+    else:
+        # Fall back to the two heaviest feet.
+        groups = sorted(groups, key=_group_mass, reverse=True)[:2]
+        groups = sorted(groups, key=lambda g: int(g.min()))
+
+    # Leftmost + rightmost stroke feet = the open wrist tips.
+    if len(groups) > 2:
+        groups = [groups[0], groups[-1]]
+
+    def _foot_tip(group_cols: np.ndarray) -> tuple[int, int]:
+        # Lowest ink pixel near the median column of this wrist stroke.
+        local = bottom[:, group_cols]
+        rows = np.where(local.any(axis=1))[0]
+        tip_row = int(rows[-1])
+        tip_cols = group_cols[np.where(local[tip_row])[0]]
+        tip_x = int(tip_cols[len(tip_cols) // 2]) + x0
+        tip_y = tip_row + band_top
+        return tip_y, tip_x
+
+    left = _foot_tip(groups[0])
+    right = _foot_tip(groups[1])
+    gap = abs(right[1] - left[1])
+    # Ignore tiny notches; seal real wrist openings (and mid-size leaks).
+    if gap < max(8, ink_w // 30):
+        return sealed
+    # Reject absurd bridges (e.g. wrist → corner button across most of the canvas).
+    if gap > ink_w * 0.85:
+        return sealed
+    radius = max(2, min(ink_w, ink_h) // 90)
+    _draw_thick_segment(sealed, left[0], left[1], right[0], right[1], radius)
+    # Extra horizontal bar at the lower tip so fill_holes cannot leak.
+    seal_y = max(left[0], right[0])
+    x_lo, x_hi = min(left[1], right[1]), max(left[1], right[1])
+    for dy in range(-radius, radius + 1):
+        yy = seal_y + dy
+        if 0 <= yy < h:
+            sealed[yy, max(0, x_lo - radius) : min(w, x_hi + radius + 1)] = True
     return sealed
+
+
+def _mask_has_filled_interior(mask, ink) -> bool:
+    """True when mask is a solid silhouette, not just a thickened stroke ring."""
+    if not _mask_is_usable(mask):
+        return False
+    if float(mask.mean()) < float(ink.mean()) * 3.0:
+        return False
+    ys, xs = np.where(mask)
+    if len(ys) < 20:
+        return False
+    cy, cx = int(np.median(ys)), int(np.median(xs))
+    # Probe a small neighborhood around the geometric median — hollow rings fail.
+    h, w = mask.shape
+    rad = max(2, min(h, w) // 80)
+    patch = mask[max(0, cy - rad) : min(h, cy + rad + 1), max(0, cx - rad) : min(w, cx + rad + 1)]
+    return bool(patch.size) and float(patch.mean()) >= 0.85
+
+
+def _reinforce_wrist_base(mask):
+    """
+    Thicken the bottom of a sealed open-wrist silhouette so the last word row
+    has room inside the fill zone instead of sitting on a razor edge.
+    """
+    if not SCIPY_AVAILABLE or not mask.any():
+        return mask
+    out = mask.copy()
+    h, w = out.shape
+    ys, xs = np.where(out)
+    y0, y1 = int(ys.min()), int(ys.max())
+    x0, x1 = int(xs.min()), int(xs.max())
+    ink_h = max(1, y1 - y0 + 1)
+    band_h = max(10, ink_h // 10)
+    band_top = max(0, y1 - band_h)
+    # Columns that already belong to the silhouette near the wrist.
+    cols = np.where(out[band_top : y1 + 1].any(axis=0))[0]
+    if len(cols) < 2:
+        return out
+    x_lo, x_hi = int(cols[0]), int(cols[-1])
+    # Push a solid shelf a few pixels below the current tip (canvas permitting).
+    extend = max(4, ink_h // 35)
+    y_lo = max(0, y1 - max(3, band_h // 4))
+    y_hi = min(h, y1 + extend + 1)
+    out[y_lo:y_hi, x_lo : x_hi + 1] = True
+    out = _ndimage.binary_fill_holes(out)
+    return out
 
 
 def _smooth_hand_fill_mask(mask):
@@ -168,10 +317,12 @@ def _smooth_hand_fill_mask(mask):
     if count > 1:
         sizes = _ndimage.sum(closed, labeled, index=range(1, count + 1))
         closed = labeled == (int(np.argmax(sizes)) + 1)
+    closed = _reinforce_wrist_base(closed)
     # Grow out to the rough outer edge so fingertips / palm pockets fill.
     grow = max(3, min(h, w) // 90)
     closed = _ndimage.binary_dilation(closed, iterations=grow)
     closed = _ndimage.binary_fill_holes(closed)
+    closed = _reinforce_wrist_base(closed)
     # Soft boundary — avoids razor-cut mid-letter clips from pen wobble.
     sigma = max(1.8, min(h, w) / 160.0)
     soft = _ndimage.gaussian_filter(closed.astype(np.float32), sigma=sigma)
@@ -187,19 +338,46 @@ def _line_drawing_interior_mask(rgb: Image.Image):
     ink = lum <= 150
     if not ink.any():
         return None
+    # Drop tiny UI chrome / speckles (e.g. on-canvas buttons) before sealing.
+    labeled, count = _ndimage.label(ink)
+    if count > 1:
+        sizes = _ndimage.sum(ink, labeled, index=range(1, count + 1))
+        keep_id = int(np.argmax(sizes)) + 1
+        main = float(sizes[keep_id - 1])
+        ih, iw = ink.shape
+        keep = np.zeros_like(ink)
+        for i, size in enumerate(sizes, start=1):
+            size_f = float(size)
+            if size_f < max(40.0, main * 0.015):
+                continue
+            ys_i, xs_i = np.where(labeled == i)
+            bb_h = int(ys_i.max() - ys_i.min()) + 1
+            bb_w = int(xs_i.max() - xs_i.min()) + 1
+            fill_ratio = size_f / float(max(1, bb_h * bb_w))
+            cx = float(xs_i.mean()) / float(max(1, iw - 1))
+            cy = float(ys_i.mean()) / float(max(1, ih - 1))
+            # Solid corner widgets (RETRY, etc.) — not part of the outline.
+            near_corner = (cx <= 0.14 or cx >= 0.86) and cy >= 0.78
+            if near_corner and fill_ratio >= 0.22 and size_f < main * 0.55:
+                continue
+            keep |= labeled == i
+        ink = keep
     closed = _ndimage.binary_closing(ink, structure=np.ones((5, 5), dtype=int), iterations=5)
     closed = _ndimage.binary_dilation(closed, iterations=3)
     closed = _seal_open_wrist(closed)
     filled = _ndimage.binary_fill_holes(closed)
-    # Prefer the filled interior; fall back to edge-flood if holes failed.
-    if _mask_is_usable(filled) and float(filled.mean()) >= float(ink.mean()) * 2.5:
+    # Prefer a true solid silhouette; fall back to edge-flood if sealing failed.
+    if _mask_has_filled_interior(filled, ink):
         return _smooth_hand_fill_mask(filled)
     paper = lum >= 200
     outer = _flood_from_edges(paper | ~closed)
     interior = ~outer
-    if _mask_is_usable(interior):
+    if _mask_has_filled_interior(interior, ink):
         return _smooth_hand_fill_mask(interior)
-    if _mask_is_usable(filled):
+    if _mask_has_filled_interior(filled, ink):
+        return _smooth_hand_fill_mask(filled)
+    # Last resort: even a partial fill is better than a hollow stroke ring.
+    if _mask_is_usable(filled) and float(filled.mean()) >= float(ink.mean()) * 4.0:
         return _smooth_hand_fill_mask(filled)
     return None
 
@@ -313,17 +491,21 @@ def build_hand_alignment_images(hand_path: str) -> Tuple[list[RoleImage], Option
             zone = _render_hand_zone_guide(photo, mask, show_strokes=False)
             roles.append((
                 "USER ROUGH HAND DRAWING. Magenta rim = silhouette to FILL completely. "
-                "Pack glossy sticker WORDS densely into every finger tip, gap, and palm "
-                "pocket of THIS pose. Scale/rotate whole words to fit — do NOT slice "
-                "letters mid-glyph. Keep the same crop/position. No solid black plate. "
+                "Pack glossy sticker WORDS densely into every finger tip, gap, palm "
+                "pocket, and the WRIST band of THIS pose. Scale/rotate whole words to fit — "
+                "do NOT slice letters mid-glyph (especially at the bottom/wrist). "
+                "If the wrist line is open, still close the packing region and keep a full "
+                "uncut word row at the base. Keep the same crop/position. No solid black plate. "
                 "Do NOT invent a different hand pose.",
                 _overlay_hand_contour(photo, mask),
             ))
             roles.append((
                 "WORD FILL ZONE (smoothed from the rough drawing). Pale pink = fill this "
                 "ENTIRE region with packed sticker words out to the magenta edge — "
-                "including rough edge pockets and fingertips. Tiny stars/dots only in "
-                "leftover cracks. CRITICAL: words only (no solid plate); outside = transparent.",
+                "including rough edge pockets, fingertips, and the full wrist base. "
+                "Every word must sit FULLY inside the pink (no letters hanging off the bottom). "
+                "Tiny stars/dots only in leftover cracks. CRITICAL: words only (no solid plate); "
+                "outside = transparent.",
                 zone,
             ))
         else:
@@ -362,8 +544,8 @@ def build_hand_alignment_images(hand_path: str) -> Tuple[list[RoleImage], Option
 
 def clip_image_to_stencil(img: Image.Image, stencil: Image.Image) -> Image.Image:
     """
-    Fade pixels outside the stencil. Uses a soft edge so rough canvas outlines
-    do not razor-cut mid-letter; only clearly-outside ink is cleared.
+    Fade pixels outside the stencil. Preserves whole letter blobs that mostly
+    sit inside the hand so wrist/edge words are not razor-cut mid-glyph.
     """
     rgba = img.convert("RGBA")
     if not NUMPY_AVAILABLE:
@@ -374,10 +556,16 @@ def clip_image_to_stencil(img: Image.Image, stencil: Image.Image) -> Image.Image
     # Soft keep weight: 1 inside hand, 0 far outside (feathered rim).
     if SCIPY_AVAILABLE:
         hard = dark < 150
-        # Generous keep so rough-edge packing isn't chopped.
-        hard = _ndimage.binary_dilation(hard, iterations=max(4, min(hard.shape) // 100))
+        # Generous keep so rough-edge packing isn't chopped — especially wrist.
+        dilate = max(8, min(hard.shape) // 55)
+        hard = _ndimage.binary_dilation(hard, iterations=dilate)
+        # Extra pad along the bottom so open-wrist seals don't slice the last row.
+        bottom_pad = max(6, hard.shape[0] // 40)
+        hard[-bottom_pad:, :] |= _ndimage.binary_dilation(
+            hard[-bottom_pad:, :], iterations=max(3, dilate // 2)
+        )
         dist_out = _ndimage.distance_transform_edt(~hard)
-        feather = max(6.0, min(hard.shape) / 70.0)
+        feather = max(10.0, min(hard.shape) / 45.0)
         weight = np.ones(hard.shape, dtype=np.float32)
         # Inside stays fully opaque; only fade ink that spilled past the rim.
         weight[~hard] = np.clip(1.0 - (dist_out[~hard] / feather), 0.0, 1.0)
@@ -401,6 +589,21 @@ def clip_image_to_stencil(img: Image.Image, stencil: Image.Image) -> Image.Image
     overlap = int((ink & keep).sum()) / ink_count
     if overlap < 0.22:
         return rgba
+
+    # Keep/drop whole letter components — never leave a word half-sliced.
+    if SCIPY_AVAILABLE:
+        labeled, count = _ndimage.label(ink)
+        for index in range(1, count + 1):
+            region = labeled == index
+            area = int(region.sum())
+            if area < 8:
+                continue
+            inside = float((region & keep).sum()) / float(area)
+            if inside >= 0.40:
+                weight[region] = 1.0
+            elif inside <= 0.18:
+                weight[region] = 0.0
+
     alpha = arr[:, :, 3].astype(np.float32) * weight
     arr[:, :, 3] = np.clip(alpha, 0, 255).astype(np.uint8)
     return Image.fromarray(arr, "RGBA")
