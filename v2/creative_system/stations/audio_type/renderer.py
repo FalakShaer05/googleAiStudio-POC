@@ -5,7 +5,8 @@ import math
 from functools import lru_cache
 from typing import List, Sequence, Tuple
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .plates import _font
 
@@ -45,7 +46,7 @@ def render_style(style: str, envelope: Sequence[float], text: str) -> Image.Imag
 def render_rings(envelope: Sequence[float], text: str) -> Image.Image:
     size = 2048
     cx = cy = size / 2
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 255))
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     phrase = _phrase(text)
     env = _resample(envelope, 360)
 
@@ -61,12 +62,12 @@ def render_rings(envelope: Sequence[float], text: str) -> Image.Image:
 
     mic = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     _draw_microphone(mic, cx, cy, scale=1.4, color=(255, 90, 185))
-    return _neon_composite(canvas, mic, blur=14, glow=1.5).convert("RGB")
+    return _neon_composite(canvas, mic, blur=14, glow=1.5)
 
 
 def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
     width, height = 2048, 1152
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     phrase = _phrase(text)
     env = _resample(envelope, width)
     font = _font(14)
@@ -95,12 +96,12 @@ def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
 
     wave = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     _draw_center_waveform(wave, env, width, height, thickness=3)
-    return _neon_composite(canvas, wave, blur=11, glow=1.5).convert("RGB")
+    return _neon_composite(canvas, wave, blur=11, glow=1.5)
 
 
 def render_bars(envelope: Sequence[float], text: str) -> Image.Image:
     width, height = 2048, 768
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     phrase = _phrase(text)
     columns = 280
     env = _resample(envelope, columns)
@@ -130,7 +131,7 @@ def render_bars(envelope: Sequence[float], text: str) -> Image.Image:
     ImageDraw.Draw(axis).line([(0, cy), (width, cy)], fill=(255, 230, 245, 210), width=2)
     canvas = _neon_composite(canvas, line_layer, blur=8, glow=1.25)
     canvas = _neon_composite(canvas, type_layer, blur=4, glow=1.05)
-    return _neon_composite(canvas, axis, blur=7, glow=1.3).convert("RGB")
+    return _neon_composite(canvas, axis, blur=7, glow=1.3)
 
 
 def _phrase(text: str) -> str:
@@ -199,13 +200,32 @@ def _advance(font, ch: str) -> float:
 
 
 def _neon_composite(base: Image.Image, layer: Image.Image, blur: int = 12, glow: float = 1.3) -> Image.Image:
+    """Composite neon ink onto a transparent canvas without a black plate.
+
+    Blurs premultiplied RGB + alpha so transparent pixels do not bleed black
+    into the glow halo (PIL's plain GaussianBlur would otherwise).
+    """
     if layer.mode != "RGBA":
         layer = layer.convert("RGBA")
-    glow_layer = layer.filter(ImageFilter.GaussianBlur(blur))
+    arr = np.asarray(layer, dtype=np.float32)
+    alpha = arr[:, :, 3:4] / 255.0
+    premul = np.clip(arr[:, :, :3] * alpha, 0, 255).astype(np.uint8)
+    blur_rgb = Image.fromarray(premul, "RGB").filter(ImageFilter.GaussianBlur(blur))
+    blur_a = layer.getchannel("A").filter(ImageFilter.GaussianBlur(blur))
+    br = np.asarray(blur_rgb, dtype=np.float32)
+    ba = np.asarray(blur_a, dtype=np.float32)
+    out = np.zeros((arr.shape[0], arr.shape[1], 4), dtype=np.float32)
+    mask = ba > 0.5
+    ba_norm = np.maximum(ba / 255.0, 1e-6)
+    out[mask, 0] = np.clip(br[mask, 0] / ba_norm[mask], 0, 255)
+    out[mask, 1] = np.clip(br[mask, 1] / ba_norm[mask], 0, 255)
+    out[mask, 2] = np.clip(br[mask, 2] / ba_norm[mask], 0, 255)
+    out[:, :, 3] = np.clip(ba * min(1.0, 0.55 + 0.35 * glow), 0, 255)
     if glow != 1.0:
-        glow_layer = ImageEnhance.Brightness(glow_layer).enhance(glow)
-    out = Image.alpha_composite(base.convert("RGBA"), glow_layer)
-    return Image.alpha_composite(out, layer)
+        out[:, :, :3] = np.clip(out[:, :, :3] * glow, 0, 255)
+    glow_layer = Image.fromarray(out.astype(np.uint8), "RGBA")
+    composed = Image.alpha_composite(base.convert("RGBA"), glow_layer)
+    return Image.alpha_composite(composed, layer)
 
 
 def _draw_circular_waveform(
