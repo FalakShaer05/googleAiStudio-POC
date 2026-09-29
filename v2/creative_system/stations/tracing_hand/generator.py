@@ -4,7 +4,15 @@ from ...shared.gemini import (
     generate_composed_image,
     style_target_path,
 )
-from .prompts import STYLE_INSTRUCTION, build_prompt, hex_to_rgb, lettering_colors, vocabulary_lock
+from .prompts import (
+    STYLE_INSTRUCTION,
+    _normalized_words,
+    build_prompt,
+    hex_to_rgb,
+    lettering_colors,
+    vocabulary_lock,
+)
+from .vocab_board import render_vocabulary_board
 
 
 def generate(
@@ -14,10 +22,18 @@ def generate(
     colors: list | None = None,
     **_kwargs,
 ):
-    selected = list(words)
+    selected = _normalized_words(words)
     # Drop black/near-black — those words vanish on cutouts.
     palette = lettering_colors(colors)
     role_images, stencil = build_hand_alignment_images(hand_path)
+    count = len(selected)
+    # Visual checklist — models omit words less often when the full list is an image.
+    role_images = list(role_images) + [(
+        f"VOCABULARY CHECKLIST IMAGE. The finished hand MUST include ALL {count} "
+        f"words shown here as readable sticker text — each EXACTLY ONCE. "
+        f"Do not skip any row. Do not invent extras. Count = {count}.",
+        render_vocabulary_board(selected),
+    )]
     return generate_composed_image(
         output_path=output_path,
         prompt=build_prompt(selected, colors=palette),
@@ -25,7 +41,7 @@ def generate(
         style_target=style_target_path("tracing-hand"),
         style_instruction=STYLE_INSTRUCTION,
         aspect_ratio=aspect_from_image(hand_path, fallback="1:1"),
-        temperature=0.4,
+        temperature=0.35,
         operation="art_generation:creative:tracing-hand",
         isolate_subject=True,
         # Light blur: keep multi-color density masses, hide readable style vocabulary.
