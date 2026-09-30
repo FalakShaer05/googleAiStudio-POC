@@ -126,19 +126,19 @@ def _normalized_words(words: list[str]) -> list[str]:
 
 
 def numbered_word_list(words: list[str]) -> str:
+    # Bullet list — never "1. 2. 3." prefixes (models copy those as literal digits).
     return "\n".join(
-        f"{index}. {word.upper()}"
-        for index, word in enumerate(_normalized_words(words), 1)
+        f"- {word.upper()}"
+        for word in _normalized_words(words)
     )
 
 
 def coverage_checklist(words: list[str]) -> str:
-    cleaned = _normalized_words(words)
-    lines = [
-        f"[ ] {index}. {word.upper()}"
-        for index, word in enumerate(cleaned, 1)
-    ]
-    return "\n".join(lines)
+    """Checkbox list without digit prefixes."""
+    return "\n".join(
+        f"[ ] {word.upper()}"
+        for word in _normalized_words(words)
+    )
 
 
 def comma_word_list(words: list[str]) -> str:
@@ -146,9 +146,9 @@ def comma_word_list(words: list[str]) -> str:
 
 
 def forbidden_style_words(words: list[str], art_style: str | None = None) -> list[str]:
+    """Ban style-sample / invent phrases only — not the whole unused chip catalog."""
     chosen = normalize_art_style(art_style)
     allowed = {word.lower() for word in _normalized_words(words)}
-    # Ban every chip + style-sample phrase the user did not pick (stops sample leaks).
     extras = (
         "together forever",
         "support each other",
@@ -178,7 +178,7 @@ def forbidden_style_words(words: list[str], art_style: str | None = None) -> lis
     )
     blocked: list[str] = []
     seen: set[str] = set()
-    for word in (*WORD_CHIPS, *STYLE_TARGET_WORDS.get(chosen, ()), *extras):
+    for word in (*STYLE_TARGET_WORDS.get(chosen, ()), *extras):
         key = word.lower()
         if key not in allowed and key not in seen:
             seen.add(key)
@@ -211,13 +211,13 @@ def style_instruction(art_style: str | None = None) -> str:
             "Deep top cleft, two rounded lobes, sharp pointed tip at the bottom. "
             "Bright yellow notes + red handwritten lettering. Cream/off-white page. "
             "Do NOT copy any words from this image — they are unreadable on purpose. "
-            "Print ONLY the user's numbered vocabulary list, each word EXACTLY ONCE."
+            "Print ONLY the user's freeform vocabulary list, each word EXACTLY ONCE."
         )
     return (
         "LAYOUT / COLOR TARGET only (text is intentionally blurred). "
         "Clone the anatomical heart silhouette, monochrome vibrant red ink, warped typography density, "
         "thin red vessel hatching, and cream page. Do NOT copy any words from this image — "
-        "they are unreadable on purpose. Print ONLY the user's numbered vocabulary list, "
+        "they are unreadable on purpose. Print ONLY the user's freeform vocabulary list, "
         "each word EXACTLY ONCE."
     )
 
@@ -270,14 +270,15 @@ def vocabulary_lock(words: list[str], art_style: str | None = None) -> str:
         return (
             "VOCABULARY LOCK (final instruction, highest priority).\n"
             "The style image is blurred — ignore any guessed reference words.\n"
-            f"Closed list of {count} words — spell each EXACTLY ONCE:\n"
+            f"Closed freeform list of {count} words — spell each EXACTLY ONCE:\n"
             f"{listed}\n"
             f"{forbid_line}\n"
             f"{coverage}\n"
             f"{shape}\n"
-            f"Use EXACTLY {count} sticky notes — one note per list entry, one word per note. "
-            "Do NOT add blank notes, decoy notes, or second copies of any word. "
-            "Form the ♥ by overlapping / scaling / rotating those notes only.\n"
+            f"Place all {count} list words on sticky notes — one unique list word per text note, "
+            "each EXACTLY ONCE. You MAY add blank yellow notes (no text) to complete the ♥ "
+            "silhouette when more notes are needed than words. "
+            "Do NOT invent filler words and do NOT draw any list word a second time.\n"
             "Keep the heart compact (~half the frame) with cream margin around it — "
             "notes form the silhouette, not a giant yellow plate.\n"
             "Plain cream or white page behind the heart (real transparency is applied after). "
@@ -286,12 +287,12 @@ def vocabulary_lock(words: list[str], art_style: str | None = None) -> str:
     return (
         "VOCABULARY LOCK (final instruction, highest priority).\n"
         "The style image is blurred — ignore any guessed reference words.\n"
-        f"Closed list of {count} words — spell each EXACTLY ONCE:\n"
+        f"Closed freeform list of {count} words — spell each EXACTLY ONCE:\n"
         f"{listed}\n"
         f"{forbid_line}\n"
         f"{coverage}\n"
         f"Make \"{hero}\" the single largest central word inside the heart body "
-        "(still only once).\n"
+        "(still only once — NEVER draw \"{hero}\" a second time anywhere).\n"
         "Fill leftover cracks with thin red vessel hatching / contour lines only — "
         "never extra words.\n"
         "Keep the monochrome red anatomical calligram on a plain cream page "
@@ -322,7 +323,7 @@ Match THAT scale and look: medium heart with margin, notes overlapping into a �
 {shape_lock(chosen)}
 
 VOCABULARY — NO DUPLICATES (highest priority with shape):
-You have exactly {count} required words. Write EACH EXACTLY ONCE. Never repeat. Never invent.
+You have exactly {count} required freeform words from the caller. Write EACH EXACTLY ONCE. Never repeat. Never invent.
 Every word MUST appear as readable text on its own sticky note:
 {listed}
 
@@ -332,25 +333,25 @@ Tick before finishing (all must be present, none repeated):
 {checklist}
 
 WHAT TO DRAW:
-- EXACTLY {count} bright yellow sticky notes — one note per list entry. No more, no less.
+- At least {count} bright yellow sticky notes: one text note per list entry, plus optional BLANK notes (no text) if needed to complete the ♥.
 - Slightly rotated, overlapping with soft drop shadows so they form a classic ♥.
 - Heart height about 45–55% of the canvas; keep clear cream margin on every side.
-- Scale / nestle / overlap those {count} notes to complete the silhouette — do NOT add extra notes or repeat text.
+- Scale / nestle / overlap notes to complete the silhouette — blank pads for packing only; NEVER invent extra words or repeat list text.
 - Optional thin yellow under-edge only in tiny gaps / tip — never a big solid yellow heart showing around the collage.
-- Each note shows ONE unique list entry in casual red handwritten capital letters.
-- Most notes include a tiny hand-drawn red heart under the text (optional dashes/underlines like the sample).
+- Each text note shows ONE unique list entry in casual red handwritten capital letters.
+- Most text notes include a tiny hand-drawn red heart under the text (optional dashes/underlines like the sample).
 - No anatomical vessels, chambers, aorta, or medical sketch lines.
 
 {forbid_line}
 
 FORBIDDEN:
 - Duplicating any list word
-- Adding words not on the numbered list
+- Adding words not on the freeform list above
 - Oversized heart filling most of the frame
 - Giant solid yellow ♥ plate with tiny notes stuck on top
 - Blunt / flat / square bottom tip
 - Circle / oval / blob arrangements that do not read as ♥
-- Skipping any numbered word
+- Skipping any listed word
 - Copying style-sample vocabulary unless that exact phrase is listed above
 - Anatomical heart / dense red calligram / UI / captions / buttons
 - Black background
@@ -367,8 +368,8 @@ Clone the attached style target for LAYOUT/COLOR only (its text is blurred — d
 Vibrant RED warped lettering forming a realistic anatomical heart on soft cream paper.
 
 VOCABULARY — NO DUPLICATES (highest priority after style):
-You have exactly {count} required words. Write EACH EXACTLY ONCE. Never repeat. Never invent.
-Place EVERY numbered word as readable text — no extras, no copies:
+You have exactly {count} required freeform words from the caller. Write EACH EXACTLY ONCE. Never repeat. Never invent.
+Place EVERY listed word as readable text — no extras, no copies:
 {listed}
 
 Quick scan of required vocabulary: {csv_words}
@@ -379,7 +380,7 @@ Coverage checklist — every box once, none twice:
 WHAT TO DRAW:
 - Anatomical heart (atria, ventricles, aorta/pulmonary vessels on top). Slight tilt. NOT a valentine ♥.
 - Silhouette built from the {count} words only; scale / warp / rotate them to follow chambers and vessels.
-- "{hero}" is the HERO word: largest, boldest, centered in the main heart body (still only once).
+- "{hero}" is the HERO word: largest, boldest, centered in the main heart body (still only once — NEVER draw "{hero}" again anywhere else).
 - Distribute the other {count - 1} words across chambers and vessels so none are omitted and none are repeated.
 - Warp/rotate lettering to follow walls. Thin red contour/hatching between clusters for density — not extra words.
 - ALL lettering and linework ONE vibrant red.
@@ -388,8 +389,8 @@ WHAT TO DRAW:
 {forbid_line}
 
 FORBIDDEN:
-- Duplicating any list word
-- Skipping any numbered word
+- Duplicating any list word (including a second copy of the hero)
+- Skipping any listed word
 - Inventing fillers / synonyms / style-sample leftovers not listed above
 - Multi-color doodles, sticky-note collage, UI, captions, buttons
 
@@ -398,4 +399,4 @@ BACKGROUND:
 - Do NOT fake checkerboard transparency — leave a solid cream page; real PNG alpha is added afterward.
 
 OUTPUT: monochrome red anatomical word-heart where all {count} user words appear exactly once.
-Missing or duplicating any list word = failed output. Hero "{hero}" must stay visually dominant."""
+Missing or duplicating any list word = failed output. Hero "{hero}" must stay visually dominant and appear only once."""

@@ -110,11 +110,11 @@ STYLE_INSTRUCTION = (
     "ONE solid ink color per whole word, tiny star/dot fillers, soft light outer rim. "
     "Spread ALL user-selected inks across neighboring words. "
     "WRONG: rainbow letters inside one word, solid black/colored hand plate, "
-    "speckle/noise backgrounds, digits/numbers, or writing color codes as text. "
+    "speckle/noise backgrounds, or writing color codes as text. "
     "IGNORE every word printed on this reference and IGNORE its black/speckled backdrop. "
     "Do NOT copy this reference's hand pose or its repeated words. "
     "User canvas outline / photo = the ONLY silhouette to fill with words. "
-    "User vocabulary checklist = the ONLY words to print — every listed word once."
+    "The caller's freeform word list = the ONLY words to print — every listed word once."
 )
 
 POSE_LOCK = (
@@ -135,13 +135,11 @@ POSE_LOCK = (
 
 
 def _normalized_words(words: list[str]) -> list[str]:
+    """Pass through any freeform API tokens (only empty strings dropped; case-dedupe)."""
     seen: set[str] = set()
     unique: list[str] = []
     for word in words:
         cleaned = " ".join(str(word).split()).strip()
-        # Drop pure numbers / digit strings — never paint numerals into the hand.
-        if cleaned.isdigit() or (cleaned and all(ch.isdigit() or ch in ".,-+#" for ch in cleaned)):
-            continue
         key = cleaned.lower()
         if cleaned and key not in seen:
             seen.add(key)
@@ -321,7 +319,7 @@ def vocabulary_lock(words: list[str], colors: list[str] | None = None) -> str:
     return (
         "VOCABULARY LOCK (final instruction, highest priority — above packing style).\n"
         "The layout/style image may contain other words — ignore them completely.\n"
-        f"Closed list of {count} words — spell EACH EXACTLY ONCE as readable sticker text:\n"
+        f"Closed freeform list of {count} words — spell EACH EXACTLY ONCE as readable sticker text:\n"
         f"{listed}\n"
         f"Quick scan: {csv_words}\n"
         f"Coverage checklist — tick EVERY box (missing even one = failed output):\n"
@@ -330,7 +328,6 @@ def vocabulary_lock(words: list[str], colors: list[str] | None = None) -> str:
         f"{forbid_line}\n"
         "Do NOT skip long words to save space — shrink or rotate them to fit. "
         "Do NOT invent fillers. Leftover cracks = tiny stars/dots only (no extra words).\n"
-        "NEVER write digits, numerals, numbers (0-9), years, or strings like 69. "
         "NEVER write hex codes, hash marks, RGB values, or ink/swatch names as text.\n\n"
         "STRUCTURE LOCK — WORDS ONLY:\n"
         "Do NOT fill a solid black/colored hand plate. Do NOT emboss into a monochrome hand.\n"
@@ -380,7 +377,7 @@ MATCH THE STYLE TARGET LOOK (letters only, not its black background):
 - Dense packed composition like the style target — the hand shape is made OF words.
 
 VOCABULARY — EXACT COUNT + NO DUPLICATES (highest priority with pose):
-You have exactly {word_count} required words. Write EACH EXACTLY ONCE as readable sticker text.
+You have exactly {word_count} required freeform words from the caller. Write EACH EXACTLY ONCE as readable sticker text.
 Never repeat. Never invent. Never skip a word to "fit" — shrink / rotate / nestle instead.
 Every list entry MUST appear; missing even one = failed output:
 {listed}
@@ -392,7 +389,7 @@ Tick before finishing (all must be present, none repeated):
 
 {forbid_line}
 - Leftover cracks get dots/stars only — never substitute an unlisted word.
-- LETTERS ONLY — never write digits, numerals, or numbers (no 0-9, no "69", no years).
+- Print ONLY the freeform list above — inventing extra words is forbidden.
 
 CRITICAL — NEVER DO THIS:
 - Solid black (or any solid) hand silhouette / plate behind the words.
@@ -400,7 +397,6 @@ CRITICAL — NEVER DO THIS:
 - Sliced / cropped letters at the silhouette edge (fit whole words instead).
 - Empty fingertips or empty edge pockets — fill them with a word or stars.
 - A broken / open / sliced-off wrist — the bottom must be a full closed word row.
-- Any digits / numerals / numbers anywhere in the artwork.
 - Skipping or omitting any word from the required list of {word_count}.
 - Duplicate any word from the list.
 - Write color codes, hash tags, RGB values, or ink names as readable text.

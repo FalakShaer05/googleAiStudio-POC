@@ -327,7 +327,8 @@ def assemble_puzzle(
       1. `layout` / `layout_path`
       2. PNG metadata embedded in the piece files at split time
 
-    Output is always tagged 300 DPI and upscaled to >=4K long edge when needed.
+    Output is tagged 300 DPI. After join, a Gemini 2K enhance restores detail,
+    then LANCZOS pads the long edge to >=4K when needed.
     """
     if layout is None and not layout_path:
         layout = _layout_from_pieces(piece_paths, piece_ids=piece_ids)
@@ -469,12 +470,34 @@ def assemble_puzzle(
             + "). Upload every piece from the split — no extras, no duplicates.",
         )
 
-    # Upscale older/low-res layouts so assembled art meets 4K long edge.
-    canvas = _ensure_print_resolution(canvas)
-    out_w, out_h = canvas.size
-
+    # Gemini 2K enhance for print detail (faster than stacked 4K high-res).
+    # Fall back to LANCZOS-only if the enhance call fails.
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     canvas.convert("RGB").save(
+        output_path,
+        "PNG",
+        compress_level=PNG_COMPRESS_LEVEL,
+        dpi=out_dpi,
+    )
+    enhanced_ok = False
+    try:
+        from utils.character_utils import upscale_image_high_resolution
+
+        enhanced_ok, enhance_msg = upscale_image_high_resolution(
+            image_path=output_path,
+            output_path=output_path,
+            image_size="2K",
+            dpi=OUTPUT_DPI,
+        )
+        if not enhanced_ok:
+            print(f"puzzle assemble Gemini 2K enhance skipped: {enhance_msg}")
+    except Exception as exc:
+        print(f"puzzle assemble Gemini 2K enhance error: {exc}")
+
+    with Image.open(output_path) as enhanced:
+        canvas = _ensure_print_resolution(enhanced.convert("RGB"))
+    out_w, out_h = canvas.size
+    canvas.save(
         output_path,
         "PNG",
         compress_level=PNG_COMPRESS_LEVEL,
@@ -483,7 +506,9 @@ def assemble_puzzle(
     dpi_label = int(round(out_dpi[0]))
     note = (
         f"Assembled complete puzzle ({placed}/{len(expected_ids)} unique pieces) "
-        f"into one image ({out_w}x{out_h}px @ {dpi_label} DPI)."
+        f"into one image ({out_w}x{out_h}px @ {dpi_label} DPI"
+        + (", Gemini 2K enhanced" if enhanced_ok else "")
+        + ")."
     )
     if missing:
         note += f" Skipped {len(missing)}: " + "; ".join(missing[:3])
