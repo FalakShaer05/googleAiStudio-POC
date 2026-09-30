@@ -12,7 +12,6 @@ from .prompts import (
     lettering_colors,
     vocabulary_lock,
 )
-from .vocab_board import render_vocabulary_board
 
 
 def generate(
@@ -26,14 +25,6 @@ def generate(
     # Drop black/near-black — those words vanish on cutouts.
     palette = lettering_colors(colors)
     role_images, stencil = build_hand_alignment_images(hand_path)
-    count = len(selected)
-    # Visual checklist — models omit words less often when the full list is an image.
-    role_images = list(role_images) + [(
-        f"VOCABULARY CHECKLIST IMAGE. The finished hand MUST include ALL {count} "
-        f"words shown here as readable sticker text — each EXACTLY ONCE. "
-        f"Do not skip any row. Do not invent extras. Count = {count}.",
-        render_vocabulary_board(selected),
-    )]
     return generate_composed_image(
         output_path=output_path,
         prompt=build_prompt(selected, colors=palette),
@@ -44,9 +35,9 @@ def generate(
         temperature=0.35,
         operation="art_generation:creative:tracing-hand",
         isolate_subject=True,
-        # Light blur: keep multi-color density masses, hide readable style vocabulary.
+        # Hard blur: keep bubble density masses, hide readable style vocabulary.
         obscure_style_text=True,
-        obscure_style_radius=6,
+        obscure_style_radius=52,
         trailing_instruction=vocabulary_lock(selected, colors=palette),
         clip_to_stencil=stencil,
         word_color_palette=[hex_to_rgb(c) for c in palette],

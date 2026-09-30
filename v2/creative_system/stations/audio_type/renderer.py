@@ -44,33 +44,33 @@ def render_style(style: str, envelope: Sequence[float], text: str) -> Image.Imag
 
 
 def render_rings(envelope: Sequence[float], text: str) -> Image.Image:
-    size = 2048
+    size = 4096
     cx = cy = size / 2
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     phrase = _phrase(text)
     env = _resample(envelope, 360)
 
     sharp = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    _draw_circular_waveform(sharp, env, cx, cy, radius=840, bar_len=170, width=3)
-    _draw_circular_waveform(sharp, _resample(envelope, 96), cx, cy, radius=175, bar_len=46, width=4)
-    canvas = _neon_composite(canvas, sharp, blur=16, glow=1.4)
+    _draw_circular_waveform(sharp, env, cx, cy, radius=1680, bar_len=340, width=6)
+    _draw_circular_waveform(sharp, _resample(envelope, 96), cx, cy, radius=350, bar_len=92, width=8)
+    canvas = _neon_composite(canvas, sharp, blur=32, glow=1.4)
 
     type_layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    for radius, font_size in ((250, 18), (340, 19), (440, 20), (545, 21), (655, 22)):
+    for radius, font_size in ((500, 36), (680, 38), (880, 40), (1090, 42), (1310, 44)):
         _draw_circular_text(type_layer, phrase, cx, cy, radius, _font(font_size))
-    canvas = _neon_composite(canvas, type_layer, blur=8, glow=1.12)
+    canvas = _neon_composite(canvas, type_layer, blur=16, glow=1.12)
 
     mic = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    _draw_microphone(mic, cx, cy, scale=1.4, color=(255, 90, 185))
-    return _neon_composite(canvas, mic, blur=14, glow=1.5)
+    _draw_microphone(mic, cx, cy, scale=2.8, color=(255, 90, 185))
+    return _neon_composite(canvas, mic, blur=28, glow=1.5)
 
 
 def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
-    width, height = 2048, 1152
+    width, height = 4096, 2304
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     phrase = _phrase(text)
     env = _resample(envelope, width)
-    font = _font(14)
+    font = _font(28)
     n_rows = 36
     tops, bots = _heart_top_bottom(width, height)
     cy = height / 2
@@ -88,29 +88,29 @@ def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
                 e_top = min(band_top, top)
                 e_bot = max(band_bot, bot)
             y = e_top + (e_bot - e_top) * t
-            y += (env[x] - 0.35) * 14.0 * (1.0 - abs(t - 0.5) * 0.45)
-            y += math.sin(x * 0.014 + row * 0.28) * 2.2
+            y += (env[x] - 0.35) * 28.0 * (1.0 - abs(t - 0.5) * 0.45)
+            y += math.sin(x * 0.007 + row * 0.28) * 4.4
             points.append((float(x), y))
         _draw_text_along_path(type_layer, phrase, points, font)
-    canvas = _neon_composite(canvas, type_layer, blur=6, glow=1.12)
+    canvas = _neon_composite(canvas, type_layer, blur=12, glow=1.12)
 
     wave = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    _draw_center_waveform(wave, env, width, height, thickness=3)
-    return _neon_composite(canvas, wave, blur=11, glow=1.5)
+    _draw_center_waveform(wave, env, width, height, thickness=6)
+    return _neon_composite(canvas, wave, blur=22, glow=1.5)
 
 
 def render_bars(envelope: Sequence[float], text: str) -> Image.Image:
-    width, height = 2048, 768
+    width, height = 4096, 1536
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     phrase = _phrase(text)
-    columns = 280
+    columns = 560
     env = _resample(envelope, columns)
-    font = _font(9)
+    font = _font(18)
     cy = height / 2
     max_half = height * 0.44
     col_w = width / columns
     glyphs = [ch for ch in phrase if not ch.isspace()] or list(phrase)
-    char_h = max(7, int(_font_height(font) * 0.82))
+    char_h = max(14, int(_font_height(font) * 0.82))
 
     type_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     line_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -119,8 +119,8 @@ def render_bars(envelope: Sequence[float], text: str) -> Image.Image:
     for i, amp in enumerate(env):
         color = _gradient_at(i / max(1, columns - 1), HORIZONTAL_STOPS)
         x = (i + 0.5) * col_w
-        half = max(8.0, amp * max_half)
-        bar_w = max(1, int(round(col_w * 0.38)))
+        half = max(16.0, amp * max_half)
+        bar_w = max(2, int(round(col_w * 0.38)))
         line_draw.rectangle(
             [x - bar_w / 2, cy - half, x + bar_w / 2, cy + half],
             fill=color + (110,),
@@ -128,10 +128,10 @@ def render_bars(envelope: Sequence[float], text: str) -> Image.Image:
         _draw_stacked_column(type_draw, type_layer, glyphs, font, char_h, x, cy, half, color)
 
     axis = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    ImageDraw.Draw(axis).line([(0, cy), (width, cy)], fill=(255, 230, 245, 210), width=2)
-    canvas = _neon_composite(canvas, line_layer, blur=8, glow=1.25)
-    canvas = _neon_composite(canvas, type_layer, blur=4, glow=1.05)
-    return _neon_composite(canvas, axis, blur=7, glow=1.3)
+    ImageDraw.Draw(axis).line([(0, cy), (width, cy)], fill=(255, 230, 245, 210), width=4)
+    canvas = _neon_composite(canvas, line_layer, blur=16, glow=1.25)
+    canvas = _neon_composite(canvas, type_layer, blur=8, glow=1.05)
+    return _neon_composite(canvas, axis, blur=14, glow=1.3)
 
 
 def _phrase(text: str) -> str:

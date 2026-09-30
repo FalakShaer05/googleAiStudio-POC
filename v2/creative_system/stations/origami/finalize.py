@@ -163,7 +163,11 @@ def center_on_transparent(
     canvas_size: Optional[Tuple[int, int]] = None,
     pad_ratio: float = 0.08,
 ) -> Image.Image:
-    """Crop to opaque bounds and center on a transparent canvas."""
+    """Crop to opaque bounds and center on a transparent canvas.
+
+    Never downscales the cropped art: if a template canvas is smaller than the
+    Gemini output (plus pad), the canvas is grown to fit native resolution.
+    """
     rgba = img.convert("RGBA")
     alpha = rgba.getchannel("A")
     bbox = alpha.getbbox()
@@ -172,25 +176,26 @@ def center_on_transparent(
 
     cropped = rgba.crop(bbox)
     cw, ch = cropped.size
+    denom = max(1e-6, 1.0 - 2.0 * pad_ratio)
+    needed_w = max(1, int(round(cw / denom)))
+    needed_h = max(1, int(round(ch / denom)))
 
     if canvas_size is None:
-        side = max(cw, ch)
-        side = max(int(side / (1 - 2 * pad_ratio)), 768)
+        side = max(needed_w, needed_h, 768)
         canvas_size = (side, side)
-
-    # Never shrink the transparent canvas below a usable preview size
-    canvas_size = (max(canvas_size[0], 512), max(canvas_size[1], 512))
+    else:
+        # Keep template framing when larger; never shrink below native art + pad.
+        canvas_size = (
+            max(int(canvas_size[0]), needed_w, 512),
+            max(int(canvas_size[1]), needed_h, 512),
+        )
 
     canvas = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
-    target_w = int(canvas_size[0] * (1 - 2 * pad_ratio))
-    target_h = int(canvas_size[1] * (1 - 2 * pad_ratio))
-    scale = min(target_w / max(cw, 1), target_h / max(ch, 1))
-    new_w = max(1, int(cw * scale))
-    new_h = max(1, int(ch * scale))
-    resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    x = (canvas_size[0] - new_w) // 2
-    y = (canvas_size[1] - new_h) // 2
-    canvas.paste(resized, (x, y), resized)
+    # Paste at native resolution (scale >= 1 only if canvas has extra room — we
+    # already grew the canvas, so keep art 1:1 for print detail).
+    x = (canvas_size[0] - cw) // 2
+    y = (canvas_size[1] - ch) // 2
+    canvas.paste(cropped, (x, y), cropped)
     return canvas
 
 
@@ -222,7 +227,7 @@ def finalize_origami(
         final = center_on_transparent(transparent, canvas_size=canvas_size)
         # Guarantee RGBA PNG (no accidental RGB flatten)
         final = final.convert("RGBA")
-        final.save(output_path, format="PNG", optimize=True)
+        final.save(output_path, format="PNG", optimize=True, dpi=(300, 300))
         # Sanity log
         alpha = np.asarray(final.split()[3]) if _HAS_NP else None
         if alpha is not None:

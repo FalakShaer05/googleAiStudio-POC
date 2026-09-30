@@ -22,8 +22,7 @@ def generate(output_path: str, words: list, art_style: str = "word-heart", **_kw
     meta = ART_STYLE_META[chosen]
     style = style_target_path(meta["style_target_id"])
     # Blur style-target lettering hard so sample vocabulary cannot be read/copied.
-    # Sticky keeps a slightly lighter blur so the note collage silhouette still reads.
-    obscure_radius = 20 if chosen == "sticky-heart" else 32
+    obscure_radius = 40
     ok, message_out = generate_composed_image(
         output_path=output_path,
         prompt=build_prompt(selected, chosen),

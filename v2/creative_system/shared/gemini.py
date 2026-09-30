@@ -930,40 +930,45 @@ def _colorize_word_blobs(arr, color_palette=None, preserve_shading: bool = False
     opaque = arr[:, :, 3] > 0
     if not opaque.any():
         return arr
-    # Close gaps between letters so one WORD gets one solid color (not per-letter rainbow).
-    # Keep closing mild so neighboring words stay separate and can take different inks.
-    if preserve_shading:
-        merged = _ndimage.binary_closing(opaque, structure=np.ones((3, 3), dtype=int), iterations=2)
-        merged = _ndimage.binary_dilation(merged, iterations=1)
-    else:
-        merged = opaque
-    labeled, count = _ndimage.label(
-        merged,
-        structure=np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=int),
-    )
-    if count < 1:
-        return arr
 
-    # Collect eligible word blobs (largest first so hero words get distinct inks).
-    blobs = []
-    for index in range(1, count + 1):
-        region = (labeled == index) & opaque
-        n = int(region.sum())
-        if n < 8:
-            continue
-        rgb = arr[region, :3].astype(np.float32)
-        lum = 0.299 * rgb[:, 0] + 0.587 * rgb[:, 1] + 0.114 * rgb[:, 2]
-        sat = np.maximum(np.maximum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]) - np.minimum(
-            np.minimum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]
+    def _label_blobs(merged_mask):
+        labeled, count = _ndimage.label(
+            merged_mask,
+            structure=np.array([[1, 1, 1], [1, 1, 1], [1, 1, 1]], dtype=int),
         )
-        # Keep soft white/cream hand rim — do not force a palette hue onto it.
-        if preserve_shading and float(np.median(sat)) < 28 and float(np.median(lum)) > 200:
-            continue
-        # Skip giant plate blobs so we never paint the whole hand one color.
-        if n > max(8000, int(opaque.sum() * 0.28)):
-            continue
-        cy, cx = _ndimage.center_of_mass(region)
-        blobs.append((n, float(cy), float(cx), region))
+        blobs = []
+        for index in range(1, count + 1):
+            region = (labeled == index) & opaque
+            n = int(region.sum())
+            if n < 8:
+                continue
+            rgb = arr[region, :3].astype(np.float32)
+            lum = 0.299 * rgb[:, 0] + 0.587 * rgb[:, 1] + 0.114 * rgb[:, 2]
+            sat = np.maximum(np.maximum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]) - np.minimum(
+                np.minimum(rgb[:, 0], rgb[:, 1]), rgb[:, 2]
+            )
+            # Keep soft white/cream hand rim — do not force a palette hue onto it.
+            if preserve_shading and float(np.median(sat)) < 28 and float(np.median(lum)) > 200:
+                continue
+            # Skip giant plate blobs so we never paint the whole hand one color.
+            if n > max(8000, int(opaque.sum() * 0.28)):
+                continue
+            cy, cx = _ndimage.center_of_mass(region)
+            blobs.append((n, float(cy), float(cx), region))
+        return blobs
+
+    # Close gaps between letters so one WORD gets one solid color (not per-letter rainbow).
+    # Mild close only — no dilation — so neighboring words stay separate for full palette use.
+    if preserve_shading:
+        merged = _ndimage.binary_closing(
+            opaque, structure=np.ones((3, 3), dtype=int), iterations=1
+        )
+        blobs = _label_blobs(merged)
+        # If merge crushed word count below palette size, fall back to raw opaque labeling.
+        if len(blobs) < len(palette):
+            blobs = _label_blobs(opaque)
+    else:
+        blobs = _label_blobs(opaque)
 
     if not blobs:
         return _recolor_dark_ink_blobs(arr, palette)
@@ -974,10 +979,14 @@ def _colorize_word_blobs(arr, color_palette=None, preserve_shading: bool = False
     last_idx = -1
 
     for _, _, _, region in blobs:
-        # Prefer the least-used swatch; avoid repeating the previous word's ink.
-        ranked = sorted(range(n_colors), key=lambda i: (usage[i], i))
+        # Prefer unused swatches first so all selected colors appear when blob count allows.
+        unused = [i for i in range(n_colors) if usage[i] == 0]
+        if unused:
+            ranked = unused
+        else:
+            ranked = sorted(range(n_colors), key=lambda i: (usage[i], i))
         color_idx = ranked[0]
-        if color_idx == last_idx and n_colors > 1:
+        if color_idx == last_idx and len(ranked) > 1:
             color_idx = ranked[1]
         usage[color_idx] += 1
         last_idx = color_idx

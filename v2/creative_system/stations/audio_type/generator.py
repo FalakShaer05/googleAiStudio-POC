@@ -26,5 +26,5 @@ def generate(output_path: str, audio_path: str, style: str = "rings", **_kwargs)
     bins = 360 if chosen == "rings" else 512
     image = render_style(chosen, rms_envelope(samples, bins=bins), text)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    image.save(output_path, format="PNG", optimize=True)
+    image.save(output_path, format="PNG", optimize=True, dpi=(300, 300))
     return True, f'Artwork generated from: "{text}"'

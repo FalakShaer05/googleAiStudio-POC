@@ -159,8 +159,8 @@ def _generate_impl():
                 )
             kwargs["colors"] = visible
             kwargs["words"] = parse_word_list()
-            if len(kwargs["words"]) < 3:
-                return json_error("Pick or enter at least 3 words")
+            if not kwargs["words"]:
+                return json_error("Pass at least one word")
 
         elif station_id == "word-art-heart":
             art_style = (
@@ -178,8 +178,8 @@ def _generate_impl():
                 return json_error("Choose an art style: word-heart or sticky-heart")
             kwargs["art_style"] = art_style
             kwargs["words"] = parse_word_list()
-            if len(kwargs["words"]) < 3:
-                return json_error("Pick or enter at least 3 words")
+            if not kwargs["words"]:
+                return json_error("Pass at least one word")
 
         elif station_id in {"graphic-heart", "apimh-new"}:
             kwargs["message"] = (request.form.get("message") or "").strip()

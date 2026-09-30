@@ -100,6 +100,7 @@ def generate(
         seed=_content_seed(template_path, artwork_path),
         trailing_instruction=build_trailing_instruction(layout_hint=layout_hint),
         operation="art_generation:creative:origami",
+        image_size="2K",
     )
     if not ok:
         return ok, message
