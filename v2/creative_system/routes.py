@@ -252,6 +252,7 @@ def _generate_impl():
             kwargs["style"] = (request.form.get("style") or "rings").strip().lower()
             if kwargs["style"] not in {"rings", "heart", "bars"}:
                 return json_error("Choose a visualization style: rings, heart, or bars")
+            kwargs["result_extras"] = {}
 
         if station_id == "audio-to-text":
             out_filename = generate_unique_filename("creative.txt", f"output_{station_id.replace('-', '_')}")
@@ -263,7 +264,8 @@ def _generate_impl():
         success, message = get_generator(station_id)(**kwargs)
         if not success:
             return json_error(message or "Generation failed", 500)
-        return jsonify(success_payload(out_filename, message))
+        extras = kwargs.get("result_extras") if isinstance(kwargs.get("result_extras"), dict) else {}
+        return jsonify(success_payload(out_filename, message, **extras))
     except ValueError as exc:
         return json_error(str(exc))
     except Exception as exc:

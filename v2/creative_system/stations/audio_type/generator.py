@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from ...shared.audio import transcribe_audio
 from ...shared.waveform import load_mono_samples, rms_envelope
@@ -6,7 +7,13 @@ from .prompts import TYPE_FROM_AUDIO_PROMPT, normalize_style, type_from_transcri
 from .renderer import render_style
 
 
-def generate(output_path: str, audio_path: str, style: str = "rings", **_kwargs):
+def generate(
+    output_path: str,
+    audio_path: str,
+    style: str = "rings",
+    result_extras: Optional[dict] = None,
+    **_kwargs,
+):
     chosen = normalize_style(style)
     ok, transcript = transcribe_audio(audio_path, TYPE_FROM_AUDIO_PROMPT)
     if not ok:
@@ -27,4 +34,6 @@ def generate(output_path: str, audio_path: str, style: str = "rings", **_kwargs)
     image = render_style(chosen, rms_envelope(samples, bins=bins), text)
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     image.save(output_path, format="PNG", optimize=True, dpi=(300, 300))
+    if isinstance(result_extras, dict):
+        result_extras["transcript"] = text
     return True, f'Artwork generated from: "{text}"'

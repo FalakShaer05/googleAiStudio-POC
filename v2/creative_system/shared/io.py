@@ -175,7 +175,7 @@ def cleanup_paths(*paths: Optional[str]) -> None:
         cleanup_file(path)
 
 
-def success_payload(output_filename: str, message: str) -> dict:
+def success_payload(output_filename: str, message: str, **extra) -> dict:
     data = {
         "success": True,
         "message": message,
@@ -187,11 +187,13 @@ def success_payload(output_filename: str, message: str) -> dict:
         data["result_type"] = "text"
         with open(output_path, encoding="utf-8") as handle:
             data["transcript"] = handle.read()
+        data.update(extra)
         return data
     data["result_type"] = "image"
     cloudfront_url = upload_image_to_s3(output_path)
     if cloudfront_url:
         data["image_url"] = cloudfront_url
+    data.update(extra)
     return data
 
 

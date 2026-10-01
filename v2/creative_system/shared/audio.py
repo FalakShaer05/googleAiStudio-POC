@@ -73,26 +73,43 @@ def transcribe_audio(audio_path: str, prompt: str, content_type: Optional[str] =
     return True, text
 
 
+def _transcript_config():
+    """Low-temperature config so transcription keeps every spoken word."""
+    if types is None or not hasattr(types, "GenerateContentConfig"):
+        return {"temperature": 0.0}
+    try:
+        return types.GenerateContentConfig(temperature=0.0)
+    except Exception:
+        return {"temperature": 0.0}
+
+
 def _generate_transcript(client, model: str, audio_path: str, mime: str, prompt: str):
     size = os.path.getsize(audio_path)
     uploaded = None
+    config = _transcript_config()
     try:
         if size > INLINE_AUDIO_MAX_BYTES and hasattr(client, "files"):
             uploaded = _upload_audio(client, audio_path, mime)
-            return client.models.generate_content(model=model, contents=[prompt, uploaded])
+            return client.models.generate_content(
+                model=model, contents=[prompt, uploaded], config=config
+            )
 
         with open(audio_path, "rb") as handle:
             data = handle.read()
         if types is not None and hasattr(types, "Part"):
             try:
                 audio_part = types.Part.from_bytes(data=data, mime_type=mime)
-                return client.models.generate_content(model=model, contents=[prompt, audio_part])
+                return client.models.generate_content(
+                    model=model, contents=[prompt, audio_part], config=config
+                )
             except Exception as exc:
                 print(f"inline audio send failed ({mime}), trying Files API: {exc}")
 
         if hasattr(client, "files"):
             uploaded = _upload_audio(client, audio_path, mime)
-            return client.models.generate_content(model=model, contents=[prompt, uploaded])
+            return client.models.generate_content(
+                model=model, contents=[prompt, uploaded], config=config
+            )
         raise RuntimeError("This Gemini SDK cannot send audio parts")
     finally:
         if uploaded is not None:
