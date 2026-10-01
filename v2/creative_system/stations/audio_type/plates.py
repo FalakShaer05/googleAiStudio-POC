@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 FONT_CANDIDATES = [
+    os.path.join(PACKAGE_DIR, "static", "fonts", "Poppins-Regular.ttf"),
     os.path.join(PACKAGE_DIR, "static", "fonts", "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -17,7 +18,7 @@ FONT_CANDIDATES = [
 ]
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=64)
 def _font(size: int):
     for path in FONT_CANDIDATES:
         if os.path.isfile(path):

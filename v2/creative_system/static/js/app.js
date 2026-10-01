@@ -209,8 +209,13 @@
       } else {
         const imageUrl = data.image_url || data.local_path || (cfg.downloadPrefix + data.output_filename);
         if (textEl) {
-          textEl.textContent = "";
-          textEl.style.display = "none";
+          if (stationId === "audio-type" && data.transcript) {
+            textEl.textContent = data.transcript;
+            textEl.style.display = "block";
+          } else {
+            textEl.textContent = "";
+            textEl.style.display = "none";
+          }
         }
         if (img) {
           img.style.display = "";
