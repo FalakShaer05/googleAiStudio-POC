@@ -94,30 +94,32 @@ def render_rings(envelope: Sequence[float], text: str) -> Image.Image:
 
 
 def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
-    """Wave heart: spoken words ride smooth ribbons that open into a heart.
-
-    Side ribbons are a symmetric sine band. In the middle they peel into the
-    heart silhouette (lobes, cleft, and point). Audio is only the bright
-    oscilloscope on the horizontal center — it does not bend the type.
-    """
+    """Wave heart that matches the style reference: small center heart + side waves."""
     width, height = 4096, 2522
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     words = _spoken_words(text)
     env = _resample(envelope, width)
     tops, bots = _heart_top_bottom(width, height)
 
-    # Eleven lanes above the axis and eleven below, matching the reference density.
+    # Keep center lanes readable while preserving side contours.
     n_side = 11
     lanes: List[float] = []
     for i in range(n_side):
-        mag = 0.20 + 0.80 * (i / (n_side - 1))
-        lanes.append(mag)
-        lanes.append(-mag)
+        t = i / (n_side - 1)
+        top_mag = 0.18 + 0.76 * (t ** 1.04)
+        bottom_mag = 0.14 + 0.68 * (t ** 1.10)
+        lanes.append(top_mag)
+        lanes.append(-bottom_mag)
 
     font_px = max(18, int(round(height * 0.0138)))
     outer_px = max(font_px + 2, int(round(height * 0.0160)))
     font = _font(font_px)
     outer_font = _font(outer_px)
+
+    # Draw waveform first so words can overlap on top (matching reference layering).
+    wave = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    _draw_center_waveform(wave, env, width, height, thickness=max(2, width // 1700), amp_scale=0.16)
+    canvas = _neon_composite(canvas, wave, blur=max(6, height // 130), glow=1.55)
 
     type_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     for i, lane in enumerate(lanes):
@@ -133,11 +135,22 @@ def render_heart(envelope: Sequence[float], text: str) -> Image.Image:
             word_gap_scale=1.12,
         )
 
-    canvas = _neon_composite(canvas, type_layer, blur=max(3, height // 240), glow=1.14)
+    # Explicit nested heart loops in the center (like the reference artwork).
+    for i, scale in enumerate((1.0, 0.86, 0.74, 0.63)):
+        loop = _heart_loop_parametric(width, height, scale=scale)
+        _draw_words_along_path(
+            type_layer,
+            words,
+            loop,
+            outer_font if i == 0 else font,
+            start_index=(i * 5) % len(words),
+            max_angle=90.0,
+            letter_tracking=0.98,
+            word_gap_scale=1.10,
+        )
 
-    wave = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    _draw_center_waveform(wave, env, width, height, thickness=max(2, width // 1600), amp_scale=0.17)
-    return _neon_composite(canvas, wave, blur=max(6, height // 130), glow=1.55)
+    canvas = _neon_composite(canvas, type_layer, blur=max(3, height // 250), glow=1.16)
+    return canvas
 
 
 
@@ -809,68 +822,107 @@ def _smoothstep(edge0: float, edge1: float, x: float) -> float:
 
 
 def _heart_top_bottom(width: int, height: int) -> Tuple[List[float | None], List[float | None]]:
-    """Rounded heart: ellipse lobes on top, cubic cheeks into a soft point.
+    """Small rounded heart at the center, like the style reference."""
+    raw: List[Point] = []
+    steps = 4200
+    for i in range(steps):
+        t = 2 * math.pi * i / steps
+        x = 16 * math.sin(t) ** 3
+        # Negative sign keeps the cleft on top and point on bottom.
+        y = -(13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t))
+        raw.append((x, y))
 
-    Two circles meet at a sharp cleft, so the top is smoothed after sampling.
-    The bottom stays wide through the cheeks, then tails into the point.
-    """
-    cx = width * 0.50
-    lobe_y = height * 0.355
-    rx = width * 0.122
-    ry = height * 0.275
-    sep = rx * 0.88
-    tip_y = height * 0.935
-    half_w = sep + rx
-    drop = tip_y - lobe_y
+    xs = [p[0] for p in raw]
+    ys = [p[1] for p in raw]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+    nxny = [((x - minx) / (maxx - minx), (y - miny) / (maxy - miny)) for x, y in raw]
+
+    left = 0.33
+    right = 0.67
+    top = 0.26
+    bottom = 0.78
+
+    buckets: List[List[float]] = [[] for _ in range(width)]
+    for nx, ny in nxny:
+        px = (left + nx * (right - left)) * (width - 1)
+        py = (top + ny * (bottom - top)) * (height - 1)
+        ix = int(round(px))
+        if 0 <= ix < width:
+            buckets[ix].append(py)
 
     tops: List[float | None] = [None] * width
     bots: List[float | None] = [None] * width
-    x0 = max(0, int(math.floor(cx - half_w)))
-    x1 = min(width - 1, int(math.ceil(cx + half_w)))
-    for x in range(x0, x1 + 1):
-        upper: List[float] = []
-        for lobe_cx in (cx - sep, cx + sep):
-            nx = (x - lobe_cx) / rx
-            if abs(nx) <= 1.0:
-                upper.append(lobe_y - ry * math.sqrt(1.0 - nx * nx))
-        if upper:
-            tops[x] = min(upper)
+    filled: List[int] = []
+    for i, vals in enumerate(buckets):
+        if vals:
+            tops[i] = min(vals)
+            bots[i] = max(vals)
+            filled.append(i)
 
-    # Bottom: cubic from each side point. The first control drops almost
-    # straight down (round cheek); the second pulls in toward a soft tip.
-    def _cubic(p0: Point, p1: Point, p2: Point, p3: Point, t: float) -> Point:
-        u = 1.0 - t
-        return (
-            u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
-            u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
-        )
-
-    buckets: List[List[float]] = [[] for _ in range(width)]
-    steps = 2400
-    for side in (-1.0, 1.0):
-        p0 = (cx + side * half_w, lobe_y)
-        p1 = (cx + side * half_w * 0.96, lobe_y + drop * 0.42)
-        p2 = (cx + side * half_w * 0.34, tip_y - drop * 0.08)
-        p3 = (cx, tip_y)
-        for i in range(steps + 1):
-            x, y = _cubic(p0, p1, p2, p3, i / steps)
-            ix = int(round(x))
-            if 0 <= ix < width:
-                buckets[ix].append(y)
-    for x in range(width):
-        if buckets[x]:
-            bots[x] = max(buckets[x])
-    filled = [i for i, y in enumerate(bots) if y is not None]
     for a, b in zip(filled, filled[1:]):
-        if b - a <= 1 or bots[a] is None or bots[b] is None:
+        if b - a <= 1:
+            continue
+        ta, tb = tops[a], tops[b]
+        ba, bb = bots[a], bots[b]
+        if ta is None or tb is None or ba is None or bb is None:
             continue
         for i in range(a + 1, b):
             t = (i - a) / (b - a)
-            bots[i] = bots[a] * (1.0 - t) + bots[b] * t
+            tops[i] = ta * (1.0 - t) + tb * t
+            bots[i] = ba * (1.0 - t) + bb * t
 
-    _smooth_optional(tops, radius=max(8, width // 70))
-    _smooth_optional(bots, radius=max(6, width // 110))
+    # Lift the deepest center pixels so the tail reads as soft, not diamond-sharp.
+    cx = ((left + right) * 0.5) * (width - 1)
+    hw = ((right - left) * 0.5) * (width - 1)
+    for i in filled:
+        if bots[i] is None:
+            continue
+        u = abs((i - cx) / max(1e-6, hw))
+        if u <= 1.0:
+            bots[i] -= height * 0.055 * ((1.0 - u * u) ** 2)
+
+    _smooth_optional(tops, radius=max(12, width // 62))
+    _smooth_optional(bots, radius=max(12, width // 66))
     return tops, bots
+
+
+def _heart_loop_parametric(width: int, height: int, scale: float = 1.0) -> List[Point]:
+    """Closed parametric heart path centered on the waveform axis."""
+    s = max(0.45, min(1.15, scale))
+    cx = width * 0.50
+    cy = height * 0.53
+    left = cx - width * 0.105 * s
+    right = cx + width * 0.105 * s
+    top = cy - height * 0.12 * s
+    bottom = cy + height * 0.17 * s
+
+    raw: List[Point] = []
+    steps = 1400
+    for i in range(steps):
+        t = 2 * math.pi * i / steps
+        x = 16 * math.sin(t) ** 3
+        y = -(13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t))
+        raw.append((x, y))
+    xs = [p[0] for p in raw]
+    ys = [p[1] for p in raw]
+    minx, maxx = min(xs), max(xs)
+    miny, maxy = min(ys), max(ys)
+
+    pts: List[Point] = []
+    for x, y in raw:
+        nx = (x - minx) / (maxx - minx)
+        ny = (y - miny) / (maxy - miny)
+        # Widen the lower half slightly so the point stays soft.
+        widen = 1.0 + 0.65 * max(0.0, ny - 0.62)
+        nx = 0.5 + (nx - 0.5) * widen
+        nx = min(1.0, max(0.0, nx))
+        ny = 1.0 - ((1.0 - ny) ** 0.95)
+        px = left + nx * (right - left)
+        py = top + ny * (bottom - top)
+        pts.append((px, py))
+    pts.append(pts[0])
+    return pts
 
 
 def _smooth_optional(values: List[float | None], radius: int) -> None:
@@ -910,12 +962,15 @@ def _heart_ribbon_path(
             raw.append(y_side)
             continue
         span = bot - top
-        influence = _smoothstep(0.27, 0.36, u) * (1.0 - _smoothstep(0.64, 0.73, u))
+        influence = _smoothstep(0.34, 0.46, u) * (1.0 - _smoothstep(0.54, 0.66, u))
         influence *= _smoothstep(height * 0.035, height * 0.16, span)
+        influence *= 0.88
         if lane >= 0.0:
-            y_heart = (1.0 - lane) * cy + lane * top
+            mag = min(0.96, lane ** 1.02)
+            y_heart = (1.0 - mag) * cy + mag * top
         else:
-            mag = -lane
+            # Keep the lower half soft and avoid a sharp diamond tip.
+            mag = min(0.62, (-lane) ** 1.03)
             y_heart = (1.0 - mag) * cy + mag * bot
         xs.append(float(x))
         raw.append(y_side * (1.0 - influence) + y_heart * influence)
@@ -1060,7 +1115,7 @@ def _draw_center_waveform(
     draw = ImageDraw.Draw(img)
     cy = height / 2
     amp = height * amp_scale
-    step = max(8, width // 340)
+    step = max(6, width // 620)
     spike_w = max(2, thickness)
     cap = height * 0.20
     for x in range(0, width, step):
@@ -1071,6 +1126,13 @@ def _draw_center_waveform(
         heart = max(0.0, 1.0 - abs(u - 0.5) / 0.16)
         boost = 1.0 + 0.22 * heart
         h = min(cap, max(2.0, value * amp * detail * boost))
-        color = _gradient_at(u, HORIZONTAL_STOPS) + (255,)
+        color = _gradient_at(u, HORIZONTAL_STOPS) + (215,)
         draw.line([(x, cy - h), (x, cy + h)], fill=color, width=spike_w)
+
+    # Continuous core line so the middle reads as waveform energy, not gaps.
+    line_w = max(2, thickness)
+    for x in range(1, width):
+        u = x / max(1, width - 1)
+        color = _gradient_at(u, HORIZONTAL_STOPS) + (235,)
+        draw.line([(x - 1, cy), (x, cy)], fill=color, width=line_w)
 
