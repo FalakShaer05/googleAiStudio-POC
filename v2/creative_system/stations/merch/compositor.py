@@ -238,14 +238,21 @@ def composite_on_template(
 
 
 def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
-    """Photo print — art keeps aspect ratio, fills the card as much as possible."""
+    """Photo / poster print — art centered with white paper margins, no stretch."""
     art = trim_artwork(artwork)
     if template is not None:
+        # Shrink the detected card face so art keeps a store-listing white border.
+        x0, y0, x1, y1 = detect_card_box(template)
+        inset = 0.06
+        zx0 = x0 + (x1 - x0) * inset
+        zy0 = y0 + (y1 - y0) * inset
+        zx1 = x1 - (x1 - x0) * inset
+        zy1 = y1 - (y1 - y0) * inset
         return composite_on_template(
             template,
             art,
-            print_box=detect_card_box(template),
-            fit="cover",
+            print_box=(zx0, zy0, zx1, zy1),
+            fit="contain",
             opacity=1.0,
             shade=False,
             knockout=False,
@@ -259,26 +266,30 @@ def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) 
     sdraw.rectangle((card[0] + 10, card[1] + 12, card[2] + 10, card[3] + 12), fill=(0, 0, 0, 50))
     shadow = shadow.filter(ImageFilter.GaussianBlur(10))
     canvas.paste(shadow.convert("RGB"), mask=shadow.split()[3])
-    filled = _fit(art, (card[2] - card[0], card[3] - card[1]), "contain")
-    canvas.paste(flatten_on_white(filled), (card[0], card[1]))
+    # Inset so art sits with a white paper margin like the store listing.
+    inset = 48
+    area = (card[2] - card[0] - inset * 2, card[3] - card[1] - inset * 2)
+    filled = _fit(art, area, "contain")
+    canvas.paste(flatten_on_white(filled), (card[0] + inset, card[1] + inset))
     return canvas
 
 
 def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
-    """Square canvas — art keeps aspect ratio, centered, no hands or props."""
+    """Poster-style square — art centered with white margin, no hands."""
     art = trim_artwork(artwork)
     size = 1400
     canvas = Image.new("RGB", (size, size), (255, 255, 255))
-    margin = 70
+    margin = 80
     card = (margin, margin, size - margin, size - margin)
     shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(shadow)
     sdraw.rectangle((card[0] + 14, card[1] + 18, card[2] + 14, card[3] + 18), fill=(0, 0, 0, 55))
     shadow = shadow.filter(ImageFilter.GaussianBlur(12))
     canvas.paste(shadow.convert("RGB"), mask=shadow.split()[3])
-    # Cover the canvas face without distorting proportions (may crop edges).
-    filled = _fit(art, (card[2] - card[0], card[3] - card[1]), "cover").convert("RGB")
-    canvas.paste(filled, (card[0], card[1]))
+    inset = 48
+    area = (card[2] - card[0] - inset * 2, card[3] - card[1] - inset * 2)
+    filled = _fit(art, area, "contain")
+    canvas.paste(flatten_on_white(filled), (card[0] + inset, card[1] + inset))
     return canvas
 
 
@@ -317,12 +328,15 @@ def _sticker_shadow(sticker: Image.Image, blur: int = 10, offset: Tuple[int, int
     return out
 
 
-def _build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> Image.Image:
-    """Knock out paper, add a thick white die-cut rim, then a soft shadow."""
+def build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> Image.Image:
+    """Knock out paper and add a thick white die-cut rim (no shadow yet)."""
     # Keep rectangular prints as solid cards with a white rim (don't punch
     # holes through light areas of the art — that breaks Wynwood-style scenes).
     art = trim_artwork(artwork, pad=4)
-    # If the art is mostly opaque rectangle, keep it opaque and rim the outer edge.
+    # Cap size before MaxFilter — large kernels on big images are very slow.
+    if max(art.size) > 720:
+        art = art.copy()
+        art.thumbnail((720, 720), Image.Resampling.LANCZOS)
     rgba = _to_rgba(art)
     alpha = rgba.split()[3]
     opaque_frac = 0.0
@@ -330,17 +344,24 @@ def _build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> I
         opaque_frac = float((np.asarray(alpha) > 200).mean())
     if opaque_frac < 0.85:
         # Cutout / character art — knock out studio white, then rim silhouette.
-        art = prepare_print_art(artwork, knockout=True)
+        art = prepare_print_art(art, knockout=True)
+        if max(art.size) > 720:
+            art = art.copy()
+            art.thumbnail((720, 720), Image.Resampling.LANCZOS)
     else:
         art = _to_rgb(art).convert("RGBA")
 
-    stroke = max(14, int(round(min(art.size) * stroke_frac)))
+    # Keep stroke modest so MaxFilter stays fast.
+    stroke = max(10, min(22, int(round(min(art.size) * stroke_frac))))
     return _white_stroke(art, stroke)
 
 
-def make_sticker_single(artwork: Image.Image) -> Image.Image:
-    sticker = _build_diecut_sticker(artwork, stroke_frac=0.05)
-    sticker = _sticker_shadow(sticker, blur=12, offset=(5, 8))
+def make_sticker_single(
+    artwork: Image.Image,
+    diecut: Optional[Image.Image] = None,
+) -> Image.Image:
+    sticker = diecut if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.05)
+    sticker = _sticker_shadow(sticker, blur=10, offset=(4, 6))
     # Extra white margin around the product shot.
     pad = max(36, min(sticker.size) // 12)
     canvas = Image.new("RGBA", (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2), (255, 255, 255, 255))
@@ -348,11 +369,15 @@ def make_sticker_single(artwork: Image.Image) -> Image.Image:
     return flatten_on_white(canvas)
 
 
-def make_sticker_fan(artwork: Image.Image, count: int = 5) -> Image.Image:
-    sticker = _build_diecut_sticker(artwork, stroke_frac=0.048)
-    sticker.thumbnail((440, 560), Image.Resampling.LANCZOS)
+def make_sticker_fan(
+    artwork: Image.Image,
+    count: int = 5,
+    diecut: Optional[Image.Image] = None,
+) -> Image.Image:
+    sticker = (diecut.copy() if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.048))
+    sticker.thumbnail((400, 520), Image.Resampling.LANCZOS)
     # Rebuild a lighter shadow after resize so the rim stays crisp.
-    sticker = _sticker_shadow(sticker, blur=8, offset=(3, 5))
+    sticker = _sticker_shadow(sticker, blur=7, offset=(3, 4))
     sw, sh = sticker.size
     step_x, step_y = int(sw * 0.16), int(sh * 0.035)
     margin = 48
@@ -366,15 +391,18 @@ def make_sticker_fan(artwork: Image.Image, count: int = 5) -> Image.Image:
     return flatten_on_white(canvas)
 
 
-def make_sticker_sheet(artwork: Image.Image) -> Image.Image:
-    sticker = _build_diecut_sticker(artwork, stroke_frac=0.05)
+def make_sticker_sheet(
+    artwork: Image.Image,
+    diecut: Optional[Image.Image] = None,
+) -> Image.Image:
+    sticker = diecut if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.05)
     canvas = Image.new("RGBA", (1400, 1000), (255, 255, 255, 255))
     rows = [(4, 340), (5, 230), (8, 140)]
     y = 36
     for count, height in rows:
         item = sticker.copy()
         item.thumbnail((int(height * 0.9), height), Image.Resampling.LANCZOS)
-        item = _sticker_shadow(item, blur=6, offset=(2, 3))
+        item = _sticker_shadow(item, blur=5, offset=(2, 3))
         gap = 28
         row_w = count * item.size[0] + (count - 1) * gap
         x = max(16, (canvas.size[0] - row_w) // 2)

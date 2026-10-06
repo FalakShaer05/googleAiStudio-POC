@@ -1,4 +1,4 @@
-"""Generate merch mockups from a single source artwork."""
+"""Generate merch mockups by placing artwork onto blank product templates (fast PIL)."""
 from __future__ import annotations
 
 import os
@@ -7,22 +7,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
-from ...shared.gemini import generate_composed_image, load_rgb, to_rgb
+from ...shared.gemini import to_rgb
 from .catalog import MERCH_PRODUCTS, product_path
 from .compositor import (
-    flatten_on_white,
+    build_diecut_sticker,
+    composite_on_template,
     make_canvas_print,
     make_photo_print,
     make_sticker_fan,
     make_sticker_sheet,
     make_sticker_single,
 )
-from .prompts import build_prompt
 
 _MAX_ART_SIDE = 1400
-_MAX_TEMPLATE_SIDE = 1024
-_MAX_STYLE_SIDE = 768
-_MAX_GEMINI_WORKERS = 4
+_TEMPLATE_CACHE: Dict[str, Image.Image] = {}
+_STICKER_MODES = {"sticker_single", "sticker_fan", "sticker_sheet"}
 
 
 def _load_artwork(path: str) -> Image.Image:
@@ -34,87 +33,68 @@ def _load_artwork(path: str) -> Image.Image:
     return img
 
 
-def _thumb(img: Image.Image, max_side: int) -> Image.Image:
-    if max(img.size) <= max_side:
-        return img
-    out = img.copy()
-    out.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-    return out
+def _load_template(filename: Optional[str]) -> Optional[Image.Image]:
+    path = product_path(filename)
+    if not path:
+        return None
+    cached = _TEMPLATE_CACHE.get(path)
+    if cached is not None:
+        return cached.copy()
+    img = Image.open(path)
+    img.load()
+    _TEMPLATE_CACHE[path] = img
+    return img.copy()
 
 
-def _thumb_rgb(path: str, max_side: int) -> Image.Image:
-    return _thumb(load_rgb(path), max_side)
+def _save_png(img: Image.Image, output_path: str) -> None:
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    # compress_level=3 is much faster than optimize=True for mockup previews.
+    img.save(output_path, format="PNG", compress_level=3)
 
 
-def _role_images(product: Dict[str, Any], artwork: Image.Image):
+def _composite_one(
+    product: Dict[str, Any],
+    artwork: Image.Image,
+    output_path: str,
+    diecut: Optional[Image.Image] = None,
+) -> None:
     mode = product["mode"]
-    art = to_rgb(artwork) if artwork.mode != "RGB" else artwork
-    art = _thumb(art, _MAX_ART_SIDE)
-
-    if mode == "mockup":
-        template = product_path(product.get("template"))
-        if not template:
-            raise FileNotFoundError(f"Missing merch template for {product['id']}")
-        blank = flatten_on_white(Image.open(template))
-        blank = _thumb(blank, _MAX_TEMPLATE_SIDE)
-        return [
-            (
-                "BLANK PRODUCT TEMPLATE. Keep this exact product, color, camera angle, "
-                "fabric, and lighting. Only add the source artwork as a print.",
-                blank,
-            ),
-            (
-                "SOURCE ARTWORK to print onto the blank product. Use this design exactly "
-                "— do not invent a different character, do not stretch or squash it.",
-                art,
-            ),
-        ]
-
-    roles = [
-        (
-            "SOURCE ARTWORK. This is the only design — keep colors and details exact.",
-            art,
-        ),
-    ]
-    style = product_path(product.get("style_ref"))
-    if style:
-        roles.append(
-            (
-                "STYLE / LAYOUT REFERENCE only. Match sticker finish and composition. "
-                "Replace the reference character with the source artwork.",
-                _thumb_rgb(style, _MAX_STYLE_SIDE),
-            )
-        )
-    return roles
-
-
-def _composite_one(product: Dict[str, Any], artwork: Image.Image, output_path: str) -> None:
-    mode = product["mode"]
-    template_path = product_path(product.get("template"))
-    template = Image.open(template_path) if template_path else None
+    template = _load_template(product.get("template"))
 
     if mode == "sticker_single":
-        out = make_sticker_single(artwork)
+        out = make_sticker_single(artwork, diecut=diecut)
     elif mode == "sticker_fan":
-        out = make_sticker_fan(artwork)
+        out = make_sticker_fan(artwork, diecut=diecut)
     elif mode == "sticker_sheet":
-        out = make_sticker_sheet(artwork)
+        out = make_sticker_sheet(artwork, diecut=diecut)
     elif mode == "photo_print":
         out = make_photo_print(artwork, template)
     elif mode == "canvas":
         out = make_canvas_print(artwork, template=None)
+    elif mode == "mockup":
+        if template is None:
+            raise FileNotFoundError(f"Missing merch template for {product['id']}")
+        out = composite_on_template(
+            template,
+            artwork,
+            print_box=product.get("print_box") or (0.25, 0.25, 0.75, 0.55),
+            fit=product.get("fit") or "cover",
+            opacity=1.0,
+            shade=bool(product.get("shade", False)),
+            knockout=bool(product.get("knockout", False)),
+            match_art_aspect=bool(product.get("match_art_aspect", True)),
+        )
     else:
-        raise ValueError(f"No composite path for mode={mode}")
+        raise ValueError(f"Unknown merch mode: {mode}")
 
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    out.save(output_path, format="PNG", optimize=True)
+    _save_png(out, output_path)
 
 
 def _generate_one(
     product: Dict[str, Any],
     artwork: Image.Image,
-    artwork_path: str,
     output_path: str,
+    diecut: Optional[Image.Image] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     meta = {
         "id": product["id"],
@@ -123,30 +103,8 @@ def _generate_one(
         "output_filename": os.path.basename(output_path),
     }
     try:
-        engine = product.get("engine") or "gemini"
-        if engine == "composite":
-            _composite_one(product, artwork, output_path)
-            return True, "Mockup composed", meta
-
-        trailing = None
-        if product["id"] in {"tshirt", "hoodie"}:
-            trailing = (
-                "FINAL CHECK: the print must be LARGE — nearly full width of the front torso "
-                "(only small margins before the armholes). A small centered stamp is a failure. "
-                "Scale the artwork up to dominate the chest while keeping correct proportions."
-            )
-        ok, message = generate_composed_image(
-            output_path=output_path,
-            prompt=build_prompt(product),
-            role_images=_role_images(product, artwork),
-            style_target=None,
-            aspect_ratio=product.get("aspect_ratio") or "1:1",
-            temperature=0.2,
-            image_size="1K",
-            trailing_instruction=trailing,
-            operation=f"art_generation:creative:merch:{product['id']}",
-        )
-        return ok, message, meta
+        _composite_one(product, artwork, output_path, diecut=diecut)
+        return True, "Mockup composed", meta
     except Exception as exc:
         return False, str(exc), meta
 
@@ -159,7 +117,7 @@ def generate_all(
     product_ids: Optional[List[str]] = None,
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
-    Stickers/prints compose locally; apparel mockups use Gemini + blank templates.
+    Place one artwork onto every selected product blank (local PIL, no Gemini).
 
     Returns (success, message, items).
     """
@@ -174,6 +132,11 @@ def generate_all(
 
     artwork = _load_artwork(artwork_path)
 
+    # Build die-cut once and reuse across sticker products (biggest speed win).
+    diecut: Optional[Image.Image] = None
+    if any(p["mode"] in _STICKER_MODES for p in products):
+        diecut = build_diecut_sticker(artwork, stroke_frac=0.05)
+
     jobs = []
     for product in products:
         out_name = f"{filename_prefix}_{product['id']}_{os.urandom(4).hex()}.png"
@@ -183,27 +146,25 @@ def generate_all(
     items: List[Dict[str, Any]] = []
     errors: List[str] = []
 
-    def _collect(ok: bool, message: str, meta: Dict[str, Any]) -> None:
-        if ok and os.path.isfile(os.path.join(output_dir, meta["output_filename"])):
-            items.append(meta)
-        else:
-            errors.append(f"{meta['label']}: {message or 'failed'}")
-
-    composite_jobs = [(p, path) for p, path in jobs if p.get("engine") == "composite"]
-    gemini_jobs = [(p, path) for p, path in jobs if p.get("engine") != "composite"]
-
-    for product, out_path in composite_jobs:
-        _collect(*_generate_one(product, artwork, artwork_path, out_path))
-
-    if gemini_jobs:
-        workers = max(1, min(_MAX_GEMINI_WORKERS, max_workers, len(gemini_jobs)))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [
-                pool.submit(_generate_one, product, artwork, artwork_path, out_path)
-                for product, out_path in gemini_jobs
-            ]
-            for future in as_completed(futures):
-                _collect(*future.result())
+    # PIL images are not safely shared across threads — copy per job.
+    workers = max(1, min(max_workers, len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(
+                _generate_one,
+                product,
+                artwork.copy(),
+                out_path,
+                diecut.copy() if diecut is not None and product["mode"] in _STICKER_MODES else None,
+            )
+            for product, out_path in jobs
+        ]
+        for future in as_completed(futures):
+            ok, message, meta = future.result()
+            if ok and os.path.isfile(os.path.join(output_dir, meta["output_filename"])):
+                items.append(meta)
+            else:
+                errors.append(f"{meta['label']}: {message or 'failed'}")
 
     order = {p["id"]: i for i, p in enumerate(MERCH_PRODUCTS)}
     items.sort(key=lambda item: order.get(item["id"], 999))
