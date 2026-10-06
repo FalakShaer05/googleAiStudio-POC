@@ -872,10 +872,29 @@
           </div>
           <div class="merch-catalog-grid">
             {% for product in merch_products %}
-            <label class="merch-catalog-chip">
-              <input type="checkbox" class="merch-product-chip" name="product_pick" value="{{ product.id }}" checked />
-              <span>{{ product.label }}</span>
-            </label>
+            <div class="merch-catalog-item" data-product-id="{{ product.id }}">
+              <label class="merch-catalog-chip">
+                <input type="checkbox" class="merch-product-chip" name="product_pick" value="{{ product.id }}" checked />
+                <span>{{ product.label }}</span>
+              </label>
+              {% if product.colors %}
+              <div class="merch-color-swatches" data-merch-colors="{{ product.id }}">
+                {% for color in product.colors %}
+                <label class="merch-color-swatch merch-color-swatch--{{ color.id }}" title="{{ color.label }}">
+                  <input
+                    type="checkbox"
+                    class="merch-color-chip"
+                    name="color_{{ product.id }}"
+                    value="{{ color.id }}"
+                    {% if color.id in product.default_colors %}checked{% endif %}
+                  />
+                  <span class="merch-color-dot" aria-hidden="true"></span>
+                  <span class="merch-color-name">{{ color.label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
             {% endfor %}
           </div>
         </div>

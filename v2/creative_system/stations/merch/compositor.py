@@ -1,7 +1,7 @@
 """Fast PIL mockups: print artwork onto stored product blanks."""
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
@@ -238,40 +238,33 @@ def composite_on_template(
 
 
 def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
-    """Photo / poster print — art centered with white paper margins, no stretch."""
-    art = trim_artwork(artwork)
-    if template is not None:
-        # Shrink the detected card face so art keeps a store-listing white border.
-        x0, y0, x1, y1 = detect_card_box(template)
-        inset = 0.06
-        zx0 = x0 + (x1 - x0) * inset
-        zy0 = y0 + (y1 - y0) * inset
-        zx1 = x1 - (x1 - x0) * inset
-        zy1 = y1 - (y1 - y0) * inset
-        return composite_on_template(
-            template,
-            art,
-            print_box=(zx0, zy0, zx1, zy1),
-            fit="contain",
-            opacity=1.0,
-            shade=False,
-            knockout=False,
-            match_art_aspect=True,
-        )
-    w, h = 1600, 1067
-    canvas = Image.new("RGB", (w, h), (255, 255, 255))
-    card = (90, 210, w - 90, h - 210)
-    shadow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    """
+    Photo print product: full artwork as the print face, soft drop shadow
+    on a light studio backdrop (store / postcard style). No stretch.
+    """
+    del template  # Build a clean postcard mockup; ignore blank template.
+    art = trim_artwork(artwork, pad=2)
+    art = _to_rgb(art).convert("RGBA")
+    if max(art.size) > 1400:
+        art = art.copy()
+        art.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
+
+    card_w, card_h = art.size
+    # Soft product shadow on a light studio backdrop (margin around the print).
+    frame_pad = max(48, min(card_w, card_h) // 14)
+    out_w = card_w + frame_pad * 2
+    out_h = card_h + frame_pad * 2
+    backdrop = Image.new("RGBA", (out_w, out_h), (242, 242, 244, 255))
+
+    shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(shadow)
-    sdraw.rectangle((card[0] + 10, card[1] + 12, card[2] + 10, card[3] + 12), fill=(0, 0, 0, 50))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
-    canvas.paste(shadow.convert("RGB"), mask=shadow.split()[3])
-    # Inset so art sits with a white paper margin like the store listing.
-    inset = 48
-    area = (card[2] - card[0] - inset * 2, card[3] - card[1] - inset * 2)
-    filled = _fit(art, area, "contain")
-    canvas.paste(flatten_on_white(filled), (card[0] + inset, card[1] + inset))
-    return canvas
+    sx0 = frame_pad + 6
+    sy0 = frame_pad + 10
+    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 55))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(16))
+    backdrop.alpha_composite(shadow)
+    backdrop.alpha_composite(art, dest=(frame_pad, frame_pad))
+    return flatten_on_white(backdrop)
 
 
 def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
@@ -356,15 +349,39 @@ def build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> Im
     return _white_stroke(art, stroke)
 
 
+def _rect_sticker_card(
+    artwork: Image.Image,
+    max_side: int = 900,
+) -> Image.Image:
+    """Full rectangular artwork, no white border (no shadow)."""
+    art = trim_artwork(artwork, pad=2)
+    # Flatten to an opaque card so splash backgrounds / white highlights stay.
+    art = _to_rgb(art).convert("RGBA")
+    if max(art.size) > max_side:
+        art = art.copy()
+        art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    return art
+
+
 def make_sticker_single(
     artwork: Image.Image,
     diecut: Optional[Image.Image] = None,
 ) -> Image.Image:
-    sticker = diecut if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.05)
-    sticker = _sticker_shadow(sticker, blur=10, offset=(4, 6))
-    # Extra white margin around the product shot.
-    pad = max(36, min(sticker.size) // 12)
-    canvas = Image.new("RGBA", (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2), (255, 255, 255, 255))
+    """
+    Single sticker product: full rectangular artwork (no white rim),
+    soft drop shadow — matches store listing style.
+    """
+    del diecut  # Don't use silhouette die-cut; keep the full rectangular scene.
+    sticker = _rect_sticker_card(artwork, max_side=900)
+    sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
+
+    # Studio-style white margin around the product.
+    pad = max(48, min(sticker.size) // 10)
+    canvas = Image.new(
+        "RGBA",
+        (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2),
+        (255, 255, 255, 255),
+    )
     canvas.paste(sticker, (pad, pad), sticker)
     return flatten_on_white(canvas)
 
@@ -374,40 +391,188 @@ def make_sticker_fan(
     count: int = 5,
     diecut: Optional[Image.Image] = None,
 ) -> Image.Image:
-    sticker = (diecut.copy() if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.048))
-    sticker.thumbnail((400, 520), Image.Resampling.LANCZOS)
-    # Rebuild a lighter shadow after resize so the rim stays crisp.
-    sticker = _sticker_shadow(sticker, blur=7, offset=(3, 4))
-    sw, sh = sticker.size
-    step_x, step_y = int(sw * 0.16), int(sh * 0.035)
-    margin = 48
+    """
+    Pack mockup: identical rectangular stickers stacked diagonally
+    (back-left → front-right) with drop shadows — store listing style.
+    """
+    del diecut
+    card = _rect_sticker_card(artwork, max_side=520)
+    card = _sticker_shadow(card, blur=10, offset=(4, 6))
+    sw, sh = card.size
+    # Diagonal stack offset (matches the fanned pack reference).
+    step_x = max(28, int(sw * 0.11))
+    step_y = max(24, int(sh * 0.11))
+    margin = 56
     w = sw + step_x * (count - 1) + margin * 2
-    h = sh + abs(step_y) * (count - 1) + margin * 2
+    h = sh + step_y * (count - 1) + margin * 2
     canvas = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+    # Draw back to front so the last sticker sits on top.
     for i in range(count):
         x = margin + i * step_x
-        y = margin + (count - 1 - i) * step_y
-        canvas.alpha_composite(sticker, dest=(x, y))
+        y = margin + i * step_y
+        canvas.alpha_composite(card, dest=(x, y))
     return flatten_on_white(canvas)
+
+
+def _rounded_rect_mask(size: Tuple[int, int], radius: int) -> Image.Image:
+    w, h = size
+    mask = Image.new("L", (w, h), 0)
+    draw = ImageDraw.Draw(mask)
+    r = max(0, min(radius, w // 2, h // 2))
+    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=r, fill=255)
+    return mask
+
+
+def _draw_dashed_rect(
+    draw: ImageDraw.ImageDraw,
+    box: Tuple[int, int, int, int],
+    color: Tuple[int, int, int, int],
+    width: int = 1,
+    dash: int = 7,
+    gap: int = 5,
+) -> None:
+    """Kiss-cut / die guide line around a sticker tile."""
+    x0, y0, x1, y1 = box
+
+    def _segments(a: int, b: int) -> List[Tuple[int, int]]:
+        out: List[Tuple[int, int]] = []
+        pos = a
+        while pos < b:
+            end = min(pos + dash, b)
+            out.append((pos, end))
+            pos = end + gap
+        return out
+
+    for xa, xb in _segments(x0, x1):
+        draw.line([(xa, y0), (xb, y0)], fill=color, width=width)
+        draw.line([(xa, y1), (xb, y1)], fill=color, width=width)
+    for ya, yb in _segments(y0, y1):
+        draw.line([(x0, ya), (x0, yb)], fill=color, width=width)
+        draw.line([(x1, ya), (x1, yb)], fill=color, width=width)
+
+
+def _kiss_cut_rect_sticker(artwork: Image.Image, max_w: int, max_h: int) -> Image.Image:
+    """
+    Rectangular sticker tile: opaque art, thin solid edge, dashed cut line.
+    Matches store / Canva sticker-sheet layout.
+    """
+    art = trim_artwork(artwork, pad=2)
+    art = _to_rgb(art).convert("RGBA")
+    # Fit whole art inside the cell (no crop).
+    fitted = _fit(art, (max_w, max_h), "contain")
+    bbox = fitted.getbbox() or (0, 0, fitted.size[0], fitted.size[1])
+    tile = fitted.crop(bbox)
+
+    # Solid border on the art edge.
+    border = max(2, min(4, min(tile.size) // 90))
+    cut_gap = max(6, min(10, min(tile.size) // 40))
+    dash_pad = cut_gap + 2
+    canvas = Image.new(
+        "RGBA",
+        (tile.size[0] + dash_pad * 2, tile.size[1] + dash_pad * 2),
+        (0, 0, 0, 0),
+    )
+    ox, oy = dash_pad, dash_pad
+    canvas.paste(tile, (ox, oy), tile)
+
+    draw = ImageDraw.Draw(canvas)
+    # Thin dark outline on the sticker face.
+    draw.rectangle(
+        (ox, oy, ox + tile.size[0] - 1, oy + tile.size[1] - 1),
+        outline=(40, 40, 40, 220),
+        width=border,
+    )
+    # Dashed kiss-cut guide just outside the sticker.
+    _draw_dashed_rect(
+        draw,
+        (
+            ox - cut_gap,
+            oy - cut_gap,
+            ox + tile.size[0] - 1 + cut_gap,
+            oy + tile.size[1] - 1 + cut_gap,
+        ),
+        color=(150, 150, 150, 200),
+        width=1,
+        dash=8,
+        gap=5,
+    )
+    return canvas
 
 
 def make_sticker_sheet(
     artwork: Image.Image,
     diecut: Optional[Image.Image] = None,
 ) -> Image.Image:
-    sticker = diecut if diecut is not None else build_diecut_sticker(artwork, stroke_frac=0.05)
-    canvas = Image.new("RGBA", (1400, 1000), (255, 255, 255, 255))
-    rows = [(4, 340), (5, 230), (8, 140)]
-    y = 36
-    for count, height in rows:
-        item = sticker.copy()
-        item.thumbnail((int(height * 0.9), height), Image.Resampling.LANCZOS)
-        item = _sticker_shadow(item, blur=5, offset=(2, 3))
-        gap = 28
-        row_w = count * item.size[0] + (count - 1) * gap
-        x = max(16, (canvas.size[0] - row_w) // 2)
+    """
+    Sticker sheet like the store layout: 3 large + 4 medium + 4 medium
+    rectangular kiss-cut stickers on a white backing card.
+    """
+    del diecut  # Sheet uses rectangular kiss-cut tiles, not silhouette die-cuts.
+    art = trim_artwork(artwork, pad=2)
+
+    sheet_w = 1100
+    pad_x, pad_y = 56, 56
+    gap_x, gap_y = 28, 36
+    usable_w = sheet_w - pad_x * 2
+
+    # Top: 3 large; middle+bottom: 4 medium each (same size).
+    large_w = (usable_w - gap_x * 2) // 3
+    med_w = (usable_w - gap_x * 3) // 4
+    aw, ah = max(1, art.size[0]), max(1, art.size[1])
+    large_h = int(round(large_w * ah / aw))
+    med_h = int(round(med_w * ah / aw))
+
+    # Build one tile per size so sheet height fits cut-line padding exactly.
+    large_tile = _kiss_cut_rect_sticker(art, large_w, large_h)
+    med_tile = _kiss_cut_rect_sticker(art, med_w, med_h)
+    rows = [
+        (3, large_tile),
+        (4, med_tile),
+        (4, med_tile),
+    ]
+    content_h = sum(tile.size[1] for _, tile in rows) + gap_y * (len(rows) - 1)
+    sheet_h = content_h + pad_y * 2
+
+    sheet = Image.new("RGBA", (sheet_w, sheet_h), (255, 255, 255, 255))
+    y = pad_y
+    for count, proto in rows:
+        tw, th = proto.size
+        row_w = count * tw + (count - 1) * gap_x
+        x = max(0, (sheet_w - row_w) // 2)
         for _ in range(count):
-            canvas.alpha_composite(item, dest=(x, y))
-            x += item.size[0] + gap
-        y += item.size[1] + 22
-    return flatten_on_white(canvas)
+            sheet.alpha_composite(proto, dest=(x, y))
+            x += tw + gap_x
+        y += th + gap_y
+
+    # Soft rounded corners + faint edge so the sheet reads as a cut card.
+    radius = 14
+    mask = _rounded_rect_mask((sheet_w, sheet_h), radius)
+    sheet.putalpha(mask)
+    edge = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle(
+        (0, 0, sheet_w - 1, sheet_h - 1),
+        radius=radius,
+        outline=(210, 210, 210, 255),
+        width=2,
+    )
+    sheet.alpha_composite(edge)
+
+    # Studio backdrop + card shadow — distinct from page white.
+    frame_pad = 64
+    out_w = sheet_w + frame_pad * 2
+    out_h = sheet_h + frame_pad * 2
+    backdrop = Image.new("RGBA", (out_w, out_h), (236, 236, 238, 255))
+
+    shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
+    sdraw = ImageDraw.Draw(shadow)
+    sx0 = frame_pad + 10
+    sy0 = frame_pad + 14
+    sdraw.rounded_rectangle(
+        (sx0, sy0, sx0 + sheet_w, sy0 + sheet_h),
+        radius=radius + 2,
+        fill=(0, 0, 0, 55),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(16))
+    backdrop.alpha_composite(shadow)
+    backdrop.alpha_composite(sheet, dest=(frame_pad, frame_pad))
+    return flatten_on_white(backdrop)
