@@ -8,9 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image
 
 from ...shared.gemini import to_rgb
-from .catalog import MERCH_PRODUCTS, product_path
+from .catalog import MERCH_PRODUCTS, expand_products_for_colors, product_path
 from .compositor import (
-    build_diecut_sticker,
     composite_on_template,
     make_canvas_print,
     make_photo_print,
@@ -21,7 +20,6 @@ from .compositor import (
 
 _MAX_ART_SIDE = 1400
 _TEMPLATE_CACHE: Dict[str, Image.Image] = {}
-_STICKER_MODES = {"sticker_single", "sticker_fan", "sticker_sheet"}
 
 
 def _load_artwork(path: str) -> Image.Image:
@@ -56,17 +54,16 @@ def _composite_one(
     product: Dict[str, Any],
     artwork: Image.Image,
     output_path: str,
-    diecut: Optional[Image.Image] = None,
 ) -> None:
     mode = product["mode"]
     template = _load_template(product.get("template"))
 
     if mode == "sticker_single":
-        out = make_sticker_single(artwork, diecut=diecut)
+        out = make_sticker_single(artwork)
     elif mode == "sticker_fan":
-        out = make_sticker_fan(artwork, diecut=diecut)
+        out = make_sticker_fan(artwork)
     elif mode == "sticker_sheet":
-        out = make_sticker_sheet(artwork, diecut=diecut)
+        out = make_sticker_sheet(artwork)
     elif mode == "photo_print":
         out = make_photo_print(artwork, template)
     elif mode == "canvas":
@@ -94,16 +91,18 @@ def _generate_one(
     product: Dict[str, Any],
     artwork: Image.Image,
     output_path: str,
-    diecut: Optional[Image.Image] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     meta = {
         "id": product["id"],
+        "variant_id": product.get("variant_id") or product["id"],
         "label": product["label"],
         "tags": list(product.get("tags") or []),
+        "color": product.get("color"),
+        "color_label": product.get("color_label"),
         "output_filename": os.path.basename(output_path),
     }
     try:
-        _composite_one(product, artwork, output_path, diecut=diecut)
+        _composite_one(product, artwork, output_path)
         return True, "Mockup composed", meta
     except Exception as exc:
         return False, str(exc), meta
@@ -113,11 +112,14 @@ def generate_all(
     artwork_path: str,
     output_dir: str,
     filename_prefix: str = "cs_merch",
-    max_workers: int = 9,
+    max_workers: int = 12,
     product_ids: Optional[List[str]] = None,
+    color_choices: Optional[Dict[str, List[str]]] = None,
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
     Place one artwork onto every selected product blank (local PIL, no Gemini).
+
+    color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
 
     Returns (success, message, items).
     """
@@ -130,16 +132,17 @@ def generate_all(
     if not products:
         return False, "No merch products selected", []
 
+    jobs_spec = expand_products_for_colors(products, color_choices=color_choices)
+    if not jobs_spec:
+        return False, "No merch variants to generate (check color selection)", []
+
     artwork = _load_artwork(artwork_path)
 
-    # Build die-cut once and reuse across sticker products (biggest speed win).
-    diecut: Optional[Image.Image] = None
-    if any(p["mode"] in _STICKER_MODES for p in products):
-        diecut = build_diecut_sticker(artwork, stroke_frac=0.05)
-
     jobs = []
-    for product in products:
-        out_name = f"{filename_prefix}_{product['id']}_{os.urandom(4).hex()}.png"
+    for product in jobs_spec:
+        color = product.get("color")
+        suffix = f"{product['id']}_{color}" if color else product["id"]
+        out_name = f"{filename_prefix}_{suffix}_{os.urandom(4).hex()}.png"
         out_path = os.path.join(output_dir, out_name)
         jobs.append((product, out_path))
 
@@ -150,13 +153,7 @@ def generate_all(
     workers = max(1, min(max_workers, len(jobs)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
-            pool.submit(
-                _generate_one,
-                product,
-                artwork.copy(),
-                out_path,
-                diecut.copy() if diecut is not None and product["mode"] in _STICKER_MODES else None,
-            )
+            pool.submit(_generate_one, product, artwork.copy(), out_path)
             for product, out_path in jobs
         ]
         for future in as_completed(futures):
@@ -164,10 +161,21 @@ def generate_all(
             if ok and os.path.isfile(os.path.join(output_dir, meta["output_filename"])):
                 items.append(meta)
             else:
-                errors.append(f"{meta['label']}: {message or 'failed'}")
+                label = meta["label"]
+                if meta.get("color_label"):
+                    label = f"{label} ({meta['color_label']})"
+                errors.append(f"{label}: {message or 'failed'}")
 
     order = {p["id"]: i for i, p in enumerate(MERCH_PRODUCTS)}
-    items.sort(key=lambda item: order.get(item["id"], 999))
+    color_order = {"black": 0, "white": 1}
+
+    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int]:
+        return (
+            order.get(item["id"], 999),
+            color_order.get(item.get("color") or "", 9),
+        )
+
+    items.sort(key=_sort_key)
 
     if not items:
         return False, "; ".join(errors) or "Merch generation failed", []
@@ -186,6 +194,7 @@ def generate(output_path: str, artwork_path: str, **kwargs):
         output_dir=output_dir,
         filename_prefix=prefix,
         product_ids=kwargs.get("product_ids"),
+        color_choices=kwargs.get("color_choices"),
     )
     extras = kwargs.get("result_extras")
     if isinstance(extras, dict):

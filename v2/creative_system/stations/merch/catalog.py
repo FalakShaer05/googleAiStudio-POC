@@ -7,6 +7,12 @@ from typing import Any, Dict, List, Optional
 PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MERCH_DIR = os.path.join(PACKAGE_DIR, "static", "images", "merch")
 
+# Apparel colors available for tee / hoodie.
+APPAREL_COLORS: List[Dict[str, str]] = [
+    {"id": "black", "label": "Black"},
+    {"id": "white", "label": "White"},
+]
+
 # All products use fast PIL overlays (place art on blank templates).
 # print_box = max zone; match_art_aspect=True keeps artwork proportions
 # and centers the largest fitting rectangle inside that zone.
@@ -49,10 +55,14 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
     {
         "id": "tshirt",
         "label": "T-Shirt",
-        "tags": ["Medium", "Black"],
+        "tags": ["Medium"],
         "mode": "mockup",
         "engine": "composite",
-        "template": "tshirt.png",
+        "colors": {
+            "black": {"label": "Black", "template": "tshirt.png"},
+            "white": {"label": "White", "template": "tshirt_white.png"},
+        },
+        "default_colors": ["black", "white"],
         # Centered chest print — slightly smaller, not over shoulders/sleeves.
         "print_box": (0.32, 0.28, 0.68, 0.53),
         "fit": "cover",
@@ -63,10 +73,14 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
     {
         "id": "hoodie",
         "label": "Hoodie",
-        "tags": ["Medium", "Black"],
+        "tags": ["Medium"],
         "mode": "mockup",
         "engine": "composite",
-        "template": "hoodie.png",
+        "colors": {
+            "black": {"label": "Black", "template": "hoodie.png"},
+            "white": {"label": "White", "template": "hoodie_white.png"},
+        },
+        "default_colors": ["black", "white"],
         # Chest print ~10% smaller, lower on torso, above pocket.
         "print_box": (0.30, 0.36, 0.70, 0.61),
         "fit": "cover",
@@ -123,13 +137,66 @@ def list_products() -> List[Dict[str, Any]]:
     """Public catalog for the UI (no filesystem paths)."""
     out = []
     for item in MERCH_PRODUCTS:
+        colors = item.get("colors") or {}
+        color_opts = [
+            {
+                "id": cid,
+                "label": meta.get("label") or cid.title(),
+                "has_template": bool(product_path(meta.get("template"))),
+            }
+            for cid, meta in colors.items()
+        ]
+        templates = []
+        if item.get("template"):
+            templates.append(item["template"])
+        templates.extend(meta.get("template") for meta in colors.values() if meta.get("template"))
         out.append(
             {
                 "id": item["id"],
                 "label": item["label"],
                 "tags": list(item.get("tags") or []),
                 "mode": item["mode"],
-                "has_template": bool(product_path(item.get("template"))),
+                "has_template": any(product_path(t) for t in templates) if templates else True,
+                "colors": color_opts,
+                "default_colors": list(item.get("default_colors") or [c["id"] for c in color_opts]),
             }
         )
     return out
+
+
+def expand_products_for_colors(
+    products: List[Dict[str, Any]],
+    color_choices: Optional[Dict[str, List[str]]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Expand apparel products into one job per selected color.
+    color_choices: {"tshirt": ["black","white"], "hoodie": ["black"]}
+    """
+    choices = color_choices or {}
+    expanded: List[Dict[str, Any]] = []
+    for product in products:
+        colors = product.get("colors") or {}
+        if not colors:
+            expanded.append(dict(product))
+            continue
+
+        wanted = choices.get(product["id"])
+        if wanted is None:
+            wanted = list(product.get("default_colors") or colors.keys())
+        # Preserve catalog order; drop unknowns / missing templates.
+        for cid, meta in colors.items():
+            if cid not in wanted:
+                continue
+            template = meta.get("template")
+            if not product_path(template):
+                continue
+            color_label = meta.get("label") or cid.title()
+            job = dict(product)
+            job["template"] = template
+            job["color"] = cid
+            job["color_label"] = color_label
+            job["variant_id"] = f"{product['id']}-{cid}"
+            base_tags = [t for t in (product.get("tags") or []) if t.lower() not in {"black", "white"}]
+            job["tags"] = base_tags + [color_label]
+            expanded.append(job)
+    return expanded

@@ -643,23 +643,58 @@ def _parse_merch_product_ids() -> list[str] | None:
     return ids or None
 
 
+def _parse_merch_color_choices() -> dict[str, list[str]] | None:
+    """Parse apparel color picks: {"tshirt":["black","white"],"hoodie":["black"]}."""
+    raw = (request.form.get("colors") or request.form.get("color_choices") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out: dict[str, list[str]] = {}
+    for key, val in parsed.items():
+        pid = str(key).strip()
+        if not pid:
+            continue
+        if isinstance(val, list):
+            colors = [str(x).strip().lower() for x in val if str(x).strip()]
+        elif isinstance(val, str) and val.strip():
+            colors = [part.strip().lower() for part in val.replace("\n", ",").split(",") if part.strip()]
+        else:
+            continue
+        if colors:
+            out[pid] = colors
+    return out or None
+
+
 def _merch_generate_impl():
     temp_paths = []
     try:
         artwork_path = save_named_upload("artwork", "cs_merch_art", required=True)
         temp_paths.append(artwork_path)
         product_ids = _parse_merch_product_ids()
+        color_choices = _parse_merch_color_choices()
         valid_ids = {p["id"] for p in MERCH_PRODUCTS}
         if product_ids:
             unknown = [pid for pid in product_ids if pid not in valid_ids]
             if unknown:
                 return json_error(f"Unknown merch product id(s): {', '.join(unknown)}")
 
+        # Apparel with colors requires at least one color when that product is selected.
+        if product_ids and color_choices is not None:
+            for pid in ("tshirt", "hoodie"):
+                if pid in product_ids and pid in color_choices and not color_choices[pid]:
+                    return json_error(f"Select at least one color for {pid}")
+
         ok, message, items = generate_merch_all(
             artwork_path=artwork_path,
             output_dir=output_folder(),
             filename_prefix="cs_merch",
             product_ids=product_ids,
+            color_choices=color_choices,
         )
         if not ok:
             return json_error(message or "Merch generation failed", 500)
@@ -671,8 +706,11 @@ def _merch_generate_impl():
             abs_path = os.path.join(output_folder(), filename)
             row = {
                 "id": item["id"],
+                "variant_id": item.get("variant_id") or item["id"],
                 "label": item["label"],
                 "tags": item.get("tags") or [],
+                "color": item.get("color"),
+                "color_label": item.get("color_label"),
                 "output_filename": filename,
                 "local_path": f"/outputs/{filename}",
             }
@@ -745,6 +783,11 @@ def api_merch_generate():
         type: string
         required: false
         description: Optional JSON array of product ids (sticker, stickers-5, sticker-sheet, cap, tshirt, hoodie, tote, photo-print, canvas)
+      - in: formData
+        name: colors
+        type: string
+        required: false
+        description: Optional JSON map of apparel colors, e.g. {"tshirt":["black","white"],"hoodie":["black"]}
     responses:
       200:
         description: Merch mockup grid items

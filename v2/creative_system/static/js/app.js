@@ -624,7 +624,10 @@
 
       const title = document.createElement("h3");
       title.className = "merch-card-title";
-      title.textContent = item.label || item.id;
+      const colorLabel = item.color_label || "";
+      title.textContent = colorLabel
+        ? `${item.label || item.id} · ${colorLabel}`
+        : (item.label || item.id);
 
       const tags = document.createElement("div");
       tags.className = "merch-card-tags";
@@ -676,6 +679,25 @@
         return;
       }
 
+      const colorChoices = {};
+      picks.forEach((pid) => {
+        const wrap = form.querySelector(`[data-merch-colors="${pid}"]`);
+        if (!wrap) return;
+        const selected = Array.from(wrap.querySelectorAll(".merch-color-chip:checked")).map((el) => el.value);
+        colorChoices[pid] = selected;
+      });
+      const missingColor = Object.keys(colorChoices).find((pid) => !colorChoices[pid].length);
+      if (missingColor) {
+        const status = form.querySelector(".cs-status");
+        const label = missingColor === "tshirt" ? "T-Shirt" : missingColor === "hoodie" ? "Hoodie" : missingColor;
+        if (status) {
+          status.className = "status-message status-error cs-status";
+          status.textContent = `Select at least one color for ${label}.`;
+          status.style.display = "block";
+        }
+        return;
+      }
+
       const skippedRequired = [];
       form.querySelectorAll('input[type="file"][required]').forEach((input) => {
         const cached = fileCache(form)[input.name];
@@ -707,7 +729,13 @@
       try {
         const body = buildFormData(form, "merch");
         body.set("products", JSON.stringify(picks));
+        if (Object.keys(colorChoices).length) {
+          body.set("colors", JSON.stringify(colorChoices));
+        }
         body.delete("product_pick");
+        Array.from(body.keys()).forEach((key) => {
+          if (key.startsWith("color_")) body.delete(key);
+        });
         const response = await fetch(cfg.merchGenerateUrl, {
           method: "POST",
           body: body,
