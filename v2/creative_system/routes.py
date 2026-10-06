@@ -28,6 +28,8 @@ from .shared.fonts import FONTS, get_font
 from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
 from .stations.content_filter import classify_content
+from .stations.merch import MERCH_PRODUCTS, generate_all as generate_merch_all
+from .stations.merch.catalog import list_products as list_merch_products
 from .stations.puzzle_collage import assemble_puzzle, render_coloring_page, split_puzzle
 
 HOLDING_HANDS_TEXT_MAX = 30
@@ -41,6 +43,7 @@ def _page_context():
         "fonts": FONTS,
         "holding_hands_text_max": HOLDING_HANDS_TEXT_MAX,
         "tracing_hand_color_rows": COLOR_ROWS,
+        "merch_products": list_merch_products(),
         "word_chips": {
             "tracing-hand": _station_chips("tracing_hand"),
             "word-art-heart": _station_chips("word_art_heart"),
@@ -73,6 +76,8 @@ def _generate_impl():
             return json_error(
                 "Use the Puzzle Collage split and assemble endpoints for this station."
             )
+        if station_id == "merch":
+            return json_error("Use the Merch generate endpoint for this station.")
 
         kwargs = {"station_id": station_id}
 
@@ -371,7 +376,7 @@ def api_generate():
         name: station
         type: string
         required: true
-        description: holding-hands, make-art-yours, classic-my-way, color-enhance, origami, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type
+        description: holding-hands, make-art-yours, classic-my-way, color-enhance, origami, selfie-becoming, me-remix, tracing-hand, word-art-heart, graphic-heart, apimh-new, audio-to-text, audio-type (use /merch-generate for merch)
     responses:
       200:
         description: Artwork generated
@@ -621,6 +626,136 @@ def puzzle_split():
 @bp.route("/puzzle-collage/assemble", methods=["POST"])
 def puzzle_assemble():
     return _puzzle_assemble_impl()
+
+
+def _parse_merch_product_ids() -> list[str] | None:
+    raw = (request.form.get("products") or request.form.get("product_ids") or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            ids = [str(x).strip() for x in parsed if str(x).strip()]
+            return ids or None
+    except json.JSONDecodeError:
+        pass
+    ids = [part.strip() for part in raw.replace("\n", ",").split(",") if part.strip()]
+    return ids or None
+
+
+def _merch_generate_impl():
+    temp_paths = []
+    try:
+        artwork_path = save_named_upload("artwork", "cs_merch_art", required=True)
+        temp_paths.append(artwork_path)
+        product_ids = _parse_merch_product_ids()
+        valid_ids = {p["id"] for p in MERCH_PRODUCTS}
+        if product_ids:
+            unknown = [pid for pid in product_ids if pid not in valid_ids]
+            if unknown:
+                return json_error(f"Unknown merch product id(s): {', '.join(unknown)}")
+
+        ok, message, items = generate_merch_all(
+            artwork_path=artwork_path,
+            output_dir=output_folder(),
+            filename_prefix="cs_merch",
+            product_ids=product_ids,
+        )
+        if not ok:
+            return json_error(message or "Merch generation failed", 500)
+
+        payload_items = []
+        upload_jobs: list[tuple[dict, str]] = []
+        for item in items:
+            filename = item["output_filename"]
+            abs_path = os.path.join(output_folder(), filename)
+            row = {
+                "id": item["id"],
+                "label": item["label"],
+                "tags": item.get("tags") or [],
+                "output_filename": filename,
+                "local_path": f"/outputs/{filename}",
+            }
+            payload_items.append(row)
+            upload_jobs.append((row, abs_path))
+
+        def _upload_one(job: tuple[dict, str]) -> None:
+            row, abs_path = job
+            cloudfront_url = upload_image_to_s3(abs_path)
+            if cloudfront_url:
+                row["image_url"] = cloudfront_url
+
+        if upload_jobs:
+            workers = min(8, len(upload_jobs))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                list(pool.map(_upload_one, upload_jobs))
+
+        primary = payload_items[0]["output_filename"] if payload_items else None
+        return jsonify(
+            {
+                "success": True,
+                "message": message,
+                "output_filename": primary,
+                "local_path": f"/outputs/{primary}" if primary else None,
+                "image_url": payload_items[0].get("image_url") if payload_items else None,
+                "items": payload_items,
+                "merch_count": len(payload_items),
+            }
+        )
+    except ValueError as exc:
+        return json_error(str(exc))
+    except Exception as exc:
+        print("Error in merch generate:", exc)
+        print(traceback.format_exc())
+        return json_error(str(exc), 500)
+    finally:
+        cleanup_paths(*temp_paths)
+
+
+@bp.route("/merch/generate", methods=["POST"])
+def merch_generate():
+    return _merch_generate_impl()
+
+
+@bp.route("/merch/products", methods=["GET"])
+def merch_products():
+    return jsonify({"success": True, "products": list_merch_products()})
+
+
+@api_bp.route("/merch-generate", methods=["POST"])
+@require_api_key
+def api_merch_generate():
+    """
+    Generate all merch mockups from one artwork.
+    ---
+    tags:
+      - Creative System
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: header
+        name: X-API-Key
+        type: string
+      - in: formData
+        name: artwork
+        type: file
+        required: true
+      - in: formData
+        name: products
+        type: string
+        required: false
+        description: Optional JSON array of product ids (sticker, stickers-5, sticker-sheet, cap, tshirt, hoodie, tote, photo-print, canvas)
+    responses:
+      200:
+        description: Merch mockup grid items
+      400:
+        description: Invalid input
+      401:
+        description: Missing or invalid API key
+      500:
+        description: Generation failed
+    """
+    return _merch_generate_impl()
 
 
 @api_bp.route("/puzzle-collage-split", methods=["POST"])

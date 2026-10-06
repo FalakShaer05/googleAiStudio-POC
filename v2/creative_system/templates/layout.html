@@ -63,6 +63,109 @@
       margin: 2rem auto;
       max-width: 960px;
     }
+    .main-container--full {
+      max-width: 1400px;
+      width: 100%;
+    }
+    .merch-catalog-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .merch-catalog-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      margin: 0;
+      padding: 0.35rem 0.75rem;
+      border: 1px solid #dee2e6;
+      border-radius: 999px;
+      background: #fff;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #333;
+      cursor: pointer;
+      user-select: none;
+    }
+    .merch-catalog-chip:has(input:checked) {
+      border-color: #667eea;
+      background: #f0f3ff;
+      color: #4c5bd4;
+    }
+    .merch-catalog-chip input {
+      margin: 0;
+    }
+    .merch-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid #eee;
+    }
+    .merch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.75rem 1.25rem;
+    }
+    @media (min-width: 992px) {
+      .merch-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+    }
+    .merch-card {
+      text-align: center;
+      background: #fff;
+    }
+    .merch-card-media {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      margin-bottom: 0.85rem;
+      overflow: hidden;
+    }
+    .merch-card-media img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .merch-card-title {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #222;
+    }
+    .merch-card-tags {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.35rem;
+      margin-top: 0.55rem;
+    }
+    .merch-tag {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border: 1px solid #d9d9d9;
+      border-radius: 999px;
+      background: #fafafa;
+      font-size: 0.72rem;
+      color: #555;
+      line-height: 1.4;
+    }
+    .merch-card-actions {
+      margin-top: 0.65rem;
+    }
+    .merch-card-actions a {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #667eea;
+      text-decoration: none;
+    }
+    .merch-card-actions a:hover {
+      text-decoration: underline;
+    }
     .content-section { display: none; }
     .content-section.active { display: block; }
     .header {
@@ -666,9 +769,10 @@
       filterUrl: {{ url_for('creative_system.filter_content') | tojson }},
       puzzleSplitUrl: {{ url_for('creative_system.puzzle_split') | tojson }},
       puzzleAssembleUrl: {{ url_for('creative_system.puzzle_assemble') | tojson }},
+      merchGenerateUrl: {{ url_for('creative_system.merch_generate') | tojson }},
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=holding-hands-fonts1"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=merch1"></script>
 </body>
 </html>
