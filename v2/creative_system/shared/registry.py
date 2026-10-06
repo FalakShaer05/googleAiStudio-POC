@@ -98,6 +98,13 @@ STATIONS = [
         "module": "puzzle_collage",
         "kind": "puzzle",
     },
+    {
+        "id": "merch",
+        "label": "Merch",
+        "tagline": "One artwork → every merch mockup (stickers, apparel, tote, prints).",
+        "module": "merch",
+        "kind": "merch",
+    },
 ]
 
 STATION_IDS = {item["id"] for item in STATIONS}

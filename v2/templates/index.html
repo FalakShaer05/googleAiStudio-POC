@@ -2215,10 +2215,25 @@
                 <option value="pencil-sketch" ${item.station === 'pencil-sketch' ? 'selected' : ''}>Pencil Sketch</option>
                 <option value="cartoon" ${item.station === 'cartoon' ? 'selected' : ''}>Cartoon</option>
                 <option value="caricature" ${item.station === 'caricature' ? 'selected' : ''}>Caricature</option>
+                <option value="retro90" ${item.station === 'retro90' ? 'selected' : ''}>Retro 90s</option>
                 <option value="wynwood" ${item.station === 'wynwood' ? 'selected' : ''}>Wynwood</option>
                 <option value="warhol" ${item.station === 'warhol' ? 'selected' : ''}>Warhol</option>
               </select>
               <small class="text-muted">Select the station type to determine signature and style handling</small>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label fw-bold">Aspect Ratio / Print Size (optional)</label>
+              <select class="form-select form-select-sm" id="canvasSize_${item.id}"
+                      onchange="batchItems.find(i => i.id === ${item.id}).canvasSize = this.value">
+                <option value="" ${!item.canvasSize ? 'selected' : ''}>Original</option>
+                <option value="8x10" ${item.canvasSize === '8x10' ? 'selected' : ''}>8×10</option>
+                <option value="11x14" ${item.canvasSize === '11x14' ? 'selected' : ''}>11×14</option>
+                <option value="16x20" ${item.canvasSize === '16x20' ? 'selected' : ''}>16×20</option>
+                <option value="3:2" ${item.canvasSize === '3:2' ? 'selected' : ''}>3:2 — Landscape (15×10)</option>
+                <option value="1:1" ${item.canvasSize === '1:1' ? 'selected' : ''}>1:1 — Square (12×12)</option>
+              </select>
+              <small class="text-muted">Sets this character's output aspect ratio / print size</small>
             </div>
 
             <div class="mb-3">

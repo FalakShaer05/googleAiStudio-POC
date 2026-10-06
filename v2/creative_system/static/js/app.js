@@ -602,6 +602,144 @@
     });
   });
 
+  // --- Merch (one artwork to all product mockups) ---
+  function renderMerchGrid(form, data) {
+    const result = form.querySelector(".merch-result");
+    const grid = form.querySelector("[data-merch-grid]");
+    const countEl = form.querySelector(".merch-toolbar-count");
+    if (!result || !grid) return;
+
+    const items = data.items || [];
+    grid.innerHTML = "";
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "merch-card";
+
+      const media = document.createElement("div");
+      media.className = "merch-card-media";
+      const img = document.createElement("img");
+      img.alt = item.label || item.id || "Merch";
+      img.src = cacheBust(item.image_url || item.local_path || (cfg.downloadPrefix + item.output_filename));
+      media.appendChild(img);
+
+      const title = document.createElement("h3");
+      title.className = "merch-card-title";
+      title.textContent = item.label || item.id;
+
+      const tags = document.createElement("div");
+      tags.className = "merch-card-tags";
+      (item.tags || []).forEach((tag) => {
+        const pill = document.createElement("span");
+        pill.className = "merch-tag";
+        pill.textContent = tag;
+        tags.appendChild(pill);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "merch-card-actions";
+      const link = document.createElement("a");
+      link.href = cfg.downloadPrefix + item.output_filename;
+      link.download = item.output_filename;
+      link.textContent = "Download";
+      actions.appendChild(link);
+
+      card.appendChild(media);
+      card.appendChild(title);
+      if ((item.tags || []).length) card.appendChild(tags);
+      card.appendChild(actions);
+      grid.appendChild(card);
+    });
+
+    if (countEl) {
+      countEl.textContent = items.length + (items.length === 1 ? " item" : " items");
+    }
+    result.style.display = items.length ? "block" : "none";
+  }
+
+  document.querySelectorAll("form[data-merch-form]").forEach((form) => {
+    form.querySelectorAll('input[type="file"]').forEach((input) => {
+      input.addEventListener("change", () => rememberFileInput(form, input));
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (form.dataset.generating === "1") return;
+      restoreCachedFiles(form);
+
+      const picks = Array.from(form.querySelectorAll(".merch-product-chip:checked")).map((el) => el.value);
+      if (!picks.length) {
+        const status = form.querySelector(".cs-status");
+        if (status) {
+          status.className = "status-message status-error cs-status";
+          status.textContent = "Select at least one merch product.";
+          status.style.display = "block";
+        }
+        return;
+      }
+
+      const skippedRequired = [];
+      form.querySelectorAll('input[type="file"][required]').forEach((input) => {
+        const cached = fileCache(form)[input.name];
+        if ((!input.files || !input.files.length) && cached && cached.length) {
+          input.required = false;
+          skippedRequired.push(input);
+        }
+      });
+      const valid = form.checkValidity();
+      skippedRequired.forEach((input) => {
+        input.required = true;
+      });
+      if (!valid) {
+        form.reportValidity();
+        return;
+      }
+
+      const submitBtn = form.querySelector(".convert-btn");
+      const progress = form.querySelector(".cs-progress");
+      const status = form.querySelector(".cs-status");
+      const result = form.querySelector(".merch-result");
+
+      setBusy(form, submitBtn, true);
+      if (submitBtn) submitBtn.textContent = "Generating merch...";
+      if (status) status.style.display = "none";
+      if (result) result.style.display = "none";
+      if (progress) progress.style.display = "block";
+
+      try {
+        const body = buildFormData(form, "merch");
+        body.set("products", JSON.stringify(picks));
+        body.delete("product_pick");
+        const response = await fetch(cfg.merchGenerateUrl, {
+          method: "POST",
+          body: body,
+          cache: "no-store",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Merch generation failed");
+        }
+        renderMerchGrid(form, data);
+        form.dataset.hasResult = "1";
+        if (status) {
+          status.className = "status-message status-success cs-status";
+          status.textContent = data.message || "Merch ready.";
+          status.style.display = "block";
+        }
+      } catch (err) {
+        if (status) {
+          status.className = "status-message status-error cs-status";
+          status.textContent = err.message || String(err);
+          status.style.display = "block";
+        }
+      } finally {
+        if (progress) progress.style.display = "none";
+        setBusy(form, submitBtn, false);
+        if (submitBtn) {
+          submitBtn.textContent = form.dataset.hasResult === "1" ? "Generate again" : "Generate all merch";
+        }
+      }
+    });
+  });
+
   document.querySelectorAll("form[data-puzzle-assemble-form]").forEach((form) => {
     form.querySelectorAll('input[type="file"]').forEach((input) => {
       input.addEventListener("change", () => rememberFileInput(form, input));
