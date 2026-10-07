@@ -269,33 +269,42 @@ def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) 
 
 def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
     """
-    Poster mockup: full artwork at its natural aspect ratio — large on a white
-    backdrop with a soft drop shadow. No square letterboxing.
+    Poster mockup: artwork inset on a white mat (no black border) — distinct from
+    photo print, which is full-bleed art on a grey studio card.
     """
-    del template  # Build from art aspect; ignore blank square template.
+    del template  # Build a matted poster; ignore blank template.
     art = trim_artwork(artwork, pad=2)
     art = _to_rgb(art).convert("RGBA")
-    # Keep the poster big in the merch grid (larger than photo print).
-    max_side = 1800
+    max_side = 1200
     if max(art.size) > max_side:
         art = art.copy()
         art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
 
-    card_w, card_h = art.size
-    # Tight margin so the poster face dominates the mockup.
-    frame_pad = max(28, min(card_w, card_h) // 28)
-    out_w = card_w + frame_pad * 2
-    out_h = card_h + frame_pad * 2
+    aw, ah = art.size
+    # Wide white mat shrinks the art face vs photo print's edge-to-edge look.
+    mat = max(80, min(aw, ah) // 6)
+    card_w = aw + mat * 2
+    card_h = ah + mat * 2
+
+    card = Image.new("RGBA", (card_w, card_h), (255, 255, 255, 255))
+    art_x = mat
+    art_y = mat
+    card.alpha_composite(art, dest=(art_x, art_y))
+
+    # White studio margin around the poster.
+    studio_pad = max(36, min(card_w, card_h) // 18)
+    out_w = card_w + studio_pad * 2
+    out_h = card_h + studio_pad * 2
     backdrop = Image.new("RGBA", (out_w, out_h), (255, 255, 255, 255))
 
     shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(shadow)
-    sx0 = frame_pad + 8
-    sy0 = frame_pad + 12
-    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 55))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+    sx0 = studio_pad + 6
+    sy0 = studio_pad + 10
+    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 50))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(16))
     backdrop.alpha_composite(shadow)
-    backdrop.alpha_composite(art, dest=(frame_pad, frame_pad))
+    backdrop.alpha_composite(card, dest=(studio_pad, studio_pad))
     return flatten_on_white(backdrop)
 
 
@@ -366,13 +375,21 @@ def _rect_sticker_card(
     artwork: Image.Image,
     max_side: int = 900,
 ) -> Image.Image:
-    """Full rectangular artwork, no white border (no shadow)."""
+    """Full rectangular artwork with a thin dark edge so stacked stickers read clearly."""
     art = trim_artwork(artwork, pad=2)
     # Flatten to an opaque card so splash backgrounds / white highlights stay.
     art = _to_rgb(art).convert("RGBA")
     if max(art.size) > max_side:
         art = art.copy()
         art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    # Thin dark border — helps separate identical stickers in pack mockups.
+    border = max(2, min(4, min(art.size) // 140))
+    draw = ImageDraw.Draw(art)
+    draw.rectangle(
+        (0, 0, art.size[0] - 1, art.size[1] - 1),
+        outline=(35, 35, 35, 235),
+        width=border,
+    )
     return art
 
 
@@ -381,7 +398,7 @@ def make_sticker_single(
     diecut: Optional[Image.Image] = None,
 ) -> Image.Image:
     """
-    Single sticker product: full rectangular artwork (no white rim),
+    Single sticker product: full rectangular artwork with a thin dark edge,
     soft drop shadow — matches store listing style.
     """
     del diecut  # Don't use silhouette die-cut; keep the full rectangular scene.

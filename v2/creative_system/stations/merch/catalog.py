@@ -25,11 +25,20 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "engine": "composite",
     },
     {
+        "id": "stickers-4",
+        "label": "4 Stickers",
+        "tags": ["Pack"],
+        "mode": "sticker_fan",
+        "engine": "composite",
+        "sticker_count": 4,
+    },
+    {
         "id": "stickers-5",
         "label": "5 Stickers",
         "tags": ["Pack"],
         "mode": "sticker_fan",
         "engine": "composite",
+        "sticker_count": 5,
     },
     {
         "id": "sticker-sheet",

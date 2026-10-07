@@ -93,7 +93,7 @@ SOURCE ARTWORK (IMAGE 1) is the ONLY design — keep it exact.
 STYLE REFERENCE (IMAGE 2) is layout only: identical die-cut stickers fanned on white.
 
 Requirements:
-- Exactly 5 identical stickers of the source artwork with thick white die-cut borders.
+- Identical stickers of the source artwork with clear dark edges so each sticker reads separately.
 - Fan / slight overlap. Plain white background. No props, text, or UI."""
 
     if mode == "sticker_sheet":

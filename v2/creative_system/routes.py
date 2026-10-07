@@ -782,7 +782,7 @@ def api_merch_generate():
         name: products
         type: string
         required: false
-        description: Optional JSON array of product ids (sticker, stickers-5, sticker-sheet, cap, tshirt, hoodie, tote, photo-print, canvas)
+        description: Optional JSON array of product ids (sticker, stickers-4, stickers-5, sticker-sheet, cap, tshirt, hoodie, tote, photo-print, canvas)
       - in: formData
         name: colors
         type: string
