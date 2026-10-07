@@ -113,8 +113,8 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
     },
     {
         "id": "canvas",
-        "label": "Canvas",
-        "tags": ["Poster"],
+        "label": "Poster",
+        "tags": ["Large"],
         "mode": "canvas",
         "engine": "composite",
         "fit": "contain",

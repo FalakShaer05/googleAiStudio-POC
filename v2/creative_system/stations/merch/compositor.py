@@ -268,22 +268,35 @@ def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) 
 
 
 def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
-    """Poster-style square — art centered with white margin, no hands."""
-    art = trim_artwork(artwork)
-    size = 1400
-    canvas = Image.new("RGB", (size, size), (255, 255, 255))
-    margin = 80
-    card = (margin, margin, size - margin, size - margin)
-    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    """
+    Poster mockup: full artwork at its natural aspect ratio — large on a white
+    backdrop with a soft drop shadow. No square letterboxing.
+    """
+    del template  # Build from art aspect; ignore blank square template.
+    art = trim_artwork(artwork, pad=2)
+    art = _to_rgb(art).convert("RGBA")
+    # Keep the poster big in the merch grid (larger than photo print).
+    max_side = 1800
+    if max(art.size) > max_side:
+        art = art.copy()
+        art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+
+    card_w, card_h = art.size
+    # Tight margin so the poster face dominates the mockup.
+    frame_pad = max(28, min(card_w, card_h) // 28)
+    out_w = card_w + frame_pad * 2
+    out_h = card_h + frame_pad * 2
+    backdrop = Image.new("RGBA", (out_w, out_h), (255, 255, 255, 255))
+
+    shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
     sdraw = ImageDraw.Draw(shadow)
-    sdraw.rectangle((card[0] + 14, card[1] + 18, card[2] + 14, card[3] + 18), fill=(0, 0, 0, 55))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(12))
-    canvas.paste(shadow.convert("RGB"), mask=shadow.split()[3])
-    inset = 48
-    area = (card[2] - card[0] - inset * 2, card[3] - card[1] - inset * 2)
-    filled = _fit(art, area, "contain")
-    canvas.paste(flatten_on_white(filled), (card[0] + inset, card[1] + inset))
-    return canvas
+    sx0 = frame_pad + 8
+    sy0 = frame_pad + 12
+    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 55))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+    backdrop.alpha_composite(shadow)
+    backdrop.alpha_composite(art, dest=(frame_pad, frame_pad))
+    return flatten_on_white(backdrop)
 
 
 def _white_stroke(art: Image.Image, px: int) -> Image.Image:
