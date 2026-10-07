@@ -61,7 +61,7 @@ def _composite_one(
     if mode == "sticker_single":
         out = make_sticker_single(artwork)
     elif mode == "sticker_fan":
-        out = make_sticker_fan(artwork)
+        out = make_sticker_fan(artwork, count=int(product.get("sticker_count") or 5))
     elif mode == "sticker_sheet":
         out = make_sticker_sheet(artwork)
     elif mode == "photo_print":
