@@ -46,7 +46,12 @@ from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, COMPOSITING_PROMPT_NO_BACKGROUND, BIRTHDAY_STATION_PREFILLED_PROMPTS
 from utils.vector_export import export_image_format, SUPPORTED_EXPORT_FORMATS
-from utils.print_resolution import list_profiles_for_api, normalize_art_type
+from utils.print_resolution import (
+    list_profiles_for_api,
+    normalize_art_type,
+    validate_aspect,
+    validate_variant,
+)
 from creative_system import register_creative_system
 
 app = Flask(__name__)
@@ -1076,6 +1081,15 @@ def upscale_type_web():
 
         out_filename = generate_unique_filename("print_ready.png", "output")
         out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+
+        ok, err = validate_variant(art_type, variant_id)
+        if not ok:
+            cleanup_file(image_path)
+            return jsonify({"success": False, "error": err}), 400
+        ok, err = validate_aspect(art_type, variant_id, aspect_id)
+        if not ok:
+            cleanup_file(image_path)
+            return jsonify({"success": False, "error": err}), 400
 
         success, message = upscale_image_type_resolution(
             image_path=image_path,
