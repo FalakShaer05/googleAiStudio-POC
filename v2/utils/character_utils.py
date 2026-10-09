@@ -9,7 +9,7 @@ import time
 import random
 import hashlib
 from collections import deque
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import requests
@@ -3085,4 +3085,281 @@ def upscale_image_type_resolution(
         import traceback
         traceback.print_exc()
         return False, str(e)
+
+
+def _to_rgb_image(img: Image.Image) -> Image.Image:
+    """Convert any PIL image to RGB with a white backdrop for transparency."""
+    img = img.copy()
+    if img.mode == "RGBA":
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        return background
+    if img.mode != "RGB":
+        return img.convert("RGB")
+    return img
+
+
+def _load_group_image_for_gemini(image_path: str, max_side: int = 1536) -> Image.Image:
+    """
+    Load a group photo for Gemini and downscale large inputs.
+
+    Large originals frequently hit Gemini 503 deadline timeouts during
+    person extraction, so we keep the longest side bounded.
+    """
+    image = _to_rgb_image(Image.open(image_path))
+    try:
+        max_side = max(512, int(os.getenv("GROUP_EXTRACT_MAX_SIDE", str(max_side))))
+    except ValueError:
+        max_side = 1536
+
+    width, height = image.size
+    if max(width, height) > max_side:
+        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+        print(f"📐 Group extract resized {width}x{height} → {image.size[0]}x{image.size[1]}")
+    return image
+
+
+def _generate_content_text_with_retry(client: genai.Client, model: str, contents, operation: str = "text"):
+    """Text generate_content with the same transient-retry policy as image calls."""
+    max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "3"))
+    initial_delay_s = float(os.getenv("GEMINI_RETRY_INITIAL_DELAY_S", "1.0"))
+    max_delay_s = float(os.getenv("GEMINI_RETRY_MAX_DELAY_S", "10.0"))
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                print(f"🔁 Gemini text retry {attempt}/{max_retries} (model={model})")
+            response = client.models.generate_content(model=model, contents=contents)
+            log_gemini_token_usage(response, operation=operation, model=model)
+            return response
+        except Exception as e:
+            last_exc = e
+            if not _is_transient_gemini_error(e) or attempt >= max_retries:
+                break
+            delay = min(max_delay_s, initial_delay_s * (2 ** attempt))
+            delay = delay * (0.7 + random.random() * 0.6)
+            print(f"⏳ Gemini text transient error, backing off {delay:.1f}s: {e}")
+            time.sleep(delay)
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Gemini text request failed with unknown error")
+
+
+def _friendly_gemini_timeout_message(exc: Exception) -> str:
+    msg = str(exc)
+    if "503" in msg or "Deadline expired" in msg or "UNAVAILABLE" in msg:
+        return (
+            "Gemini timed out while processing this group photo (503 deadline). "
+            "Try again, set an exact Person count, or use a smaller image."
+        )
+    return msg
+
+
+def count_persons_in_image(
+    image_path: str,
+    max_persons: int = 12,
+    group_image: Optional[Image.Image] = None,
+) -> int:
+    """
+    Ask Gemini how many distinct people are in a group photo.
+    Returns an integer in [1, max_persons]. Raises on failure.
+    """
+    if group_image is None and not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    client = get_gemini_client()
+    image = group_image if group_image is not None else _load_group_image_for_gemini(image_path)
+    prompt = (
+        "Count the number of distinct people clearly visible in this photo. "
+        "Ignore reflections, posters, or tiny background figures. "
+        f"Return ONLY a single integer between 1 and {max_persons}."
+    )
+    try:
+        response = _generate_content_text_with_retry(
+            client=client,
+            model=get_gemini_text_model(),
+            contents=[image, prompt],
+            operation="group_person_count",
+        )
+    except Exception as e:
+        raise RuntimeError(_friendly_gemini_timeout_message(e)) from e
+
+    text = (getattr(response, "text", None) or "").strip()
+    if not text:
+        parts = _iter_gemini_response_parts(response)
+        chunks = []
+        for part in parts:
+            part_text = getattr(part, "text", None)
+            if part_text:
+                chunks.append(part_text)
+        text = " ".join(chunks).strip()
+
+    match = re.search(r"\b(\d{1,2})\b", text)
+    if not match:
+        raise RuntimeError(f"Could not parse person count from model response: {text!r}")
+
+    count = int(match.group(1))
+    if count < 1:
+        raise RuntimeError("No people detected in the image")
+    return min(count, max_persons)
+
+
+def extract_single_person_from_group(
+    image_path: str,
+    person_index: int,
+    total_persons: int,
+    output_path: str,
+    group_image: Optional[Image.Image] = None,
+) -> Tuple[bool, str]:
+    """
+    Isolate one person from a group photo onto a plain white background.
+    person_index is 1-based, ordered left-to-right then top-to-bottom.
+    """
+    try:
+        if group_image is None and not os.path.exists(image_path):
+            return False, f"Image not found: {image_path}"
+        if person_index < 1 or person_index > total_persons:
+            return False, f"Invalid person_index {person_index} for total {total_persons}"
+
+        client = get_gemini_client()
+        image = group_image if group_image is not None else _load_group_image_for_gemini(image_path)
+        # Portrait cutouts are usually closer to 3:4 than the original group frame.
+        aspect_ratio = "3:4"
+
+        prompt = (
+            f"From this group photo, isolate ONLY person #{person_index} of {total_persons} "
+            f"(count left-to-right, then top-to-bottom).\n"
+            "Return one photorealistic cutout of that person alone on a plain white background.\n"
+            "Keep the exact face, hair, skin tone, clothes, and pose.\n"
+            "Do not include other people, text, borders, or new props."
+        )
+
+        response = _generate_content_image(
+            client=client,
+            model=get_gemini_image_model(),
+            contents=[image, prompt],
+            aspect_ratio=aspect_ratio,
+            image_size="1K",
+            operation="art_generation:extract_person",
+        )
+        img = _extract_final_image_from_response(response)
+        if img is None:
+            return False, f"No image returned for person #{person_index}"
+        if not isinstance(img, Image.Image):
+            return False, f"Invalid image object for person #{person_index}"
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        img.save(output_path, "PNG", optimize=True)
+        return True, f"Extracted person #{person_index}"
+    except Exception as e:
+        print(f"extract_single_person_from_group error (person {person_index}): {e}")
+        import traceback
+        traceback.print_exc()
+        return False, _friendly_gemini_timeout_message(e)
+
+
+def extract_persons_from_group_image(
+    image_path: str,
+    output_dir: str,
+    max_persons: int = 12,
+    person_count: Optional[int] = None,
+    max_workers: int = 1,
+) -> Tuple[bool, str, List[Dict[str, Any]]]:
+    """
+    Detect people in a group photo and extract each person as an individual PNG.
+
+    Defaults to sequential extraction (max_workers=1) to avoid Gemini 503
+    deadline timeouts from concurrent image-generation calls.
+
+    Returns (success, message, results) where results is a list of dicts with
+    index / success / output_path / error keys.
+    """
+    try:
+        if not os.path.exists(image_path):
+            return False, f"Image not found: {image_path}", []
+
+        os.makedirs(output_dir, exist_ok=True)
+        group_image = _load_group_image_for_gemini(image_path)
+
+        if person_count is None:
+            person_count = count_persons_in_image(
+                image_path,
+                max_persons=max_persons,
+                group_image=group_image,
+            )
+        else:
+            person_count = max(1, min(int(person_count), max_persons))
+
+        print(f"👥 Group extract: {person_count} person(s), workers={max(1, min(max_workers, person_count))}")
+
+        results: List[Dict[str, Any]] = []
+
+        def _run(idx: int) -> Dict[str, Any]:
+            filename = f"extracted_person_{idx}_{uuid.uuid4().hex[:10]}.png"
+            out_path = os.path.join(output_dir, filename)
+            ok, msg = extract_single_person_from_group(
+                image_path=image_path,
+                person_index=idx,
+                total_persons=person_count,
+                output_path=out_path,
+                group_image=group_image,
+            )
+            if ok:
+                return {
+                    "index": idx - 1,
+                    "person_number": idx,
+                    "success": True,
+                    "message": msg,
+                    "output_filename": filename,
+                    "output_path": out_path,
+                }
+            return {
+                "index": idx - 1,
+                "person_number": idx,
+                "success": False,
+                "error": msg,
+            }
+
+        workers = max(1, min(max_workers, person_count))
+        if workers == 1:
+            for idx in range(1, person_count + 1):
+                results.append(_run(idx))
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_map = {
+                    executor.submit(_run, idx): idx for idx in range(1, person_count + 1)
+                }
+                for future in as_completed(future_map):
+                    try:
+                        results.append(future.result())
+                    except Exception as exc:
+                        idx = future_map[future]
+                        results.append({
+                            "index": idx - 1,
+                            "person_number": idx,
+                            "success": False,
+                            "error": _friendly_gemini_timeout_message(exc),
+                        })
+
+        results.sort(key=lambda item: item.get("index", 0))
+        success_count = sum(1 for item in results if item.get("success"))
+        failure_count = len(results) - success_count
+        message = (
+            f"Extracted {success_count} of {person_count} person(s)"
+            + (f" ({failure_count} failed)" if failure_count else "")
+        )
+        return success_count > 0, message, results
+    except Exception as e:
+        print(f"extract_persons_from_group_image error: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, _friendly_gemini_timeout_message(e), []
 

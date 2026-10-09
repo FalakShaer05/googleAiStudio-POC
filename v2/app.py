@@ -40,6 +40,7 @@ from utils.character_utils import (
     upscale_image_type_resolution,
     normalize_image_size,
     get_canvas_size_pixels,
+    extract_persons_from_group_image,
 )
 from utils.bg_remover import remove_background, warmup_rembg_sessions
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
@@ -220,7 +221,8 @@ def process_single_character(item_data, index):
     """
     try:
         selfie_file = item_data.get("selfie_file")
-        selfie_url = item_data.get("selfie_url", "").strip()
+        selfie_url = (item_data.get("selfie_url") or "").strip()
+        selfie_filename_hint = (item_data.get("selfie_filename") or "").strip()
         character_prompt = item_data.get("character_prompt", "").strip()
         station = item_data.get("station", "").strip() or None
         logo_position = item_data.get("logo_position", "top_right").strip().lower() or "top_right"
@@ -234,18 +236,21 @@ def process_single_character(item_data, index):
                 "error": f"Invalid logo_position '{logo_position}'"
             }
 
-        if not selfie_file and not selfie_url:
+        provided_sources = sum(
+            1 for value in (selfie_file, selfie_url, selfie_filename_hint) if value
+        )
+        if provided_sources == 0:
             return {
                 "index": index,
                 "success": False,
-                "error": "Either selfie file or selfie_url is required"
+                "error": "Either selfie file, selfie_url, or selfie_filename is required"
             }
 
-        if selfie_file and selfie_url:
+        if provided_sources > 1:
             return {
                 "index": index,
                 "success": False,
-                "error": "Provide either selfie file or selfie_url, not both"
+                "error": "Provide only one of selfie file, selfie_url, or selfie_filename"
             }
 
         if not character_prompt:
@@ -258,6 +263,7 @@ def process_single_character(item_data, index):
         # Handle selfie
         selfie_path = None
         selfie_filename = None
+        cleanup_selfie = True
         if selfie_file:
             if not selfie_file.filename or not allowed_file(selfie_file.filename):
                 return {
@@ -268,6 +274,21 @@ def process_single_character(item_data, index):
             selfie_filename = generate_unique_filename(selfie_file.filename, "selfie")
             selfie_path = os.path.join(UPLOAD_FOLDER, selfie_filename)
             selfie_file.save(selfie_path)
+        elif selfie_filename_hint:
+            safe_name = secure_filename(selfie_filename_hint)
+            candidate_paths = [
+                os.path.join(OUTPUT_FOLDER, safe_name),
+                os.path.join(UPLOAD_FOLDER, safe_name),
+            ]
+            selfie_path = next((path for path in candidate_paths if os.path.exists(path)), None)
+            if not selfie_path:
+                return {
+                    "index": index,
+                    "success": False,
+                    "error": f"Selfie file not found: {safe_name}"
+                }
+            selfie_filename = safe_name
+            cleanup_selfie = False
         elif selfie_url:
             selfie_path = download_image_from_url(selfie_url, UPLOAD_FOLDER)
             if not selfie_path:
@@ -298,7 +319,8 @@ def process_single_character(item_data, index):
         )
 
         if not success:
-            cleanup_file(selfie_path)
+            if cleanup_selfie:
+                cleanup_file(selfie_path)
             return {
                 "index": index,
                 "success": False,
@@ -308,8 +330,9 @@ def process_single_character(item_data, index):
         # Upload to S3
         cloudfront_url = upload_image_to_s3(output_path)
         
-        # Cleanup input
-        cleanup_file(selfie_path)
+        # Cleanup downloaded/uploaded inputs only (keep extracted server files)
+        if cleanup_selfie:
+            cleanup_file(selfie_path)
 
         info = get_image_info(output_path)
 
@@ -514,6 +537,104 @@ def generate_character_web():
         import traceback
 
         print("Error in generate-character-web:", e)
+        print(traceback.format_exc())
+        return jsonify({"error": f"Error: {str(e)}"}), 500
+
+
+@app.route("/extract-persons-from-group", methods=["POST"])
+def extract_persons_from_group():
+    """
+    Upload a group photo and extract each person as an individual image.
+    """
+    try:
+        group_file = request.files.get("group_image")
+        group_url = request.form.get("group_image_url", "").strip()
+        person_count_raw = request.form.get("person_count", "").strip()
+        max_persons_raw = request.form.get("max_persons", "12").strip()
+
+        if not group_file and not group_url:
+            return jsonify({"error": "Either group_image file or group_image_url is required"}), 400
+        if group_file and group_url:
+            return jsonify({"error": "Provide either group_image file or group_image_url, not both"}), 400
+
+        try:
+            max_persons = max(1, min(int(max_persons_raw or "12"), 20))
+        except ValueError:
+            max_persons = 12
+
+        person_count = None
+        if person_count_raw:
+            try:
+                person_count = max(1, min(int(person_count_raw), max_persons))
+            except ValueError:
+                return jsonify({"error": "person_count must be an integer"}), 400
+
+        if group_file:
+            if not group_file.filename or not allowed_file(group_file.filename):
+                return jsonify({"error": "Invalid group image file type"}), 400
+            group_filename = generate_unique_filename(group_file.filename, "group")
+            group_path = os.path.join(UPLOAD_FOLDER, group_filename)
+            group_file.save(group_path)
+        else:
+            group_path = download_image_from_url(group_url, UPLOAD_FOLDER)
+            if not group_path:
+                return jsonify({"error": "Failed to download group image from URL"}), 400
+            group_filename = os.path.basename(group_path)
+
+        # Sequential extraction avoids Gemini 503 deadline timeouts from
+        # concurrent heavy image-generation calls on the same group photo.
+        ok, message, results = extract_persons_from_group_image(
+            image_path=group_path,
+            output_dir=OUTPUT_FOLDER,
+            max_persons=max_persons,
+            person_count=person_count,
+            max_workers=1,
+        )
+
+        response_results = []
+        for result in results:
+            if not result.get("success"):
+                response_results.append(result)
+                continue
+
+            output_filename = result.get("output_filename")
+            output_path = result.get("output_path") or os.path.join(OUTPUT_FOLDER, output_filename)
+            cloudfront_url = upload_image_to_s3(output_path) if output_path and os.path.exists(output_path) else None
+            entry = {
+                "index": result.get("index"),
+                "person_number": result.get("person_number"),
+                "success": True,
+                "message": result.get("message"),
+                "output_filename": output_filename,
+                "local_path": f"/outputs/{output_filename}",
+            }
+            if cloudfront_url:
+                entry["image_url"] = cloudfront_url
+            response_results.append(entry)
+
+        cleanup_file(group_path)
+
+        success_count = sum(1 for item in response_results if item.get("success"))
+        if not ok or success_count == 0:
+            return jsonify({
+                "success": False,
+                "error": message or "Failed to extract persons from group image",
+                "group_filename": group_filename,
+                "results": response_results,
+            }), 500
+
+        return jsonify({
+            "success": True,
+            "message": message,
+            "group_filename": group_filename,
+            "total": len(response_results),
+            "succeeded": success_count,
+            "failed": len(response_results) - success_count,
+            "results": response_results,
+        })
+    except Exception as e:
+        import traceback
+        print("Error in extract-persons-from-group:", e)
         print(traceback.format_exc())
         return jsonify({"error": f"Error: {str(e)}"}), 500
 
@@ -1259,10 +1380,11 @@ def generate_characters_batch_web():
 
             item_data = {
                 "selfie_file": selfie_file,
-                "selfie_url": item.get("selfie_url", "").strip(),
-                "character_prompt": item.get("character_prompt", "").strip(),
-                "station": item.get("station", "").strip() or None,
-                "logo_position": item.get("logo_position", "top_right").strip().lower() or "top_right",
+                "selfie_url": (item.get("selfie_url") or "").strip(),
+                "selfie_filename": (item.get("selfie_filename") or "").strip(),
+                "character_prompt": (item.get("character_prompt") or "").strip(),
+                "station": (item.get("station") or "").strip() or None,
+                "logo_position": (item.get("logo_position") or "top_right").strip().lower() or "top_right",
                 "canvas_size": item.get("canvas_size") or None,
                 "dpi": int(item.get("dpi", "300")),
             }
