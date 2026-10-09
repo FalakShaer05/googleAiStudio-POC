@@ -270,6 +270,65 @@
       padding: 0.75rem;
       margin-bottom: 0.75rem;
     }
+    .sub-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .sub-tab {
+      border: 2px solid #e9ecef;
+      background: #fff;
+      color: #495057;
+      border-radius: 999px;
+      padding: 0.55rem 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .sub-tab:hover {
+      border-color: #667eea;
+      color: #667eea;
+    }
+    .sub-tab.active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-color: transparent;
+      color: #fff;
+    }
+    .sub-tab-panel {
+      display: none;
+    }
+    .sub-tab-panel.active {
+      display: block;
+    }
+    .extracted-person-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 1rem;
+    }
+    .extracted-person-card {
+      background: #f8f9ff;
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 0.75rem;
+      text-align: center;
+    }
+    .extracted-person-card img {
+      width: 100%;
+      max-height: 180px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #fff;
+      margin-bottom: 0.5rem;
+    }
+    .group-person-preview {
+      max-width: 120px;
+      max-height: 120px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid #e9ecef;
+    }
     .fifa-section-card {
       background: #f8f9ff;
       border: 2px solid #e9ecef;
@@ -524,6 +583,9 @@
         </button>
         <button class="nav-tab" id="batchTab" onclick="switchTab('batch')">
           <i class="fas fa-layer-group me-2"></i>Batch Processing
+        </button>
+        <button class="nav-tab" id="groupBatchTab" onclick="switchTab('groupBatch')">
+          <i class="fas fa-users me-2"></i>Group Batch
         </button>
         <button class="nav-tab" id="referenceTab" onclick="switchTab('reference')">
           <i class="fas fa-palette me-2"></i>Reference
@@ -1000,6 +1062,124 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Batch Section -->
+  <div class="container">
+    <div class="main-container content-section" id="groupBatchSection">
+      <div class="header">
+        <h1 class="mb-1">
+          <i class="fas fa-users me-2"></i>Group Batch
+        </h1>
+        <p class="mb-0">
+          Extract each person from one group photo, then generate characters for all of them at once.
+        </p>
+      </div>
+
+      <div class="p-4">
+        <div class="sub-tabs">
+          <button type="button" class="sub-tab active" id="groupExtractSubTab" onclick="switchGroupBatchSubTab('extract')">
+            <i class="fas fa-user-friends me-2"></i>1. Extract Persons
+          </button>
+          <button type="button" class="sub-tab" id="groupProcessSubTab" onclick="switchGroupBatchSubTab('process')">
+            <i class="fas fa-magic me-2"></i>2. Process Characters
+          </button>
+        </div>
+
+        <!-- Sub-tab 1: Extract -->
+        <div class="sub-tab-panel active" id="groupExtractPanel">
+          <div class="mb-4 p-3" style="background: #f8f9ff; border-radius: 12px; border: 2px solid #e9ecef;">
+            <h5 class="mb-3"><i class="fas fa-image me-2"></i>Upload Group Photo</h5>
+            <p class="text-muted small mb-3">
+              Upload one photo with multiple people. We will isolate each person into their own image.
+            </p>
+
+            <div class="upload-area" onclick="document.getElementById('groupImageInput').click()">
+              <div class="upload-icon"><i class="fas fa-users"></i></div>
+              <h6 class="mb-1">Click to choose group photo</h6>
+              <p class="text-muted small mb-0">Or enter URL below</p>
+              <input type="file" id="groupImageInput" class="file-input" accept="image/*"
+                     onchange="handleGroupImageFile(this)" />
+            </div>
+            <div class="file-info mt-2" id="groupImageFileInfo" style="display: none;">
+              <div class="d-flex align-items-center">
+                <i class="fas fa-image me-2"></i>
+                <span id="groupImageFileName"></span>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="clearGroupImage()">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
+            <div class="mt-2">
+              <label class="form-label small mb-1">Or group image URL:</label>
+              <input type="url" id="groupImageUrl" class="form-control form-control-sm"
+                     placeholder="https://example.com/group.jpg" />
+            </div>
+            <div class="row mt-3">
+              <div class="col-md-4">
+                <label class="form-label small mb-1">Person count (recommended)</label>
+                <input type="number" id="groupPersonCount" class="form-control form-control-sm"
+                       min="1" max="20" placeholder="e.g. 5" />
+                <small class="text-muted">Set exact count to skip auto-detect and reduce timeouts</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="d-flex gap-2 mb-3 flex-wrap">
+            <button type="button" class="convert-btn" id="extractPersonsBtn">
+              <i class="fas fa-scissors me-2"></i>Extract All Persons
+            </button>
+            <button type="button" class="btn btn-outline-primary" id="sendExtractedToProcessBtn" style="display: none;">
+              <i class="fas fa-arrow-right me-2"></i>Send to Process
+            </button>
+            <button type="button" class="btn btn-outline-danger" id="clearExtractedBtn">
+              <i class="fas fa-trash me-2"></i>Clear
+            </button>
+          </div>
+
+          <div class="mt-3" id="groupExtractProgress" style="display: none;">
+            <div class="progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" id="groupExtractProgressBar" style="width: 100%;"></div>
+            </div>
+            <p class="text-center mt-2 mb-0" id="groupExtractProgressText">Extracting persons one-by-one (may take a minute)...</p>
+          </div>
+
+          <div class="status-message" id="groupExtractStatus" style="display: none;"></div>
+          <div id="extractedPersonsGallery" class="mt-3"></div>
+        </div>
+
+        <!-- Sub-tab 2: Process -->
+        <div class="sub-tab-panel" id="groupProcessPanel">
+          <div class="mb-3">
+            <h5 class="mb-2"><i class="fas fa-magic me-2"></i>Assign Prompt / Hobby / Station</h5>
+            <p class="text-muted small mb-0">
+              Each extracted person becomes a batch item. Set station and prompt (or quick hobby), then generate all at once.
+            </p>
+          </div>
+
+          <div id="groupProcessItemsContainer"></div>
+
+          <div class="d-flex gap-2 mb-3 flex-wrap">
+            <button type="button" class="convert-btn" id="generateGroupBatchBtn">
+              <i class="fas fa-magic me-2"></i>Generate All Characters
+            </button>
+            <button type="button" class="btn btn-outline-danger" id="clearGroupProcessBtn">
+              <i class="fas fa-trash me-2"></i>Clear Process List
+            </button>
+          </div>
+
+          <div class="mt-3" id="groupProcessProgress" style="display: none;">
+            <div class="progress">
+              <div class="progress-bar progress-bar-striped progress-bar-animated" id="groupProcessProgressBar" style="width: 100%;"></div>
+            </div>
+            <p class="text-center mt-2 mb-0" id="groupProcessProgressText">Generating characters...</p>
+          </div>
+
+          <div class="status-message" id="groupProcessStatus" style="display: none;"></div>
+          <div id="groupProcessResults" class="mt-3"></div>
         </div>
       </div>
     </div>
@@ -1923,6 +2103,7 @@
       // Update tab buttons
       document.getElementById("singleTab").classList.toggle("active", tab === "single");
       document.getElementById("batchTab").classList.toggle("active", tab === "batch");
+      document.getElementById("groupBatchTab").classList.toggle("active", tab === "groupBatch");
       document.getElementById("referenceTab").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupTab").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdayTab").classList.toggle("active", tab === "birthday");
@@ -1932,6 +2113,7 @@
       // Show/hide sections
       document.getElementById("singleSection").classList.toggle("active", tab === "single");
       document.getElementById("batchSection").classList.toggle("active", tab === "batch");
+      document.getElementById("groupBatchSection").classList.toggle("active", tab === "groupBatch");
       document.getElementById("referenceSection").classList.toggle("active", tab === "reference");
       document.getElementById("fifaWorldcupSection").classList.toggle("active", tab === "fifaWorldcup");
       document.getElementById("birthdaySection").classList.toggle("active", tab === "birthday");
@@ -2709,6 +2891,380 @@ STRICT RULES:
     function hideCompositeStatus() {
       document.getElementById("compositeStatus").style.display = "none";
     }
+
+    // --- Group Batch (extract persons + process) ---
+    let groupImageFile = null;
+    let extractedPersons = [];
+    let groupProcessItems = [];
+    let groupProcessItemCounter = 0;
+
+    function switchGroupBatchSubTab(subTab) {
+      document.getElementById("groupExtractSubTab").classList.toggle("active", subTab === "extract");
+      document.getElementById("groupProcessSubTab").classList.toggle("active", subTab === "process");
+      document.getElementById("groupExtractPanel").classList.toggle("active", subTab === "extract");
+      document.getElementById("groupProcessPanel").classList.toggle("active", subTab === "process");
+    }
+
+    function handleGroupImageFile(input) {
+      const file = input.files[0];
+      if (file) {
+        groupImageFile = file;
+        document.getElementById("groupImageFileName").textContent = file.name;
+        document.getElementById("groupImageFileInfo").style.display = "block";
+        document.getElementById("groupImageUrl").value = "";
+      }
+    }
+
+    function clearGroupImage() {
+      groupImageFile = null;
+      document.getElementById("groupImageInput").value = "";
+      document.getElementById("groupImageFileInfo").style.display = "none";
+      document.getElementById("groupImageUrl").value = "";
+    }
+
+    function showGroupExtractStatus(msg, isError) {
+      const statusEl = document.getElementById("groupExtractStatus");
+      statusEl.className = "status-message " + (isError ? "status-error" : "status-success");
+      statusEl.textContent = msg;
+      statusEl.style.display = "block";
+    }
+
+    function hideGroupExtractStatus() {
+      document.getElementById("groupExtractStatus").style.display = "none";
+    }
+
+    function showGroupProcessStatus(msg, isError) {
+      const statusEl = document.getElementById("groupProcessStatus");
+      statusEl.className = "status-message " + (isError ? "status-error" : "status-success");
+      statusEl.textContent = msg;
+      statusEl.style.display = "block";
+    }
+
+    function hideGroupProcessStatus() {
+      document.getElementById("groupProcessStatus").style.display = "none";
+    }
+
+    function renderExtractedPersonsGallery() {
+      const container = document.getElementById("extractedPersonsGallery");
+      const sendBtn = document.getElementById("sendExtractedToProcessBtn");
+      if (!extractedPersons.length) {
+        container.innerHTML = "";
+        sendBtn.style.display = "none";
+        return;
+      }
+
+      sendBtn.style.display = "inline-block";
+      container.innerHTML = `
+        <h5 class="mb-2"><i class="fas fa-user-friends me-2"></i>Extracted Persons (${extractedPersons.length})</h5>
+        <div class="extracted-person-grid">
+          ${extractedPersons.map((person, idx) => {
+            const src = person.image_url || person.local_path || "";
+            return `
+              <div class="extracted-person-card">
+                ${src ? `<img src="${src}" alt="Person ${idx + 1}" />` : ""}
+                <div class="fw-bold small mb-1">Person ${person.person_number || (idx + 1)}</div>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeExtractedPerson(${idx})">
+                  <i class="fas fa-times me-1"></i>Remove
+                </button>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      `;
+    }
+
+    function removeExtractedPerson(index) {
+      extractedPersons.splice(index, 1);
+      renderExtractedPersonsGallery();
+    }
+
+    function clearExtractedPersons() {
+      extractedPersons = [];
+      clearGroupImage();
+      document.getElementById("groupPersonCount").value = "";
+      document.getElementById("extractedPersonsGallery").innerHTML = "";
+      document.getElementById("sendExtractedToProcessBtn").style.display = "none";
+      hideGroupExtractStatus();
+      document.getElementById("groupExtractProgress").style.display = "none";
+    }
+
+    function populateGroupProcessFromExtracted() {
+      if (!extractedPersons.length) {
+        showGroupExtractStatus("Extract persons first", true);
+        return;
+      }
+
+      groupProcessItems = extractedPersons.map((person) => ({
+        id: groupProcessItemCounter++,
+        personNumber: person.person_number,
+        previewUrl: person.image_url || person.local_path || "",
+        selfieFilename: person.output_filename || "",
+        selfieUrl: person.image_url || "",
+        characterPrompt: "",
+        station: "",
+        canvasSize: "",
+        dpi: 300,
+      }));
+
+      renderGroupProcessItems();
+      hideGroupProcessStatus();
+      document.getElementById("groupProcessResults").innerHTML = "";
+      switchGroupBatchSubTab("process");
+      showGroupProcessStatus(`Loaded ${groupProcessItems.length} person(s) for processing`, false);
+    }
+
+    function clearGroupProcessItems() {
+      groupProcessItems = [];
+      groupProcessItemCounter = 0;
+      renderGroupProcessItems();
+      document.getElementById("groupProcessResults").innerHTML = "";
+      hideGroupProcessStatus();
+    }
+
+    function renderGroupProcessItems() {
+      const container = document.getElementById("groupProcessItemsContainer");
+      if (!groupProcessItems.length) {
+        container.innerHTML = '<p class="text-muted text-center">No persons loaded. Extract persons first, then click "Send to Process".</p>';
+        return;
+      }
+
+      container.innerHTML = groupProcessItems.map((item, itemIndex) => `
+        <div class="batch-item" data-item-id="${item.id}">
+          <div class="batch-item-header">
+            <div class="batch-item-number">${itemIndex + 1}</div>
+            <button type="button" class="batch-item-remove" onclick="removeGroupProcessItem(${item.id})">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+
+          <div class="mb-3 d-flex align-items-center gap-3">
+            ${item.previewUrl ? `<img src="${item.previewUrl}" class="group-person-preview" alt="Person ${itemIndex + 1}" />` : ""}
+            <div>
+              <div class="fw-bold">Person ${item.personNumber || (itemIndex + 1)}</div>
+              <small class="text-muted">${item.selfieFilename || "Extracted image"}</small>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">Station (required)</label>
+            <select class="form-select form-select-sm mb-2"
+                    onchange="groupProcessItems.find(i => i.id === ${item.id}).station = this.value" required>
+              <option value="">Select a station...</option>
+              <option value="pencil-sketch" ${item.station === "pencil-sketch" ? "selected" : ""}>Pencil Sketch</option>
+              <option value="cartoon" ${item.station === "cartoon" ? "selected" : ""}>Cartoon</option>
+              <option value="caricature" ${item.station === "caricature" ? "selected" : ""}>Caricature</option>
+              <option value="retro90" ${item.station === "retro90" ? "selected" : ""}>Retro 90s</option>
+              <option value="wynwood" ${item.station === "wynwood" ? "selected" : ""}>Wynwood</option>
+              <option value="warhol" ${item.station === "warhol" ? "selected" : ""}>Warhol</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">Aspect Ratio / Print Size (optional)</label>
+            <select class="form-select form-select-sm"
+                    onchange="groupProcessItems.find(i => i.id === ${item.id}).canvasSize = this.value">
+              <option value="" ${!item.canvasSize ? "selected" : ""}>Original</option>
+              <option value="8x10" ${item.canvasSize === "8x10" ? "selected" : ""}>8×10</option>
+              <option value="11x14" ${item.canvasSize === "11x14" ? "selected" : ""}>11×14</option>
+              <option value="16x20" ${item.canvasSize === "16x20" ? "selected" : ""}>16×20</option>
+              <option value="3:2" ${item.canvasSize === "3:2" ? "selected" : ""}>3:2 — Landscape (15×10)</option>
+              <option value="1:1" ${item.canvasSize === "1:1" ? "selected" : ""}>1:1 — Square (12×12)</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label fw-bold">Character Prompt (required)</label>
+            <div class="mb-2">
+              <label class="form-label small">Quick Select Hobby:</label>
+              <select class="form-select form-select-sm"
+                      onchange="selectGroupHobby(${item.id}, this.value)">
+                <option value="">-- Select a hobby --</option>
+                <option value="football">⚽ Playing Football</option>
+                <option value="basketball">🏀 Playing Basketball</option>
+                <option value="baseball">⚾ Playing Baseball</option>
+                <option value="cricket">🏏 Playing Cricket</option>
+                <option value="skateboarding">🛹 Playing Skateboarding</option>
+              </select>
+            </div>
+            <textarea class="form-control prompt-textarea" id="groupPrompt_${item.id}"
+                      placeholder="Describe the character or select a hobby above..."
+                      onchange="groupProcessItems.find(i => i.id === ${item.id}).characterPrompt = this.value">${item.characterPrompt}</textarea>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function removeGroupProcessItem(itemId) {
+      groupProcessItems = groupProcessItems.filter((item) => item.id !== itemId);
+      renderGroupProcessItems();
+    }
+
+    function selectGroupHobby(itemId, hobby) {
+      if (hobby && hobbyPrompts[hobby]) {
+        const item = groupProcessItems.find((i) => i.id === itemId);
+        if (item) {
+          item.characterPrompt = hobbyPrompts[hobby];
+          const promptElement = document.getElementById(`groupPrompt_${itemId}`);
+          if (promptElement) {
+            promptElement.value = hobbyPrompts[hobby];
+          }
+        }
+      }
+    }
+
+    function renderGroupProcessResults(results) {
+      const container = document.getElementById("groupProcessResults");
+      container.innerHTML = `
+        <h5 class="mb-2"><i class="fas fa-list me-2"></i>Results</h5>
+        ${results.map((result) => `
+          <div class="batch-result-item ${result.success ? "batch-result-success" : "batch-result-error"}">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <strong class="small">Person ${result.index + 1}</strong>
+              <span class="badge ${result.success ? "bg-success" : "bg-danger"}">
+                ${result.success ? "Success" : "Failed"}
+              </span>
+            </div>
+            ${result.success ? `
+              <p class="mb-1 small">${result.message || "Generated"}</p>
+              ${result.image_url ? `<img src="${result.image_url}" class="batch-result-image" alt="Generated character" />`
+                : result.local_path ? `<img src="${result.local_path}" class="batch-result-image" alt="Generated character" />` : ""}
+              ${result.output_filename ? `
+                <div class="mt-1">
+                  <a class="btn btn-sm download-btn" href="/download/${encodeURIComponent(result.output_filename)}" download>
+                    <i class="fas fa-download me-1"></i>Download
+                  </a>
+                </div>
+              ` : ""}
+            ` : `<p class="mb-0 small text-danger">${result.error || "Failed"}</p>`}
+          </div>
+        `).join("")}
+      `;
+    }
+
+    document.getElementById("extractPersonsBtn").addEventListener("click", async () => {
+      const groupUrl = document.getElementById("groupImageUrl").value.trim();
+      if (!groupImageFile && !groupUrl) {
+        showGroupExtractStatus("Please provide a group photo or URL", true);
+        return;
+      }
+      if (groupImageFile && groupUrl) {
+        showGroupExtractStatus("Provide either group file or URL, not both", true);
+        return;
+      }
+
+      const formData = new FormData();
+      if (groupImageFile) {
+        formData.append("group_image", groupImageFile);
+      } else {
+        formData.append("group_image_url", groupUrl);
+      }
+
+      const personCount = document.getElementById("groupPersonCount").value.trim();
+      if (personCount) {
+        formData.append("person_count", personCount);
+      }
+
+      hideGroupExtractStatus();
+      document.getElementById("groupExtractProgress").style.display = "block";
+      document.getElementById("groupExtractProgressText").textContent =
+        personCount
+          ? `Extracting ${personCount} person(s) one-by-one...`
+          : "Detecting people, then extracting one-by-one (may take a minute)...";
+      document.getElementById("extractPersonsBtn").disabled = true;
+
+      try {
+        const response = await fetch("/extract-persons-from-group", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+        document.getElementById("groupExtractProgress").style.display = "none";
+        document.getElementById("extractPersonsBtn").disabled = false;
+
+        if (!data.success) {
+          showGroupExtractStatus(data.error || "Extraction failed", true);
+          if (Array.isArray(data.results)) {
+            extractedPersons = data.results.filter((r) => r.success);
+            renderExtractedPersonsGallery();
+          }
+          return;
+        }
+
+        extractedPersons = (data.results || []).filter((r) => r.success);
+        renderExtractedPersonsGallery();
+        showGroupExtractStatus(data.message || `Extracted ${extractedPersons.length} person(s)`, false);
+      } catch (err) {
+        document.getElementById("groupExtractProgress").style.display = "none";
+        document.getElementById("extractPersonsBtn").disabled = false;
+        showGroupExtractStatus("Network error: " + err.message, true);
+      }
+    });
+
+    document.getElementById("sendExtractedToProcessBtn").addEventListener("click", populateGroupProcessFromExtracted);
+    document.getElementById("clearExtractedBtn").addEventListener("click", clearExtractedPersons);
+    document.getElementById("clearGroupProcessBtn").addEventListener("click", clearGroupProcessItems);
+
+    document.getElementById("generateGroupBatchBtn").addEventListener("click", async () => {
+      if (!groupProcessItems.length) {
+        showGroupProcessStatus("Load extracted persons first", true);
+        return;
+      }
+
+      for (const item of groupProcessItems) {
+        if (!item.selfieFilename && !item.selfieUrl) {
+          showGroupProcessStatus(`Person ${groupProcessItems.indexOf(item) + 1}: missing extracted image`, true);
+          return;
+        }
+        if (!item.characterPrompt || !item.characterPrompt.trim()) {
+          showGroupProcessStatus(`Person ${groupProcessItems.indexOf(item) + 1}: character prompt is required`, true);
+          return;
+        }
+        if (!item.station || !item.station.trim()) {
+          showGroupProcessStatus(`Person ${groupProcessItems.indexOf(item) + 1}: station is required`, true);
+          return;
+        }
+      }
+
+      const itemsToSend = groupProcessItems.map((item) => ({
+        selfie_filename: item.selfieFilename || undefined,
+        selfie_url: item.selfieFilename ? undefined : (item.selfieUrl || undefined),
+        character_prompt: item.characterPrompt,
+        station: item.station,
+        canvas_size: item.canvasSize || undefined,
+        dpi: item.dpi,
+      }));
+
+      const formData = new FormData();
+      formData.append("items", JSON.stringify(itemsToSend));
+
+      hideGroupProcessStatus();
+      document.getElementById("groupProcessProgress").style.display = "block";
+      document.getElementById("groupProcessProgressText").textContent = "Generating all characters...";
+      document.getElementById("groupProcessResults").innerHTML = "";
+      document.getElementById("generateGroupBatchBtn").disabled = true;
+
+      try {
+        const response = await fetch("/generate-characters-batch-web", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+        document.getElementById("groupProcessProgress").style.display = "none";
+        document.getElementById("generateGroupBatchBtn").disabled = false;
+
+        if (!data.success) {
+          showGroupProcessStatus(data.error || "Batch processing failed", true);
+          return;
+        }
+
+        showGroupProcessStatus(data.message || "Batch processing completed", false);
+        renderGroupProcessResults(data.results || []);
+      } catch (err) {
+        document.getElementById("groupProcessProgress").style.display = "none";
+        document.getElementById("generateGroupBatchBtn").disabled = false;
+        showGroupProcessStatus("Network error: " + err.message, true);
+      }
+    });
 
     // --- Reference tab (single output image, 100% accurate style) ---
     let referenceImageFile = null;
