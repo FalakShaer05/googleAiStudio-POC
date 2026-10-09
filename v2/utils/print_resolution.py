@@ -41,28 +41,46 @@ def _variant(
     size_label: str,
     max_physical: Tuple[float, float],
     landscape: Optional[ArtArea] = None,
+    portrait: Optional[ArtArea] = None,
     square: Optional[ArtArea] = None,
     print_only: Optional[ArtArea] = None,
+    default_aspect: Optional[str] = None,
     ppi: int = 300,
 ) -> Variant:
     aspects: Dict[str, Dict[str, Any]] = {}
+    primary_aspect: Optional[str] = None
     if landscape:
-        aspects["landscape"] = _from_tuple(landscape, "Landscape (3:2)")
+        landscape_label = "Landscape" if portrait else "Landscape (3:2)"
+        aspects["landscape"] = _from_tuple(landscape, landscape_label)
+    if portrait:
+        aspects["portrait"] = _from_tuple(portrait, "Portrait")
     if square:
         aspects["square"] = _from_tuple(square, "Square (1:1)")
     if print_only and not aspects:
         print_w, print_h, px_w, px_h = print_only
         if print_w == print_h:
             aspects["square"] = _area(print_w, print_h, px_w, px_h, "Square (1:1)")
-        elif print_w > print_h:
-            aspects["landscape"] = _area(print_w, print_h, px_w, px_h, "Landscape")
+            primary_aspect = "square"
         else:
-            aspects["portrait"] = _area(print_w, print_h, px_w, px_h, "Portrait")
+            # Offer both orientations so clients can send landscape or portrait
+            # for rectangular sizes (e.g. stickers 2×3" + aspect landscape → 3×2").
+            # Default stays the orientation that matches the size label.
+            if print_w > print_h:
+                aspects["landscape"] = _area(print_w, print_h, px_w, px_h, "Landscape")
+                aspects["portrait"] = _area(print_h, print_w, px_h, px_w, "Portrait")
+                primary_aspect = "landscape"
+            else:
+                aspects["portrait"] = _area(print_w, print_h, px_w, px_h, "Portrait")
+                aspects["landscape"] = _area(print_h, print_w, px_h, px_w, "Landscape")
+                primary_aspect = "portrait"
 
-    default_key = next(
-        (key for key in ("landscape", "square", "portrait") if key in aspects),
-        next(iter(aspects)),
-    )
+    if default_aspect and default_aspect in aspects:
+        default_key = default_aspect
+    else:
+        default_key = primary_aspect or next(
+            (key for key in ("landscape", "square", "portrait") if key in aspects),
+            next(iter(aspects)),
+        )
     default_area = aspects[default_key]
 
     return {
@@ -147,12 +165,35 @@ MERCH_PROFILES: Dict[str, Profile] = {
         "label": "Stickers",
         "file_formats": ["PNG", "SVG", "PDF"],
         "variants": [
-            _variant("2x2", '2 × 2"', (2, 2), print_only=(2, 2, 600, 600)),
-            _variant("2x3", '2 × 3"', (2, 3), print_only=(2, 3, 600, 900)),
-            _variant("3x3", '3 × 3"', (3, 3), print_only=(3, 3, 900, 900)),
-            _variant("3x4", '3 × 4"', (3, 4), print_only=(3, 4, 900, 1200)),
-            _variant("4x4", '4 × 4"', (4, 4), print_only=(4, 4, 1200, 1200)),
-            _variant("5x5", '5 × 5"', (5, 5), print_only=(5, 5, 1500, 1500)),
+            _variant("2x2", '2 × 2"', (2, 2), square=(2, 2, 600, 600)),
+            # Rectangular sizes accept both aspect_id values (portrait + landscape).
+            _variant(
+                "2x3",
+                '2 × 3"',
+                (3, 3),
+                landscape=(3, 2, 900, 600),
+                portrait=(2, 3, 600, 900),
+                default_aspect="portrait",
+            ),
+            _variant(
+                "3x2",
+                '3 × 2"',
+                (3, 3),
+                landscape=(3, 2, 900, 600),
+                portrait=(2, 3, 600, 900),
+                default_aspect="landscape",
+            ),
+            _variant("3x3", '3 × 3"', (3, 3), square=(3, 3, 900, 900)),
+            _variant(
+                "3x4",
+                '3 × 4"',
+                (4, 4),
+                landscape=(4, 3, 1200, 900),
+                portrait=(3, 4, 900, 1200),
+                default_aspect="portrait",
+            ),
+            _variant("4x4", '4 × 4"', (4, 4), square=(4, 4, 1200, 1200)),
+            _variant("5x5", '5 × 5"', (5, 5), square=(5, 5, 1500, 1500)),
         ],
     },
     "magnets": {

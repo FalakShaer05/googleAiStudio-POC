@@ -239,72 +239,53 @@ def composite_on_template(
 
 def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
     """
-    Photo print product: full artwork as the print face, soft drop shadow
-    on a light studio backdrop (store / postcard style). No stretch.
+    Photo print: artwork on a white mat, flat on a light grey studio backdrop.
+    No drop shadow or dark outline.
     """
-    del template  # Build a clean postcard mockup; ignore blank template.
+    del template  # Build a matted photo print; ignore blank template.
     art = trim_artwork(artwork, pad=2)
     art = _to_rgb(art).convert("RGBA")
-    if max(art.size) > 1400:
-        art = art.copy()
-        art.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
-
-    card_w, card_h = art.size
-    # Soft product shadow on a light studio backdrop (margin around the print).
-    frame_pad = max(48, min(card_w, card_h) // 14)
-    out_w = card_w + frame_pad * 2
-    out_h = card_h + frame_pad * 2
-    backdrop = Image.new("RGBA", (out_w, out_h), (242, 242, 244, 255))
-
-    shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    sx0 = frame_pad + 6
-    sy0 = frame_pad + 10
-    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 55))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(16))
-    backdrop.alpha_composite(shadow)
-    backdrop.alpha_composite(art, dest=(frame_pad, frame_pad))
-    return flatten_on_white(backdrop)
-
-
-def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
-    """
-    Poster mockup: artwork inset on a white mat (no black border) — distinct from
-    photo print, which is full-bleed art on a grey studio card.
-    """
-    del template  # Build a matted poster; ignore blank template.
-    art = trim_artwork(artwork, pad=2)
-    art = _to_rgb(art).convert("RGBA")
-    max_side = 1200
+    max_side = 1100
     if max(art.size) > max_side:
         art = art.copy()
         art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
 
     aw, ah = art.size
-    # Wide white mat shrinks the art face vs photo print's edge-to-edge look.
-    mat = max(80, min(aw, ah) // 6)
+    # Thick white mat — matches store "PHOTO PRINT" look.
+    mat = max(90, min(aw, ah) // 5)
     card_w = aw + mat * 2
     card_h = ah + mat * 2
-
     card = Image.new("RGBA", (card_w, card_h), (255, 255, 255, 255))
-    art_x = mat
-    art_y = mat
-    card.alpha_composite(art, dest=(art_x, art_y))
+    card.alpha_composite(art, dest=(mat, mat))
 
-    # White studio margin around the poster.
-    studio_pad = max(36, min(card_w, card_h) // 18)
+    studio_pad = max(40, min(card_w, card_h) // 16)
     out_w = card_w + studio_pad * 2
     out_h = card_h + studio_pad * 2
-    backdrop = Image.new("RGBA", (out_w, out_h), (255, 255, 255, 255))
-
-    shadow = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    sx0 = studio_pad + 6
-    sy0 = studio_pad + 10
-    sdraw.rectangle((sx0, sy0, sx0 + card_w, sy0 + card_h), fill=(0, 0, 0, 50))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(16))
-    backdrop.alpha_composite(shadow)
+    backdrop = Image.new("RGBA", (out_w, out_h), (242, 242, 244, 255))
     backdrop.alpha_composite(card, dest=(studio_pad, studio_pad))
+    return flatten_on_white(backdrop)
+
+
+def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
+    """
+    Poster: large full-bleed artwork on a light grey studio backdrop.
+    No drop shadow, no black border, no white mat.
+    """
+    del template
+    art = trim_artwork(artwork, pad=2)
+    art = _to_rgb(art).convert("RGBA")
+    max_side = 1600
+    if max(art.size) > max_side:
+        art = art.copy()
+        art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+
+    card_w, card_h = art.size
+    # Tight margin so the poster fills most of the mockup.
+    frame_pad = max(28, min(card_w, card_h) // 22)
+    out_w = card_w + frame_pad * 2
+    out_h = card_h + frame_pad * 2
+    backdrop = Image.new("RGBA", (out_w, out_h), (242, 242, 244, 255))
+    backdrop.alpha_composite(art, dest=(frame_pad, frame_pad))
     return flatten_on_white(backdrop)
 
 
