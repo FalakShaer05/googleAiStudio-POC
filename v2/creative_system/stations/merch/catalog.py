@@ -119,6 +119,12 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "engine": "composite",
         "template": "photo_print.png",
         "fit": "contain",
+        # 4×6 can hang either way — user picks orientation in the UI.
+        "orientations": [
+            {"id": "portrait", "label": "Portrait"},
+            {"id": "landscape", "label": "Landscape"},
+        ],
+        "default_orientation": "portrait",
     },
     {
         "id": "canvas",
@@ -127,6 +133,11 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "canvas",
         "engine": "composite",
         "fit": "contain",
+        "orientations": [
+            {"id": "portrait", "label": "Portrait"},
+            {"id": "landscape", "label": "Landscape"},
+        ],
+        "default_orientation": "portrait",
     },
 ]
 
@@ -159,6 +170,11 @@ def list_products() -> List[Dict[str, Any]]:
         if item.get("template"):
             templates.append(item["template"])
         templates.extend(meta.get("template") for meta in colors.values() if meta.get("template"))
+        orientations = [
+            {"id": o["id"], "label": o.get("label") or o["id"].title()}
+            for o in (item.get("orientations") or [])
+            if o.get("id")
+        ]
         out.append(
             {
                 "id": item["id"],
@@ -168,6 +184,9 @@ def list_products() -> List[Dict[str, Any]]:
                 "has_template": any(product_path(t) for t in templates) if templates else True,
                 "colors": color_opts,
                 "default_colors": list(item.get("default_colors") or [c["id"] for c in color_opts]),
+                "orientations": orientations,
+                "default_orientation": item.get("default_orientation")
+                or (orientations[0]["id"] if orientations else None),
             }
         )
     return out

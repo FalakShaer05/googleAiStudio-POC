@@ -107,9 +107,53 @@
       gap: 0.3rem;
       padding-left: 0.15rem;
     }
-    .merch-catalog-item:not(:has(.merch-product-chip:checked)) .merch-color-swatches {
+    .merch-catalog-item:not(:has(.merch-product-chip:checked)) .merch-color-swatches,
+    .merch-catalog-item:not(:has(.merch-product-chip:checked)) .merch-orient-swatches {
       opacity: 0.4;
       pointer-events: none;
+    }
+    .merch-orient-swatches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem;
+      padding-left: 0.15rem;
+    }
+    .merch-orient-swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      margin: 0;
+      padding: 0.15rem 0.45rem 0.15rem 0.25rem;
+      border: 1px solid #e1e1e1;
+      border-radius: 999px;
+      background: #fff;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: #555;
+      cursor: pointer;
+      user-select: none;
+    }
+    .merch-orient-swatch:has(input:checked) {
+      border-color: #667eea;
+      color: #333;
+      background: #f7f8ff;
+    }
+    .merch-orient-swatch input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .merch-orient-icon {
+      width: 12px;
+      height: 16px;
+      border: 1.5px solid currentColor;
+      border-radius: 2px;
+      opacity: 0.75;
+      flex-shrink: 0;
+    }
+    .merch-orient-swatch--landscape .merch-orient-icon {
+      width: 16px;
+      height: 12px;
     }
     .merch-color-swatch {
       display: inline-flex;
@@ -827,6 +871,6 @@
       downloadPrefix: "/download/"
     };
   </script>
-  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=merch2"></script>
+  <script src="{{ url_for('creative_system.static', filename='js/app.js') }}?v=merch3"></script>
 </body>
 </html>

@@ -65,9 +65,17 @@ def _composite_one(
     elif mode == "sticker_sheet":
         out = make_sticker_sheet(artwork)
     elif mode == "photo_print":
-        out = make_photo_print(artwork, template)
+        out = make_photo_print(
+            artwork,
+            template,
+            orientation=product.get("orientation"),
+        )
     elif mode == "canvas":
-        out = make_canvas_print(artwork, template=None)
+        out = make_canvas_print(
+            artwork,
+            template=None,
+            orientation=product.get("orientation"),
+        )
     elif mode == "mockup":
         if template is None:
             raise FileNotFoundError(f"Missing merch template for {product['id']}")
@@ -99,6 +107,8 @@ def _generate_one(
         "tags": list(product.get("tags") or []),
         "color": product.get("color"),
         "color_label": product.get("color_label"),
+        "orientation": product.get("orientation"),
+        "orientation_label": product.get("orientation_label"),
         "output_filename": os.path.basename(output_path),
     }
     try:
@@ -108,6 +118,40 @@ def _generate_one(
         return False, str(exc), meta
 
 
+def _apply_orientations(
+    products: List[Dict[str, Any]],
+    orientation_choices: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    """Attach portrait/landscape to photo-print and poster jobs."""
+    choices = orientation_choices or {}
+    out: List[Dict[str, Any]] = []
+    for product in products:
+        options = product.get("orientations") or []
+        if not options:
+            out.append(product)
+            continue
+
+        valid = {o["id"]: (o.get("label") or o["id"].title()) for o in options if o.get("id")}
+        picked = (choices.get(product["id"]) or "").strip().lower()
+        if picked not in valid:
+            picked = (product.get("default_orientation") or next(iter(valid))).strip().lower()
+        if picked not in valid:
+            picked = next(iter(valid))
+
+        job = dict(product)
+        job["orientation"] = picked
+        job["orientation_label"] = valid[picked]
+        job["variant_id"] = f"{product.get('variant_id') or product['id']}-{picked}"
+        base_tags = [
+            t
+            for t in (product.get("tags") or [])
+            if str(t).lower() not in {"portrait", "landscape"}
+        ]
+        job["tags"] = base_tags + [valid[picked]]
+        out.append(job)
+    return out
+
+
 def generate_all(
     artwork_path: str,
     output_dir: str,
@@ -115,11 +159,13 @@ def generate_all(
     max_workers: int = 12,
     product_ids: Optional[List[str]] = None,
     color_choices: Optional[Dict[str, List[str]]] = None,
+    orientation_choices: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
     Place one artwork onto every selected product blank (local PIL, no Gemini).
 
     color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
+    orientation_choices selects print orientation, e.g. {"photo-print":"portrait","canvas":"landscape"}.
 
     Returns (success, message, items).
     """
@@ -133,6 +179,7 @@ def generate_all(
         return False, "No merch products selected", []
 
     jobs_spec = expand_products_for_colors(products, color_choices=color_choices)
+    jobs_spec = _apply_orientations(jobs_spec, orientation_choices=orientation_choices)
     if not jobs_spec:
         return False, "No merch variants to generate (check color selection)", []
 
@@ -141,7 +188,13 @@ def generate_all(
     jobs = []
     for product in jobs_spec:
         color = product.get("color")
-        suffix = f"{product['id']}_{color}" if color else product["id"]
+        orientation = product.get("orientation")
+        parts = [product["id"]]
+        if color:
+            parts.append(str(color))
+        if orientation:
+            parts.append(str(orientation))
+        suffix = "_".join(parts)
         out_name = f"{filename_prefix}_{suffix}_{os.urandom(4).hex()}.png"
         out_path = os.path.join(output_dir, out_name)
         jobs.append((product, out_path))
@@ -168,11 +221,13 @@ def generate_all(
 
     order = {p["id"]: i for i, p in enumerate(MERCH_PRODUCTS)}
     color_order = {"black": 0, "white": 1}
+    orientation_order = {"portrait": 0, "landscape": 1}
 
-    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int]:
+    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, int]:
         return (
             order.get(item["id"], 999),
             color_order.get(item.get("color") or "", 9),
+            orientation_order.get(item.get("orientation") or "", 9),
         )
 
     items.sort(key=_sort_key)
@@ -195,6 +250,7 @@ def generate(output_path: str, artwork_path: str, **kwargs):
         filename_prefix=prefix,
         product_ids=kwargs.get("product_ids"),
         color_choices=kwargs.get("color_choices"),
+        orientation_choices=kwargs.get("orientation_choices"),
     )
     extras = kwargs.get("result_extras")
     if isinstance(extras, dict):

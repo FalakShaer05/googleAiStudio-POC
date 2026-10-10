@@ -3269,13 +3269,13 @@ def extract_persons_from_group_image(
     output_dir: str,
     max_persons: int = 12,
     person_count: Optional[int] = None,
-    max_workers: int = 1,
+    max_workers: Optional[int] = None,
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
     Detect people in a group photo and extract each person as an individual PNG.
 
-    Defaults to sequential extraction (max_workers=1) to avoid Gemini 503
-    deadline timeouts from concurrent image-generation calls.
+    Uses limited parallelism (default 3, via GROUP_EXTRACT_MAX_WORKERS) so
+    multi-person groups finish faster without flooding Gemini into 503s.
 
     Returns (success, message, results) where results is a list of dicts with
     index / success / output_path / error keys.
@@ -3283,6 +3283,14 @@ def extract_persons_from_group_image(
     try:
         if not os.path.exists(image_path):
             return False, f"Image not found: {image_path}", []
+
+        if max_workers is None:
+            try:
+                max_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "3")), 4))
+            except ValueError:
+                max_workers = 3
+        else:
+            max_workers = max(1, min(int(max_workers), 4))
 
         os.makedirs(output_dir, exist_ok=True)
         group_image = _load_group_image_for_gemini(image_path)

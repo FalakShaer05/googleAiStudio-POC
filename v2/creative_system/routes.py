@@ -670,6 +670,37 @@ def _parse_merch_color_choices() -> dict[str, list[str]] | None:
     return out or None
 
 
+def _parse_merch_orientation_choices() -> dict[str, str] | None:
+    """Parse print orientations: {"photo-print":"portrait","canvas":"landscape"}."""
+    raw = (
+        request.form.get("orientations")
+        or request.form.get("orientation_choices")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    out: dict[str, str] = {}
+    for key, val in parsed.items():
+        pid = str(key).strip()
+        if not pid:
+            continue
+        if isinstance(val, list):
+            orientation = str(val[0]).strip().lower() if val else ""
+        elif isinstance(val, str):
+            orientation = val.strip().lower()
+        else:
+            continue
+        if orientation in {"portrait", "landscape"}:
+            out[pid] = orientation
+    return out or None
+
+
 def _merch_generate_impl():
     temp_paths = []
     try:
@@ -677,6 +708,7 @@ def _merch_generate_impl():
         temp_paths.append(artwork_path)
         product_ids = _parse_merch_product_ids()
         color_choices = _parse_merch_color_choices()
+        orientation_choices = _parse_merch_orientation_choices()
         valid_ids = {p["id"] for p in MERCH_PRODUCTS}
         if product_ids:
             unknown = [pid for pid in product_ids if pid not in valid_ids]
@@ -689,12 +721,26 @@ def _merch_generate_impl():
                 if pid in product_ids and pid in color_choices and not color_choices[pid]:
                     return json_error(f"Select at least one color for {pid}")
 
+        # Photo print / poster require a valid orientation when provided.
+        orient_products = {
+            p["id"]: p for p in MERCH_PRODUCTS if p.get("orientations")
+        }
+        if product_ids and orientation_choices is not None:
+            for pid in product_ids:
+                if pid not in orient_products:
+                    continue
+                if pid in orientation_choices and orientation_choices[pid] not in {
+                    o["id"] for o in orient_products[pid]["orientations"]
+                }:
+                    return json_error(f"Invalid orientation for {pid}")
+
         ok, message, items = generate_merch_all(
             artwork_path=artwork_path,
             output_dir=output_folder(),
             filename_prefix="cs_merch",
             product_ids=product_ids,
             color_choices=color_choices,
+            orientation_choices=orientation_choices,
         )
         if not ok:
             return json_error(message or "Merch generation failed", 500)
@@ -711,6 +757,8 @@ def _merch_generate_impl():
                 "tags": item.get("tags") or [],
                 "color": item.get("color"),
                 "color_label": item.get("color_label"),
+                "orientation": item.get("orientation"),
+                "orientation_label": item.get("orientation_label"),
                 "output_filename": filename,
                 "local_path": f"/outputs/{filename}",
             }
@@ -788,6 +836,11 @@ def api_merch_generate():
         type: string
         required: false
         description: Optional JSON map of apparel colors, e.g. {"tshirt":["black","white"],"hoodie":["black"]}
+      - in: formData
+        name: orientations
+        type: string
+        required: false
+        description: Optional JSON map of print orientations, e.g. {"photo-print":"portrait","canvas":"landscape"}
     responses:
       200:
         description: Merch mockup grid items
