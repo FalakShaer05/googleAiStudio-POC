@@ -237,7 +237,65 @@ def composite_on_template(
     return flatten_on_white(out)
 
 
-def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
+def _normalize_orientation(orientation: Optional[str]) -> Optional[str]:
+    key = (orientation or "").strip().lower()
+    if key in {"portrait", "landscape"}:
+        return key
+    return None
+
+
+def fit_art_to_orientation(
+    artwork: Image.Image,
+    orientation: Optional[str],
+    *,
+    mode: str = "contain",
+    pad_rgba: Tuple[int, int, int, int] = (255, 255, 255, 255),
+) -> Image.Image:
+    """
+    Force artwork into a print orientation.
+    Portrait → 2:3 (e.g. 4×6). Landscape → 3:2 (e.g. 6×4).
+    """
+    key = _normalize_orientation(orientation)
+    art = _to_rgba(artwork)
+    if key is None:
+        return art
+
+    aw, ah = art.size
+    if aw < 1 or ah < 1:
+        return art
+
+    target_ratio = (2.0 / 3.0) if key == "portrait" else (3.0 / 2.0)
+    current = aw / float(ah)
+
+    if mode == "cover":
+        # Crop to exact orientation (full-bleed posters).
+        if current > target_ratio:
+            new_w = max(1, int(round(ah * target_ratio)))
+            left = max(0, (aw - new_w) // 2)
+            return art.crop((left, 0, left + new_w, ah))
+        new_h = max(1, int(round(aw / target_ratio)))
+        top = max(0, (ah - new_h) // 2)
+        return art.crop((0, top, aw, top + new_h))
+
+    # contain — letterbox so the whole design stays visible.
+    if abs(current - target_ratio) < 0.01:
+        return art
+    if current > target_ratio:
+        new_w = aw
+        new_h = max(1, int(round(aw / target_ratio)))
+    else:
+        new_h = ah
+        new_w = max(1, int(round(ah * target_ratio)))
+    canvas = Image.new("RGBA", (new_w, new_h), pad_rgba)
+    canvas.alpha_composite(art, dest=((new_w - aw) // 2, (new_h - ah) // 2))
+    return canvas
+
+
+def make_photo_print(
+    artwork: Image.Image,
+    template: Image.Image | None = None,
+    orientation: Optional[str] = None,
+) -> Image.Image:
     """
     Photo print: artwork on a white mat, flat on a light grey studio backdrop.
     No drop shadow or dark outline.
@@ -245,6 +303,7 @@ def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) 
     del template  # Build a matted photo print; ignore blank template.
     art = trim_artwork(artwork, pad=2)
     art = _to_rgb(art).convert("RGBA")
+    art = fit_art_to_orientation(art, orientation, mode="contain")
     max_side = 1100
     if max(art.size) > max_side:
         art = art.copy()
@@ -266,7 +325,11 @@ def make_photo_print(artwork: Image.Image, template: Image.Image | None = None) 
     return flatten_on_white(backdrop)
 
 
-def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None) -> Image.Image:
+def make_canvas_print(
+    artwork: Image.Image,
+    template: Image.Image | None = None,
+    orientation: Optional[str] = None,
+) -> Image.Image:
     """
     Poster: large full-bleed artwork on a light grey studio backdrop.
     No drop shadow, no black border, no white mat.
@@ -274,6 +337,8 @@ def make_canvas_print(artwork: Image.Image, template: Image.Image | None = None)
     del template
     art = trim_artwork(artwork, pad=2)
     art = _to_rgb(art).convert("RGBA")
+    # Cover crop so the poster stays full-bleed in the chosen orientation.
+    art = fit_art_to_orientation(art, orientation, mode="cover")
     max_side = 1600
     if max(art.size) > max_side:
         art = art.copy()

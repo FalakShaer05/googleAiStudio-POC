@@ -551,6 +551,7 @@ def extract_persons_from_group():
         group_url = request.form.get("group_image_url", "").strip()
         person_count_raw = request.form.get("person_count", "").strip()
         max_persons_raw = request.form.get("max_persons", "12").strip()
+        max_workers_raw = request.form.get("max_workers", "").strip()
 
         if not group_file and not group_url:
             return jsonify({"error": "Either group_image file or group_image_url is required"}), 400
@@ -561,6 +562,19 @@ def extract_persons_from_group():
             max_persons = max(1, min(int(max_persons_raw or "12"), 20))
         except ValueError:
             max_persons = 12
+
+        # Parallel Gemini cutouts (default 3). Override via form or GROUP_EXTRACT_MAX_WORKERS.
+        # Cap at 4 — higher concurrency tends to hit Gemini 503 deadline timeouts.
+        try:
+            default_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "3")), 4))
+        except ValueError:
+            default_workers = 3
+        max_workers = default_workers
+        if max_workers_raw:
+            try:
+                max_workers = max(1, min(int(max_workers_raw), 4))
+            except ValueError:
+                return jsonify({"error": "max_workers must be an integer"}), 400
 
         person_count = None
         if person_count_raw:
@@ -581,25 +595,22 @@ def extract_persons_from_group():
                 return jsonify({"error": "Failed to download group image from URL"}), 400
             group_filename = os.path.basename(group_path)
 
-        # Sequential extraction avoids Gemini 503 deadline timeouts from
-        # concurrent heavy image-generation calls on the same group photo.
         ok, message, results = extract_persons_from_group_image(
             image_path=group_path,
             output_dir=OUTPUT_FOLDER,
             max_persons=max_persons,
             person_count=person_count,
-            max_workers=1,
+            max_workers=max_workers,
         )
 
-        response_results = []
-        for result in results:
-            if not result.get("success"):
-                response_results.append(result)
-                continue
-
+        def _build_success_entry(result: dict) -> dict:
             output_filename = result.get("output_filename")
             output_path = result.get("output_path") or os.path.join(OUTPUT_FOLDER, output_filename)
-            cloudfront_url = upload_image_to_s3(output_path) if output_path and os.path.exists(output_path) else None
+            cloudfront_url = (
+                upload_image_to_s3(output_path)
+                if output_path and os.path.exists(output_path)
+                else None
+            )
             entry = {
                 "index": result.get("index"),
                 "person_number": result.get("person_number"),
@@ -610,7 +621,37 @@ def extract_persons_from_group():
             }
             if cloudfront_url:
                 entry["image_url"] = cloudfront_url
-            response_results.append(entry)
+            return entry
+
+        # Upload cutouts in parallel — S3 is independent per file.
+        response_results = []
+        upload_jobs = []
+        for result in results:
+            if not result.get("success"):
+                response_results.append(result)
+            else:
+                upload_jobs.append(result)
+
+        if upload_jobs:
+            upload_workers = min(len(upload_jobs), max(1, max_workers))
+            with ThreadPoolExecutor(max_workers=upload_workers) as executor:
+                future_map = {
+                    executor.submit(_build_success_entry, result): result
+                    for result in upload_jobs
+                }
+                for future in as_completed(future_map):
+                    try:
+                        response_results.append(future.result())
+                    except Exception as upload_exc:
+                        failed = future_map[future]
+                        response_results.append({
+                            "index": failed.get("index"),
+                            "person_number": failed.get("person_number"),
+                            "success": False,
+                            "error": f"S3 upload failed: {upload_exc}",
+                        })
+
+        response_results.sort(key=lambda item: item.get("index", 0))
 
         cleanup_file(group_path)
 

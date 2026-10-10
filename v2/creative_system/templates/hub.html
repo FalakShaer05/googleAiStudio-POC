@@ -858,7 +858,7 @@
           <div class="col-lg-8">
             <label class="form-label fw-bold" for="merch-artwork">Artwork (required)</label>
             <input class="form-control" type="file" id="merch-artwork" name="artwork" accept="image/*" required />
-            <div class="form-text">One design becomes stickers, cap, tee, hoodie, tote, print, and poster.</div>
+            <div class="form-text">One design becomes stickers, cap, tee, hoodie, tote, print, and poster. Pick portrait or landscape for Photo Print and Poster.</div>
           </div>
           <div class="col-lg-4">
             <button type="submit" class="convert-btn">Generate all merch</button>
@@ -890,6 +890,23 @@
                   />
                   <span class="merch-color-dot" aria-hidden="true"></span>
                   <span class="merch-color-name">{{ color.label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              {% endif %}
+              {% if product.orientations %}
+              <div class="merch-orient-swatches" data-merch-orientations="{{ product.id }}" role="radiogroup" aria-label="{{ product.label }} orientation">
+                {% for orient in product.orientations %}
+                <label class="merch-orient-swatch merch-orient-swatch--{{ orient.id }}" title="{{ orient.label }}">
+                  <input
+                    type="radio"
+                    class="merch-orient-chip"
+                    name="orient_{{ product.id }}"
+                    value="{{ orient.id }}"
+                    {% if orient.id == product.default_orientation %}checked{% endif %}
+                  />
+                  <span class="merch-orient-icon" aria-hidden="true"></span>
+                  <span class="merch-orient-name">{{ orient.label }}</span>
                 </label>
                 {% endfor %}
               </div>
