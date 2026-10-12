@@ -1144,7 +1144,7 @@
             <div class="progress">
               <div class="progress-bar progress-bar-striped progress-bar-animated" id="groupExtractProgressBar" style="width: 100%;"></div>
             </div>
-            <p class="text-center mt-2 mb-0" id="groupExtractProgressText">Extracting persons one-by-one (may take a minute)...</p>
+            <p class="text-center mt-2 mb-0" id="groupExtractProgressText">Detecting people, then cutting out locally...</p>
           </div>
 
           <div class="status-message" id="groupExtractStatus" style="display: none;"></div>
@@ -3168,8 +3168,8 @@ STRICT RULES:
       document.getElementById("groupExtractProgress").style.display = "block";
       document.getElementById("groupExtractProgressText").textContent =
         personCount
-          ? `Extracting ${personCount} person(s) one-by-one...`
-          : "Detecting people, then extracting one-by-one (may take a minute)...";
+          ? `Segmenting ${personCount} person(s) with YOLO, then cutting out...`
+          : "Segmenting people with YOLO, then cutting out...";
       document.getElementById("extractPersonsBtn").disabled = true;
 
       try {

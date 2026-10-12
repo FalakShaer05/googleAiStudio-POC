@@ -19,7 +19,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GEMINI_FALLBACK_IMAGE_MODEL=gemini-2.5-flash-image \
     GEMINI_MAX_RETRIES=3 \
     GEMINI_RETRY_INITIAL_DELAY_S=1.0 \
-    GEMINI_RETRY_MAX_DELAY_S=10.0
+    GEMINI_RETRY_MAX_DELAY_S=10.0 \
+    YOLO_CONFIG_DIR=/app/.ultralytics \
+    GROUP_EXTRACT_DETECTOR=yolo \
+    GROUP_EXTRACT_YOLO_MODEL=yolov8n-seg.pt
 
 # Runtime libs only (Pillow/rembg ship wheels — no -dev packages)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -33,15 +36,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY v2/requirements.txt .
 
 # Install Python dependencies (no pip self-upgrade — flaky on slow networks)
+# Force CPU Torch wheels before ultralytics so pip does not pull CUDA runtimes.
 ENV PIP_DEFAULT_TIMEOUT=300 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_RETRIES=15
 RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision && \
     pip install -r requirements.txt
 
 # Bake rembg u2net weights so first Me Remix / Selfie Becoming request is not a cold download
 RUN mkdir -p /app/.u2net && \
     python -c "from rembg import new_session; new_session('u2net')"
+
+# Bake YOLOv8n-seg weights for instance masks (accurate crowded-group cutouts)
+RUN mkdir -p /app/.ultralytics && \
+    python -c "from ultralytics import YOLO; YOLO('yolov8n-seg.pt')"
 
 # Copy v2 application code
 COPY v2/ .

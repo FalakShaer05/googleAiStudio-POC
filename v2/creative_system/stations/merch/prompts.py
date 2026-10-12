@@ -100,11 +100,11 @@ Requirements:
         return f"""Create a professional "{label}" product photo.
 
 SOURCE ARTWORK (IMAGE 1) is the ONLY design — keep it exact.
-STYLE REFERENCE (IMAGE 2) is layout only: same sticker repeated in size rows on white.
+STYLE REFERENCE (IMAGE 2) is layout only: art grids plus side die-cut stickers on a paint-splatter card.
 
 Requirements:
-- Sticker sheet of ONLY the source artwork.
-- About 3 rows, larger on top and smaller below (roughly 4 / 5 / 8).
-- Thick white die-cut border on each. Plain white background. No props or text."""
+- Sticker sheet of ONLY the source artwork in the main grids.
+- Portrait art uses top brand row + 2x2 + 3x1 sheet layout; landscape uses 2x3 + 3x2 layout.
+- Side column keeps brand stickers. Paint-splatter card border. No extra props or UI text."""
 
     return f"""Create a merch product photo for "{label}" from the source artwork. White background. No UI or text."""
