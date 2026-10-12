@@ -195,25 +195,39 @@ def knockout_corner_backdrop(img: Image.Image) -> Image.Image:
     return Image.fromarray(arr, "RGBA")
 
 
-def prepare_print_art(img: Image.Image, knockout: bool = True) -> Image.Image:
+def _force_opaque_print(img: Image.Image) -> Image.Image:
+    """Keep RGB (including studio plates) and force every pixel opaque."""
+    rgba = _to_rgba(img)
+    if not NUMPY_AVAILABLE:
+        return _to_rgb(rgba).convert("RGBA")
+    arr = np.array(rgba)
+    arr[:, :, 3] = 255
+    return Image.fromarray(arr, "RGBA")
+
+
+def prepare_print_art(
+    img: Image.Image,
+    knockout: bool = True,
+    *,
+    is_transparent: bool = False,
+) -> Image.Image:
     art = trim_artwork(img)
     if knockout:
         art = knockout_paper(art)
         art = trim_artwork(art, pad=2)
         return art
 
-    # Apparel / cap / tote: keep real transparency so the garment shows through.
     art = _to_rgba(art)
-    if _has_transparent_backdrop(art):
-        return art
+    # Apparel / cap / tote — only strip backdrop when caller opts in.
+    if is_transparent:
+        if _has_transparent_backdrop(art):
+            return art
+        keyed = knockout_corner_backdrop(art)
+        if _has_transparent_backdrop(keyed):
+            return trim_artwork(keyed, pad=2)
 
-    # Solid black/white studio plates (no alpha yet) → key from the border.
-    keyed = knockout_corner_backdrop(art)
-    if _has_transparent_backdrop(keyed):
-        return trim_artwork(keyed, pad=2)
-
-    # Fully opaque artwork with no studio plate — keep a solid print rectangle.
-    return _to_rgb(art).convert("RGBA")
+    # Default: keep background plate as an opaque print rectangle.
+    return _force_opaque_print(art)
 
 
 def _fit(src: Image.Image, size: Tuple[int, int], mode: str) -> Image.Image:
@@ -361,10 +375,15 @@ def composite_on_template(
     knockout: bool = True,
     match_art_aspect: bool = False,
     orientation: Optional[str] = None,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """Paste trimmed artwork into a normalized print box on the blank product."""
     base = _to_rgba(template)
-    art = prepare_print_art(artwork, knockout=knockout)
+    art = prepare_print_art(
+        artwork,
+        knockout=knockout,
+        is_transparent=is_transparent,
+    )
     orient = _normalize_orientation(orientation)
     if orient is not None:
         aw, ah = max(1, art.size[0]), max(1, art.size[1])

@@ -670,6 +670,18 @@ def _parse_merch_color_choices() -> dict[str, list[str]] | None:
     return out or None
 
 
+def _parse_merch_is_transparent() -> bool:
+    """Form flag: only strip art backdrop when explicitly true."""
+    raw = (
+        request.form.get("is_transparent")
+        or request.args.get("is_transparent")
+        or ""
+    ).strip().lower()
+    if not raw:
+        return False
+    return raw in ("1", "true", "yes", "on")
+
+
 def _merch_generate_impl():
     temp_paths = []
     try:
@@ -677,6 +689,7 @@ def _merch_generate_impl():
         temp_paths.append(artwork_path)
         product_ids = _parse_merch_product_ids()
         color_choices = _parse_merch_color_choices()
+        is_transparent = _parse_merch_is_transparent()
         valid_ids = {p["id"] for p in MERCH_PRODUCTS}
         if product_ids:
             unknown = [pid for pid in product_ids if pid not in valid_ids]
@@ -695,6 +708,7 @@ def _merch_generate_impl():
             filename_prefix="cs_merch",
             product_ids=product_ids,
             color_choices=color_choices,
+            is_transparent=is_transparent,
         )
         if not ok:
             return json_error(message or "Merch generation failed", 500)
@@ -790,6 +804,15 @@ def api_merch_generate():
         type: string
         required: false
         description: Optional JSON map of apparel colors, e.g. {"tshirt":["black","white"],"hoodie":["black"]}
+      - in: formData
+        name: is_transparent
+        type: string
+        required: false
+        default: "false"
+        description: >
+          When true, keep/key out the artwork backdrop on apparel mockups
+          (cap, tshirt, hoodie, tote) so the garment shows through.
+          When false (default), keep the artwork background plate opaque.
     responses:
       200:
         description: Merch mockup grid items

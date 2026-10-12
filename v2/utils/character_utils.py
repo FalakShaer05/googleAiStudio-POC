@@ -844,7 +844,8 @@ VALID_LOGO_POSITIONS = {
     "bottom_right",
 }
 
-# White Mosida logo (others.png) — dark logos disappear on these arts.
+# Fallback stations that historically needed the white Mosida (others.png).
+# Prefer brightness sampling at the logo box; these are only used if sampling fails.
 WHITE_SIGNATURE_STATIONS = {
     "warhol",
     "monochrome",
@@ -853,14 +854,18 @@ WHITE_SIGNATURE_STATIONS = {
     "lichstenstein",
 }
 
+# Mean luminance above this → treat the logo area as light and use the dark logo.
+LOGO_REGION_LIGHT_THRESHOLD = 155.0
+
 
 def resolve_signature_logo_style(
     station: Optional[str] = None,
     character_prompt: str = "",
 ) -> str:
     """
-    Pick Mosida logo variant: "others" (white) or "cartoon" (dark).
-    White is used for Warhol, Monochrome, and Lichtenstein.
+    Fallback Mosida logo variant when region brightness cannot be sampled:
+    "others" (white) or "cartoon" (dark).
+    Final choice is made in add_signature_image_overlay via luminance at the logo box.
     """
     station_lower = (station or "").strip().lower()
     if station_lower in WHITE_SIGNATURE_STATIONS:
@@ -885,6 +890,108 @@ def resolve_signature_logo_style(
     return "cartoon"
 
 
+def _signature_overlay_geometry(
+    img_width: int,
+    img_height: int,
+    sig_aspect: float,
+    logo_position: str,
+) -> Tuple[int, int, int, int]:
+    """Return (x, y, width, height) for the Mosida signature overlay."""
+    sig_width = int(img_width * 0.20)
+    sig_height = int(img_height * 0.20)
+    target_aspect = sig_width / sig_height if sig_height else sig_aspect
+
+    if sig_aspect > target_aspect:
+        new_sig_width = sig_width
+        new_sig_height = max(1, int(sig_width / sig_aspect))
+    else:
+        new_sig_height = sig_height
+        new_sig_width = max(1, int(sig_height * sig_aspect))
+
+    padding_x = max(12, int(img_width * 0.025))
+    padding_y = max(12, int(img_height * 0.025))
+    bottom_inset = max(2, int(img_height * 0.015))
+
+    vertical_part, horizontal_part = logo_position.split("_", 1)
+
+    if horizontal_part == "left":
+        x = padding_x
+    elif horizontal_part == "center":
+        x = (img_width - new_sig_width) // 2
+    else:
+        x = img_width - new_sig_width - padding_x
+
+    if vertical_part == "top":
+        y = padding_y
+    elif vertical_part == "center":
+        y = (img_height - new_sig_height) // 2
+    else:
+        y = img_height - new_sig_height - bottom_inset
+
+    return x, y, new_sig_width, new_sig_height
+
+
+def _region_mean_luminance(img: Image.Image, box: Tuple[int, int, int, int]) -> Optional[float]:
+    """
+    Mean luminance (0–255) of the art under the logo placement box.
+    Returns None if the box is empty or sampling fails.
+    """
+    x, y, w, h = box
+    img_w, img_h = img.size
+    left = max(0, min(img_w, x))
+    top = max(0, min(img_h, y))
+    right = max(0, min(img_w, x + w))
+    bottom = max(0, min(img_h, y + h))
+    if right <= left or bottom <= top:
+        return None
+
+    region = img.crop((left, top, right, bottom))
+    try:
+        if NUMPY_AVAILABLE:
+            rgb = np.asarray(region.convert("RGB"), dtype=np.float32)
+            if rgb.size == 0:
+                return None
+            # Rec. 601 luma
+            lum = 0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]
+            return float(lum.mean())
+
+        pixels = list(region.convert("RGB").getdata())
+        if not pixels:
+            return None
+        total = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in pixels)
+        return float(total / len(pixels))
+    except Exception as e:
+        print(f"⚠️ Logo-region luminance sampling failed: {e}")
+        return None
+
+
+def pick_signature_logo_style_for_region(
+    img: Image.Image,
+    box: Tuple[int, int, int, int],
+    fallback_style: str = "others",
+) -> str:
+    """
+    Choose Mosida logo by contrast against the art under the logo box.
+    Light / white region → dark logo (cartoon.png).
+    Dark region → white logo (others.png).
+    """
+    luminance = _region_mean_luminance(img, box)
+    if luminance is None:
+        style = (fallback_style or "others").strip().lower()
+        if style not in ("others", "cartoon", "pencil-sketch"):
+            style = "others"
+        print(f"🎨 Logo style fallback (no luminance): {style}")
+        return "others" if style == "pencil-sketch" else style
+
+    # Light under the logo → dark mark; dark under the logo → white mark.
+    style = "cartoon" if luminance >= LOGO_REGION_LIGHT_THRESHOLD else "others"
+    print(
+        f"🎨 Logo region luminance={luminance:.1f} "
+        f"(threshold={LOGO_REGION_LIGHT_THRESHOLD:.0f}) → {style}.png"
+    )
+    return style
+
+
 def add_signature_image_overlay(
     img: Image.Image,
     style: str = "others",
@@ -894,10 +1001,13 @@ def add_signature_image_overlay(
     """
     Add the signature image overlay to the image.
     The signature will be 20% width and 20% height of the generated image.
+
+    Logo variant is chosen from brightness under the placement box:
+    light art → dark logo (cartoon.png), dark art → white logo (others.png).
     
     Args:
         img: PIL Image object
-        style: Style type - "pencil-sketch", "cartoon", or "others"
+        style: Fallback style if brightness sampling fails ("cartoon" or "others")
         logo_position: One of:
             top_left, top_center, top_right,
             center_left, center_center, center_right,
@@ -924,34 +1034,54 @@ def add_signature_image_overlay(
             )
         normalized_logo_position = "bottom_center"
 
-    requested_style = (style or "cartoon").strip().lower()
-    # White Mosida (others.png) for bottom_center (Warhol) and any explicit others request
-    # (Monochrome / Lichtenstein / Warhol via resolve_signature_logo_style).
-    if normalized_logo_position == "bottom_center" or requested_style == "others":
-        style_to_use = "others"
-    elif requested_style in ("cartoon", "pencil-sketch"):
-        style_to_use = requested_style
-    else:
-        style_to_use = "cartoon"
+    fallback_style = (style or "others").strip().lower()
+    if fallback_style not in ("others", "cartoon", "pencil-sketch"):
+        fallback_style = "others"
 
-    # Get signature image path based on resolved style
-    signature_path = get_signature_image_path(style_to_use)
-    if not signature_path:
-        print(f"⚠️ Signature image not found for style '{style_to_use}'. Skipping signature overlay.")
+    # Probe either logo for aspect/geometry (both marks share the same canvas).
+    probe_path = get_signature_image_path("others") or get_signature_image_path("cartoon")
+    if not probe_path:
+        print("⚠️ Signature image not found. Skipping signature overlay.")
         return img
-    
-    print(f"✅ Found signature image at: {signature_path}")
-    
+
     try:
-        # Load signature image
-        signature_img = Image.open(signature_path)
-        
-        # Convert signature to RGBA if needed for transparency support
-        if signature_img.mode != 'RGBA':
-            signature_img = signature_img.convert('RGBA')
-        
+        probe_img = Image.open(probe_path)
+        if probe_img.mode != "RGBA":
+            probe_img = probe_img.convert("RGBA")
+
         # Trim transparent padding so visible text can sit flush at the requested edge
         # (others.png has large empty margins that otherwise push Warhol's logo too high).
+        try:
+            alpha = probe_img.split()[3]
+            bbox = alpha.getbbox()
+            if bbox:
+                probe_img = probe_img.crop(bbox)
+        except Exception:
+            pass
+
+        img_width, img_height = img.size
+        sig_aspect = probe_img.width / max(1, probe_img.height)
+        x, y, new_sig_width, new_sig_height = _signature_overlay_geometry(
+            img_width, img_height, sig_aspect, normalized_logo_position
+        )
+
+        style_to_use = pick_signature_logo_style_for_region(
+            img,
+            (x, y, new_sig_width, new_sig_height),
+            fallback_style=fallback_style,
+        )
+
+        signature_path = get_signature_image_path(style_to_use)
+        if not signature_path:
+            print(f"⚠️ Signature image not found for style '{style_to_use}'. Skipping signature overlay.")
+            return img
+
+        print(f"✅ Found signature image at: {signature_path}")
+
+        signature_img = Image.open(signature_path)
+        if signature_img.mode != "RGBA":
+            signature_img = signature_img.convert("RGBA")
+
         try:
             alpha = signature_img.split()[3]
             bbox = alpha.getbbox()
@@ -959,29 +1089,10 @@ def add_signature_image_overlay(
                 signature_img = signature_img.crop(bbox)
         except Exception:
             pass
-        
-        # Get dimensions
-        img_width, img_height = img.size
-        
-        # Calculate signature size: 15% of image dimensions
-        sig_width = int(img_width * 0.20)
-        sig_height = int(img_height * 0.20)
-        
-        # Resize signature maintaining aspect ratio
-        sig_aspect = signature_img.width / signature_img.height
-        target_aspect = sig_width / sig_height
-        
-        if sig_aspect > target_aspect:
-            # Signature is wider, fit to width
-            new_sig_width = sig_width
-            new_sig_height = int(sig_width / sig_aspect)
-        else:
-            # Signature is taller, fit to height
-            new_sig_height = sig_height
-            new_sig_width = int(sig_height * sig_aspect)
-        
-        # Resize signature image
-        signature_resized = signature_img.resize((new_sig_width, new_sig_height), Image.Resampling.LANCZOS)
+
+        signature_resized = signature_img.resize(
+            (new_sig_width, new_sig_height), Image.Resampling.LANCZOS
+        )
 
         # If this is Warhol style, reduce opacity so the signature is more subtle
         if is_warhol_style is True:
@@ -1001,34 +1112,11 @@ def add_signature_image_overlay(
         if img_with_signature.mode != 'RGBA':
             img_with_signature = img_with_signature.convert('RGBA')
         
-        # Light inset from top/sides so the logo isn't flush against the canvas edge.
-        # Bottom placements stay tighter so Warhol doesn't leave a large empty band.
-        padding_x = max(12, int(img_width * 0.025))
-        padding_y = max(12, int(img_height * 0.025))
-        # Tiny inset from the canvas edge so MIAMI isn't clipped; still reads as bottom.
-        bottom_inset = max(2, int(img_height * 0.015))
-
-        vertical_part, horizontal_part = normalized_logo_position.split("_", 1)
-
-        if horizontal_part == "left":
-            x = padding_x
-        elif horizontal_part == "center":
-            x = (img_width - new_sig_width) // 2
-        else:
-            x = img_width - new_sig_width - padding_x
-
-        if vertical_part == "top":
-            y = padding_y
-        elif vertical_part == "center":
-            y = (img_height - new_sig_height) // 2
-        else:
-            y = img_height - new_sig_height - bottom_inset
-        
         # Composite signature onto image
         img_with_signature.paste(signature_resized, (x, y), signature_resized)
         
         print(f"✅ Signature overlay added successfully!")
-        print(f"   Position: ({x}, {y}) [{normalized_logo_position}], Size: ({new_sig_width}x{new_sig_height})")
+        print(f"   Style: {style_to_use}, Position: ({x}, {y}) [{normalized_logo_position}], Size: ({new_sig_width}x{new_sig_height})")
         print(f"   Image size: ({img_width}x{img_height})")
         
         # Convert back to original mode if needed
