@@ -732,6 +732,11 @@
         if (Object.keys(colorChoices).length) {
           body.set("colors", JSON.stringify(colorChoices));
         }
+        const transparentEl = form.querySelector("#merch-is-transparent, [name='is_transparent']");
+        body.set(
+          "is_transparent",
+          transparentEl && transparentEl.checked ? "true" : "false"
+        );
         body.delete("product_pick");
         Array.from(body.keys()).forEach((key) => {
           if (key.startsWith("color_") || key.startsWith("orient_")) body.delete(key);

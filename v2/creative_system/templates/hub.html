@@ -859,6 +859,10 @@
             <label class="form-label fw-bold" for="merch-artwork">Artwork (required)</label>
             <input class="form-control" type="file" id="merch-artwork" name="artwork" accept="image/*" required />
             <div class="form-text">One design becomes stickers, cap, tee, hoodie, tote, print, and poster. Portrait vs landscape is detected automatically from your artwork.</div>
+            <label class="form-check mt-2 mb-0 user-select-none">
+              <input class="form-check-input" type="checkbox" name="is_transparent" id="merch-is-transparent" value="true" />
+              <span class="form-check-label">Transparent artwork background (cap / tee / hoodie / tote)</span>
+            </label>
           </div>
           <div class="col-lg-4">
             <button type="submit" class="convert-btn">Generate all merch</button>

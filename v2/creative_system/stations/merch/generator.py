@@ -66,6 +66,8 @@ def _composite_one(
     product: Dict[str, Any],
     artwork: Image.Image,
     output_path: str,
+    *,
+    is_transparent: bool = False,
 ) -> None:
     mode = product["mode"]
     template = _load_template(product.get("template"))
@@ -118,6 +120,7 @@ def _composite_one(
             knockout=bool(product.get("knockout", False)),
             match_art_aspect=bool(product.get("match_art_aspect", True)),
             orientation=product.get("orientation"),
+            is_transparent=is_transparent,
         )
     else:
         raise ValueError(f"Unknown merch mode: {mode}")
@@ -129,6 +132,8 @@ def _generate_one(
     product: Dict[str, Any],
     artwork: Image.Image,
     output_path: str,
+    *,
+    is_transparent: bool = False,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     meta = {
         "id": product["id"],
@@ -142,7 +147,12 @@ def _generate_one(
         "output_filename": os.path.basename(output_path),
     }
     try:
-        _composite_one(product, artwork, output_path)
+        _composite_one(
+            product,
+            artwork,
+            output_path,
+            is_transparent=is_transparent,
+        )
         return True, "Mockup composed", meta
     except Exception as exc:
         return False, str(exc), meta
@@ -197,6 +207,7 @@ def generate_all(
     product_ids: Optional[List[str]] = None,
     color_choices: Optional[Dict[str, List[str]]] = None,
     orientation_choices: Optional[Dict[str, str]] = None,
+    is_transparent: bool = False,
 ) -> Tuple[bool, str, List[Dict[str, Any]]]:
     """
     Place one artwork onto every selected product blank (local PIL, no Gemini).
@@ -204,6 +215,8 @@ def generate_all(
     color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
     Orientation is auto-detected from artwork size (portrait if taller than wide).
     orientation_choices is ignored (kept for API compatibility).
+    is_transparent: when True, apparel/cap/tote keep or key out the art backdrop
+    so the garment shows through; when False (default), keep the background plate.
 
     Returns (success, message, items).
     """
@@ -239,12 +252,19 @@ def generate_all(
 
     items: List[Dict[str, Any]] = []
     errors: List[str] = []
+    use_transparent = bool(is_transparent)
 
     # PIL images are not safely shared across threads — copy per job.
     workers = max(1, min(max_workers, len(jobs)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
-            pool.submit(_generate_one, product, artwork.copy(), out_path)
+            pool.submit(
+                _generate_one,
+                product,
+                artwork.copy(),
+                out_path,
+                is_transparent=use_transparent,
+            )
             for product, out_path in jobs
         ]
         for future in as_completed(futures):
@@ -289,6 +309,7 @@ def generate(output_path: str, artwork_path: str, **kwargs):
         product_ids=kwargs.get("product_ids"),
         color_choices=kwargs.get("color_choices"),
         orientation_choices=kwargs.get("orientation_choices"),
+        is_transparent=bool(kwargs.get("is_transparent", False)),
     )
     extras = kwargs.get("result_extras")
     if isinstance(extras, dict):
