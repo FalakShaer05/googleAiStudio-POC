@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PIL import Image
 
-from ...shared.gemini import to_rgb
 from .catalog import MERCH_PRODUCTS, expand_products_for_colors, product_path
 from .compositor import (
     composite_on_template,
@@ -16,6 +15,8 @@ from .compositor import (
     make_sticker_fan,
     make_sticker_sheet,
     make_sticker_single,
+    tint_garment_template,
+    trim_artwork,
 )
 
 _MAX_ART_SIDE = 1400
@@ -24,7 +25,18 @@ _TEMPLATE_CACHE: Dict[str, Image.Image] = {}
 
 def _load_artwork(path: str) -> Image.Image:
     img = Image.open(path)
-    img = img.convert("RGBA") if img.mode in {"RGBA", "P"} else to_rgb(img)
+    # Apply EXIF rotation so phone portraits aren't misread as landscape.
+    try:
+        from PIL import ImageOps
+
+        img = ImageOps.exif_transpose(img) or img
+    except Exception:
+        pass
+    # Always keep alpha — apparel mockups need transparent backdrops intact.
+    if img.mode == "P":
+        img = img.convert("RGBA")
+    elif img.mode != "RGBA":
+        img = img.convert("RGBA")
     if max(img.size) > _MAX_ART_SIDE:
         img = img.copy()
         img.thumbnail((_MAX_ART_SIDE, _MAX_ART_SIDE), Image.Resampling.LANCZOS)
@@ -59,11 +71,21 @@ def _composite_one(
     template = _load_template(product.get("template"))
 
     if mode == "sticker_single":
-        out = make_sticker_single(artwork)
+        out = make_sticker_single(
+            artwork,
+            orientation=product.get("orientation"),
+        )
     elif mode == "sticker_fan":
-        out = make_sticker_fan(artwork, count=int(product.get("sticker_count") or 5))
+        out = make_sticker_fan(
+            artwork,
+            count=int(product.get("sticker_count") or 5),
+            orientation=product.get("orientation"),
+        )
     elif mode == "sticker_sheet":
-        out = make_sticker_sheet(artwork)
+        out = make_sticker_sheet(
+            artwork,
+            orientation=product.get("orientation"),
+        )
     elif mode == "photo_print":
         out = make_photo_print(
             artwork,
@@ -79,15 +101,23 @@ def _composite_one(
     elif mode == "mockup":
         if template is None:
             raise FileNotFoundError(f"Missing merch template for {product['id']}")
+        tint = product.get("tint")
+        if tint:
+            template = tint_garment_template(template, tuple(tint))
+        print_box = product.get("print_box") or (0.25, 0.25, 0.75, 0.55)
+        portrait_box = product.get("portrait_print_box")
+        if portrait_box and detect_artwork_orientation(artwork) == "portrait":
+            print_box = portrait_box
         out = composite_on_template(
             template,
             artwork,
-            print_box=product.get("print_box") or (0.25, 0.25, 0.75, 0.55),
+            print_box=print_box,
             fit=product.get("fit") or "cover",
             opacity=1.0,
             shade=bool(product.get("shade", False)),
             knockout=bool(product.get("knockout", False)),
             match_art_aspect=bool(product.get("match_art_aspect", True)),
+            orientation=product.get("orientation"),
         )
     else:
         raise ValueError(f"Unknown merch mode: {mode}")
@@ -118,36 +148,43 @@ def _generate_one(
         return False, str(exc), meta
 
 
-def _apply_orientations(
+def detect_artwork_orientation(artwork: Image.Image) -> str:
+    """
+    Detect from the trimmed design, not the full canvas.
+
+    Uploads often sit on a taller/wider studio canvas; stickers and prints
+    already trim to content, so orientation must use that same box.
+
+    Square / near-square counts as portrait (sheet brand refs). Only clearly
+    wider art (width > height * 1.15) is landscape.
+    """
+    trimmed = trim_artwork(artwork, pad=2)
+    w, h = max(1, trimmed.size[0]), max(1, trimmed.size[1])
+    return "portrait" if (w / float(h)) <= 1.15 else "landscape"
+
+
+def _apply_auto_orientations(
     products: List[Dict[str, Any]],
-    orientation_choices: Optional[Dict[str, str]] = None,
+    artwork: Image.Image,
 ) -> List[Dict[str, Any]]:
-    """Attach portrait/landscape to photo-print and poster jobs."""
-    choices = orientation_choices or {}
+    """Detect artwork orientation and attach it to products that need it."""
+    detected = detect_artwork_orientation(artwork)
+    label = detected.title()
     out: List[Dict[str, Any]] = []
     for product in products:
-        options = product.get("orientations") or []
-        if not options:
+        if not product.get("auto_orientation"):
             out.append(product)
             continue
-
-        valid = {o["id"]: (o.get("label") or o["id"].title()) for o in options if o.get("id")}
-        picked = (choices.get(product["id"]) or "").strip().lower()
-        if picked not in valid:
-            picked = (product.get("default_orientation") or next(iter(valid))).strip().lower()
-        if picked not in valid:
-            picked = next(iter(valid))
-
         job = dict(product)
-        job["orientation"] = picked
-        job["orientation_label"] = valid[picked]
-        job["variant_id"] = f"{product.get('variant_id') or product['id']}-{picked}"
+        job["orientation"] = detected
+        job["orientation_label"] = label
+        job["variant_id"] = f"{product.get('variant_id') or product['id']}-{detected}"
         base_tags = [
             t
             for t in (product.get("tags") or [])
             if str(t).lower() not in {"portrait", "landscape"}
         ]
-        job["tags"] = base_tags + [valid[picked]]
+        job["tags"] = base_tags + [label]
         out.append(job)
     return out
 
@@ -165,25 +202,26 @@ def generate_all(
     Place one artwork onto every selected product blank (local PIL, no Gemini).
 
     color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
-    orientation_choices selects print orientation, e.g. {"photo-print":"portrait","canvas":"landscape"}.
+    Orientation is auto-detected from artwork size (portrait if taller than wide).
+    orientation_choices is ignored (kept for API compatibility).
 
     Returns (success, message, items).
     """
+    del orientation_choices  # Auto-detect from artwork; UI no longer collects this.
     os.makedirs(output_dir, exist_ok=True)
     wanted = set(product_ids) if product_ids else None
     products = [
         p for p in MERCH_PRODUCTS
-        if wanted is None or p["id"] in wanted
+        if (wanted is None and not p.get("hidden")) or (wanted is not None and p["id"] in wanted)
     ]
     if not products:
         return False, "No merch products selected", []
 
+    artwork = _load_artwork(artwork_path)
     jobs_spec = expand_products_for_colors(products, color_choices=color_choices)
-    jobs_spec = _apply_orientations(jobs_spec, orientation_choices=orientation_choices)
+    jobs_spec = _apply_auto_orientations(jobs_spec, artwork)
     if not jobs_spec:
         return False, "No merch variants to generate (check color selection)", []
-
-    artwork = _load_artwork(artwork_path)
 
     jobs = []
     for product in jobs_spec:
@@ -220,7 +258,7 @@ def generate_all(
                 errors.append(f"{label}: {message or 'failed'}")
 
     order = {p["id"]: i for i, p in enumerate(MERCH_PRODUCTS)}
-    color_order = {"black": 0, "white": 1}
+    color_order = {"white": 0, "red": 1, "green": 2, "black": 3, "gray": 4}
     orientation_order = {"portrait": 0, "landscape": 1}
 
     def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, int]:

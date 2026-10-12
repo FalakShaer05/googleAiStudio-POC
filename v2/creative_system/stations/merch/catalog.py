@@ -8,14 +8,21 @@ PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."
 MERCH_DIR = os.path.join(PACKAGE_DIR, "static", "images", "merch")
 
 # Apparel colors available for tee / hoodie.
-APPAREL_COLORS: List[Dict[str, str]] = [
-    {"id": "black", "label": "Black"},
+# tint = recolor light blank (white template) while keeping fabric folds.
+APPAREL_COLORS: List[Dict[str, Any]] = [
     {"id": "white", "label": "White"},
+    {"id": "red", "label": "Red", "tint": (190, 28, 36)},
+    {"id": "green", "label": "Green", "tint": (34, 120, 58)},
+    {"id": "black", "label": "Black"},
+    {"id": "gray", "label": "Gray", "tint": (128, 128, 132)},
 ]
+
+_APPAREL_COLOR_IDS = {c["id"] for c in APPAREL_COLORS}
 
 # All products use fast PIL overlays (place art on blank templates).
 # print_box = max zone; match_art_aspect=True keeps artwork proportions
 # and centers the largest fitting rectangle inside that zone.
+# auto_orientation=True → portrait/landscape is detected from artwork size.
 MERCH_PRODUCTS: List[Dict[str, Any]] = [
     {
         "id": "sticker",
@@ -23,6 +30,16 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "tags": ["Die-Cut"],
         "mode": "sticker_single",
         "engine": "composite",
+        "auto_orientation": True,
+    },
+    {
+        "id": "stickers-3",
+        "label": "3 Stickers",
+        "tags": ["Pack"],
+        "mode": "sticker_fan",
+        "engine": "composite",
+        "sticker_count": 3,
+        "auto_orientation": True,
     },
     {
         "id": "stickers-4",
@@ -31,6 +48,8 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "sticker_fan",
         "engine": "composite",
         "sticker_count": 4,
+        "auto_orientation": True,
+        "hidden": True,  # Temporarily hidden from UI / default runs
     },
     {
         "id": "stickers-5",
@@ -39,6 +58,8 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "sticker_fan",
         "engine": "composite",
         "sticker_count": 5,
+        "auto_orientation": True,
+        "hidden": True,  # Temporarily hidden from UI / default runs
     },
     {
         "id": "sticker-sheet",
@@ -46,6 +67,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "tags": ["Sheet"],
         "mode": "sticker_sheet",
         "engine": "composite",
+        "auto_orientation": True,
     },
     {
         "id": "cap",
@@ -60,6 +82,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "match_art_aspect": True,
         "knockout": False,
         "shade": False,
+        "auto_orientation": True,
     },
     {
         "id": "tshirt",
@@ -68,12 +91,29 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "mockup",
         "engine": "composite",
         "colors": {
-            "black": {"label": "Black", "template": "tshirt.png"},
             "white": {"label": "White", "template": "tshirt_white.png"},
+            "red": {
+                "label": "Red",
+                "template": "tshirt_white.png",
+                "tint": (190, 28, 36),
+            },
+            "green": {
+                "label": "Green",
+                "template": "tshirt_white.png",
+                "tint": (34, 120, 58),
+            },
+            "black": {"label": "Black", "template": "tshirt.png"},
+            "gray": {
+                "label": "Gray",
+                "template": "tshirt_white.png",
+                "tint": (128, 128, 132),
+            },
         },
-        "default_colors": ["black", "white"],
-        # Centered chest print — slightly smaller, not over shoulders/sleeves.
+        "default_colors": ["white", "black"],
+        # Landscape / wide art — compact chest band.
         "print_box": (0.32, 0.28, 0.68, 0.53),
+        # Portrait / square art — larger than landscape band, not full-chest.
+        "portrait_print_box": (0.28, 0.22, 0.72, 0.58),
         "fit": "cover",
         "match_art_aspect": True,
         "knockout": False,
@@ -86,12 +126,29 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "mockup",
         "engine": "composite",
         "colors": {
-            "black": {"label": "Black", "template": "hoodie.png"},
             "white": {"label": "White", "template": "hoodie_white.png"},
+            "red": {
+                "label": "Red",
+                "template": "hoodie_white.png",
+                "tint": (190, 28, 36),
+            },
+            "green": {
+                "label": "Green",
+                "template": "hoodie_white.png",
+                "tint": (34, 120, 58),
+            },
+            "black": {"label": "Black", "template": "hoodie.png"},
+            "gray": {
+                "label": "Gray",
+                "template": "hoodie_white.png",
+                "tint": (128, 128, 132),
+            },
         },
-        "default_colors": ["black", "white"],
-        # Chest print ~10% smaller, lower on torso, above pocket.
+        "default_colors": ["white", "black"],
+        # Landscape — compact band above pocket.
         "print_box": (0.30, 0.36, 0.70, 0.61),
+        # Portrait / square — medium chest print, still above pocket.
+        "portrait_print_box": (0.28, 0.30, 0.72, 0.62),
         "fit": "cover",
         "match_art_aspect": True,
         "knockout": False,
@@ -110,6 +167,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "match_art_aspect": True,
         "knockout": False,
         "shade": False,
+        "auto_orientation": True,
     },
     {
         "id": "photo-print",
@@ -119,12 +177,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "engine": "composite",
         "template": "photo_print.png",
         "fit": "contain",
-        # 4×6 can hang either way — user picks orientation in the UI.
-        "orientations": [
-            {"id": "portrait", "label": "Portrait"},
-            {"id": "landscape", "label": "Landscape"},
-        ],
-        "default_orientation": "portrait",
+        "auto_orientation": True,
     },
     {
         "id": "canvas",
@@ -133,11 +186,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "mode": "canvas",
         "engine": "composite",
         "fit": "contain",
-        "orientations": [
-            {"id": "portrait", "label": "Portrait"},
-            {"id": "landscape", "label": "Landscape"},
-        ],
-        "default_orientation": "portrait",
+        "auto_orientation": True,
     },
 ]
 
@@ -157,6 +206,8 @@ def list_products() -> List[Dict[str, Any]]:
     """Public catalog for the UI (no filesystem paths)."""
     out = []
     for item in MERCH_PRODUCTS:
+        if item.get("hidden"):
+            continue
         colors = item.get("colors") or {}
         color_opts = [
             {
@@ -170,11 +221,6 @@ def list_products() -> List[Dict[str, Any]]:
         if item.get("template"):
             templates.append(item["template"])
         templates.extend(meta.get("template") for meta in colors.values() if meta.get("template"))
-        orientations = [
-            {"id": o["id"], "label": o.get("label") or o["id"].title()}
-            for o in (item.get("orientations") or [])
-            if o.get("id")
-        ]
         out.append(
             {
                 "id": item["id"],
@@ -184,9 +230,10 @@ def list_products() -> List[Dict[str, Any]]:
                 "has_template": any(product_path(t) for t in templates) if templates else True,
                 "colors": color_opts,
                 "default_colors": list(item.get("default_colors") or [c["id"] for c in color_opts]),
-                "orientations": orientations,
-                "default_orientation": item.get("default_orientation")
-                or (orientations[0]["id"] if orientations else None),
+                # Orientation is auto-detected from artwork — no UI picker.
+                "orientations": [],
+                "default_orientation": None,
+                "auto_orientation": bool(item.get("auto_orientation")),
             }
         )
     return out
@@ -223,8 +270,14 @@ def expand_products_for_colors(
             job["template"] = template
             job["color"] = cid
             job["color_label"] = color_label
+            if meta.get("tint"):
+                job["tint"] = tuple(meta["tint"])
             job["variant_id"] = f"{product['id']}-{cid}"
-            base_tags = [t for t in (product.get("tags") or []) if t.lower() not in {"black", "white"}]
+            base_tags = [
+                t
+                for t in (product.get("tags") or [])
+                if str(t).lower() not in _APPAREL_COLOR_IDS
+            ]
             job["tags"] = base_tags + [color_label]
             expanded.append(job)
     return expanded

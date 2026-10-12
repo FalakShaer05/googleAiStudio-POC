@@ -698,28 +698,6 @@
         return;
       }
 
-      const orientationChoices = {};
-      picks.forEach((pid) => {
-        const wrap = form.querySelector(`[data-merch-orientations="${pid}"]`);
-        if (!wrap) return;
-        const selected = wrap.querySelector(".merch-orient-chip:checked");
-        if (selected) orientationChoices[pid] = selected.value;
-      });
-      const missingOrient = picks.find((pid) => {
-        const wrap = form.querySelector(`[data-merch-orientations="${pid}"]`);
-        return wrap && !orientationChoices[pid];
-      });
-      if (missingOrient) {
-        const status = form.querySelector(".cs-status");
-        const label = missingOrient === "photo-print" ? "Photo Print" : missingOrient === "canvas" ? "Poster" : missingOrient;
-        if (status) {
-          status.className = "status-message status-error cs-status";
-          status.textContent = `Select an orientation for ${label}.`;
-          status.style.display = "block";
-        }
-        return;
-      }
-
       const skippedRequired = [];
       form.querySelectorAll('input[type="file"][required]').forEach((input) => {
         const cached = fileCache(form)[input.name];
@@ -753,9 +731,6 @@
         body.set("products", JSON.stringify(picks));
         if (Object.keys(colorChoices).length) {
           body.set("colors", JSON.stringify(colorChoices));
-        }
-        if (Object.keys(orientationChoices).length) {
-          body.set("orientations", JSON.stringify(orientationChoices));
         }
         body.delete("product_pick");
         Array.from(body.keys()).forEach((key) => {

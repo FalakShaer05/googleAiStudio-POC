@@ -12,6 +12,10 @@ services:
       - U2NET_HOME=/app/.u2net
       - REMBG_MODEL_ORDER=u2net
       - REMBG_MAX_SIDE=2048
+      - YOLO_CONFIG_DIR=/app/.ultralytics
+      - GROUP_EXTRACT_DETECTOR=yolo
+      - GROUP_EXTRACT_YOLO_MODEL=yolov8n-seg.pt
+      - GROUP_EXTRACT_YOLO_CONF=0.25
     env_file:
       - .env
     volumes:

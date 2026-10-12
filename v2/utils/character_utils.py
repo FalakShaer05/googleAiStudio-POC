@@ -8,8 +8,12 @@ import re
 import time
 import random
 import hashlib
+import threading
 from collections import deque
 from typing import Optional, Tuple, Dict, Any, List
+
+# rembg sessions are process-global; serialize cutouts to avoid ONNX races.
+_GROUP_EXTRACT_REMBG_LOCK = threading.Lock()
 
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import requests
@@ -61,6 +65,17 @@ def get_gemini_fallback_image_model() -> Optional[str]:
     """
     value = (os.getenv("GEMINI_FALLBACK_IMAGE_MODEL") or "").strip()
     return value or None
+
+
+def get_gemini_group_extract_image_model() -> str:
+    """
+    Fast image model used only for group-person cutouts.
+
+    Defaults to gemini-3.1-flash-image (much lower latency than Pro Image).
+    Override via GROUP_EXTRACT_IMAGE_MODEL without changing merch / art models.
+    """
+    value = (os.getenv("GROUP_EXTRACT_IMAGE_MODEL") or "").strip()
+    return value or "gemini-3.1-flash-image"
 
 
 def _is_transient_gemini_error(exc: Exception) -> bool:
@@ -986,10 +1001,10 @@ def add_signature_image_overlay(
         if img_with_signature.mode != 'RGBA':
             img_with_signature = img_with_signature.convert('RGBA')
         
-        # Small padding on sides/top. Bottom placements sit near the edge so Warhol
-        # doesn't leave a large empty band under the logo.
-        padding_x = int(img_width * 0.01)
-        padding_y = int(img_height * 0.01)
+        # Light inset from top/sides so the logo isn't flush against the canvas edge.
+        # Bottom placements stay tighter so Warhol doesn't leave a large empty band.
+        padding_x = max(12, int(img_width * 0.025))
+        padding_y = max(12, int(img_height * 0.025))
         # Tiny inset from the canvas edge so MIAMI isn't clipped; still reads as bottom.
         bottom_inset = max(2, int(img_height * 0.015))
 
@@ -3157,6 +3172,348 @@ def _friendly_gemini_timeout_message(exc: Exception) -> str:
     return msg
 
 
+def _gemini_response_text(response) -> str:
+    """Best-effort plain text from a Gemini generate_content response."""
+    text = (getattr(response, "text", None) or "").strip()
+    if text:
+        return text
+    parts = _iter_gemini_response_parts(response)
+    chunks = []
+    for part in parts:
+        part_text = getattr(part, "text", None)
+        if part_text:
+            chunks.append(part_text)
+    return " ".join(chunks).strip()
+
+
+def _parse_numbered_person_lines(text: str, person_count: int) -> List[str]:
+    """Parse 'N: description' lines into a dense 1..N list (with index fallbacks)."""
+    plans = _parse_person_plan_lines(text, person_count)
+    return [plan["description"] for plan in plans]
+
+
+def _default_person_description(idx: int) -> str:
+    return f"person #{idx} counting front-row left-to-right, then rows behind"
+
+
+def _parse_bbox_percents(raw: str) -> Optional[Tuple[float, float, float, float]]:
+    """
+    Parse left,top,right,bottom as percentages (0-100) of image size.
+    Returns normalized fractions in [0, 1].
+    """
+    nums = re.findall(r"\d+(?:\.\d+)?", raw or "")
+    if len(nums) < 4:
+        return None
+    left, top, right, bottom = [float(v) for v in nums[:4]]
+    # Accept 0-1 fractions if the model ignored the percent instruction.
+    if max(left, top, right, bottom) <= 1.5:
+        left, top, right, bottom = left * 100.0, top * 100.0, right * 100.0, bottom * 100.0
+    left = min(max(left, 0.0), 100.0) / 100.0
+    top = min(max(top, 0.0), 100.0) / 100.0
+    right = min(max(right, 0.0), 100.0) / 100.0
+    bottom = min(max(bottom, 0.0), 100.0) / 100.0
+    if right - left < 0.03 or bottom - top < 0.05:
+        return None
+    # Reject boxes that are basically the whole frame (common model failure).
+    if (right - left) * (bottom - top) > 0.72:
+        return None
+    return left, top, right, bottom
+
+
+def _parse_person_plan_lines(text: str, person_count: int) -> List[Dict[str, Any]]:
+    """
+    Parse plan lines into [{description, bbox}].
+
+    Preferred format:
+      N: left,top,right,bottom | short description
+    Also accepts description-only lines (bbox=None).
+    """
+    descriptions: Dict[int, str] = {}
+    bboxes: Dict[int, Tuple[float, float, float, float]] = {}
+
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip().lstrip("-•*").strip()
+        match = re.match(r"^(\d{1,2})\s*[:.\-)]\s*(.+)$", line)
+        if not match:
+            continue
+        idx = int(match.group(1))
+        if not (1 <= idx <= person_count):
+            continue
+        rest = match.group(2).strip()
+        if "|" in rest:
+            bbox_part, desc_part = rest.split("|", 1)
+        else:
+            # "N: 10,20,30,80 short desc..." or description-only
+            bbox_match = re.match(
+                r"^(\d+(?:\.\d+)?\s*[, ]\s*\d+(?:\.\d+)?\s*[, ]\s*"
+                r"\d+(?:\.\d+)?\s*[, ]\s*\d+(?:\.\d+)?)(?:\s*[-–:]\s*|\s+)(.+)$",
+                rest,
+            )
+            if bbox_match:
+                bbox_part, desc_part = bbox_match.group(1), bbox_match.group(2)
+            else:
+                bbox_part, desc_part = "", rest
+
+        bbox = _parse_bbox_percents(bbox_part) if bbox_part else None
+        desc = (desc_part or "").strip() or _default_person_description(idx)
+        descriptions[idx] = desc
+        if bbox is not None:
+            bboxes[idx] = bbox
+
+    if len(descriptions) < person_count:
+        print(
+            f"⚠️ Person plan incomplete ({len(descriptions)}/{person_count} descriptions, "
+            f"{len(bboxes)} bboxes); filling gaps with index labels"
+        )
+
+    return [
+        {
+            "description": descriptions.get(i, _default_person_description(i)),
+            "bbox": bboxes.get(i),
+        }
+        for i in range(1, person_count + 1)
+    ]
+
+
+def _image_fingerprint(img: Image.Image, size: int = 48) -> str:
+    """Tiny perceptual-ish fingerprint for near-duplicate / full-group detection."""
+    small = _to_rgb_image(img).resize((size, size), Image.Resampling.BILINEAR).convert("L")
+    return hashlib.md5(small.tobytes()).hexdigest()
+
+
+def _images_too_similar(a: Image.Image, b: Image.Image, threshold: float = 0.12) -> bool:
+    """True when downscaled mean absolute difference is below threshold (0-1 scale)."""
+    size = (64, 64)
+    aa = _to_rgb_image(a).resize(size, Image.Resampling.BILINEAR)
+    bb = _to_rgb_image(b).resize(size, Image.Resampling.BILINEAR)
+    if NUMPY_AVAILABLE:
+        da = np.asarray(aa, dtype=np.float32)
+        db = np.asarray(bb, dtype=np.float32)
+        mad = float(np.mean(np.abs(da - db))) / 255.0
+        return mad < threshold
+    pa = list(aa.getdata())
+    pb = list(bb.getdata())
+    total = 0.0
+    for (r1, g1, b1), (r2, g2, b2) in zip(pa, pb):
+        total += abs(r1 - r2) + abs(g1 - g2) + abs(b1 - b2)
+    mad = total / (255.0 * 3.0 * len(pa))
+    return mad < threshold
+
+
+def _crop_person_region(
+    group_image: Image.Image,
+    bbox: Tuple[float, float, float, float],
+    pad_frac: float = 0.04,
+) -> Image.Image:
+    """
+    Crop one person from the group using normalized bbox fractions + padding.
+
+    Horizontal pad stays tight (crowded groups); vertical pad keeps heads/feet.
+    """
+    width, height = group_image.size
+    left, top, right, bottom = bbox
+    bw = max(1e-6, right - left)
+    bh = max(1e-6, bottom - top)
+    pad_x = bw * pad_frac
+    pad_top = bh * max(pad_frac, 0.08)
+    pad_bottom = bh * max(pad_frac, 0.06)
+    left = max(0.0, left - pad_x)
+    top = max(0.0, top - pad_top)
+    right = min(1.0, right + pad_x)
+    bottom = min(1.0, bottom + pad_bottom)
+    box = (
+        int(left * width),
+        int(top * height),
+        max(int(right * width), int(left * width) + 1),
+        max(int(bottom * height), int(top * height) + 1),
+    )
+    return _to_rgb_image(group_image).crop(box)
+
+
+def _rgba_on_white(cut: Image.Image) -> Image.Image:
+    cut = cut.convert("RGBA")
+    canvas = Image.new("RGB", cut.size, (255, 255, 255))
+    canvas.paste(cut, mask=cut.split()[3])
+    return canvas
+
+
+def _keep_primary_subject_rgba(cut: Image.Image) -> Image.Image:
+    """
+    After rembg, drop secondary people/blobs in the crop.
+
+    Keeps the connected alpha component with the best area×center score, then
+    tight-crops to that subject.
+    """
+    cut = cut.convert("RGBA")
+    if not NUMPY_AVAILABLE:
+        return cut
+    try:
+        from scipy import ndimage
+    except Exception:
+        return cut
+
+    arr = np.asarray(cut)
+    alpha = arr[:, :, 3]
+    mask = alpha >= 40
+    if not bool(mask.any()):
+        return cut
+
+    labeled, num = ndimage.label(mask)
+    if num <= 1:
+        ys, xs = np.where(mask)
+        if ys.size == 0:
+            return cut
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        pad_x = max(2, int((x1 - x0) * 0.04))
+        pad_y = max(2, int((y1 - y0) * 0.04))
+        y0, x0 = max(0, y0 - pad_y), max(0, x0 - pad_x)
+        y1 = min(arr.shape[0], y1 + pad_y)
+        x1 = min(arr.shape[1], x1 + pad_x)
+        return Image.fromarray(arr[y0:y1, x0:x1], "RGBA")
+
+    h, w = mask.shape
+    cy, cx = h * 0.5, w * 0.5
+    best_label = 0
+    best_score = -1.0
+    min_area = max(32, int(h * w * 0.008))
+    for lab in range(1, num + 1):
+        ys, xs = np.where(labeled == lab)
+        area = int(ys.size)
+        if area < min_area:
+            continue
+        my = float(ys.mean())
+        mx = float(xs.mean())
+        dist = ((my - cy) ** 2 + (mx - cx) ** 2) ** 0.5
+        score = area / (1.0 + dist / max(h, w))
+        if score > best_score:
+            best_score = score
+            best_label = lab
+
+    if best_label == 0:
+        return cut
+
+    keep = labeled == best_label
+    out = arr.copy()
+    out[~keep, 3] = 0
+    ys, xs = np.where(keep)
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    pad_x = max(2, int((x1 - x0) * 0.04))
+    pad_y = max(2, int((y1 - y0) * 0.04))
+    y0, x0 = max(0, y0 - pad_y), max(0, x0 - pad_x)
+    y1 = min(out.shape[0], y1 + pad_y)
+    x1 = min(out.shape[1], x1 + pad_x)
+    return Image.fromarray(out[y0:y1, x0:x1], "RGBA")
+
+
+def _rembg_person_on_white(crop: Image.Image) -> Optional[Image.Image]:
+    """Local rembg cutout of a person crop, composited onto pure white."""
+    try:
+        from rembg import remove
+        from utils.bg_remover import (
+            _decontaminate_cutout_edges,
+            _get_rembg_session,
+            _has_real_transparency,
+            _rembg_model_names,
+        )
+    except Exception as exc:
+        print(f"⚠️ rembg unavailable for group extract: {exc}")
+        return None
+
+    source = crop.convert("RGB")
+    max_side = 1280
+    if max(source.size) > max_side:
+        source = source.copy()
+        source.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+
+    with _GROUP_EXTRACT_REMBG_LOCK:
+        for model_name in _rembg_model_names():
+            try:
+                session = _get_rembg_session(model_name)
+                cut = remove(source, session=session)
+                if not isinstance(cut, Image.Image):
+                    cut = Image.open(io.BytesIO(cut))
+                cut = cut.convert("RGBA")
+                if not _has_real_transparency(cut):
+                    continue
+                cut = _decontaminate_cutout_edges(cut)
+                cut = _keep_primary_subject_rgba(cut)
+                return _rgba_on_white(cut)
+            except Exception as model_exc:
+                print(f"⚠️ group-extract rembg model={model_name} failed: {model_exc}")
+    return None
+
+
+def _build_person_plans_for_group(
+    image_path: str,
+    source_full: Image.Image,
+    group_image: Image.Image,
+    max_persons: int,
+    person_count: Optional[int],
+) -> Tuple[int, List[Dict[str, Any]], str]:
+    """
+    Prefer YOLO-seg instance masks/cutouts; fall back to Gemini text boxes.
+
+    Returns (count, plans, source_label).
+    """
+    detector = (os.getenv("GROUP_EXTRACT_DETECTOR") or "yolo").strip().lower()
+    plans: List[Dict[str, Any]] = []
+
+    if detector in ("yolo", "auto", "local", "yolo-seg", "seg"):
+        try:
+            from utils.person_detector import detect_persons_yolo
+
+            yolo_plans = detect_persons_yolo(source_full, max_persons=max_persons)
+            cutout_count = sum(1 for p in yolo_plans if p.get("cutout") is not None)
+            print(
+                f"🟦 YOLO detected {len(yolo_plans)} person(s) "
+                f"({cutout_count} seg cutout(s))"
+            )
+            if len(yolo_plans) >= 2:
+                if person_count is not None:
+                    person_count = max(1, min(int(person_count), max_persons))
+                    plans = yolo_plans[:person_count]
+                    if len(plans) < person_count:
+                        print(
+                            f"⚠️ YOLO found {len(plans)} < requested {person_count}; "
+                            "using detections only"
+                        )
+                    return len(plans), plans, "yolo-seg" if cutout_count else "yolo"
+                return (
+                    len(yolo_plans),
+                    yolo_plans,
+                    "yolo-seg" if cutout_count else "yolo",
+                )
+            print("⚠️ YOLO returned too few people; falling back to Gemini plan")
+        except Exception as yolo_exc:
+            print(f"⚠️ YOLO person detect failed ({yolo_exc}); falling back to Gemini plan")
+
+    try:
+        count, gemini_plans = plan_group_person_extraction(
+            image_path,
+            max_persons=max_persons,
+            person_count=person_count,
+            group_image=group_image,
+        )
+        return count, gemini_plans, "gemini"
+    except Exception as plan_exc:
+        print(f"⚠️ Person plan step failed ({plan_exc}); falling back to count-only")
+        if person_count is None:
+            person_count = count_persons_in_image(
+                image_path,
+                max_persons=max_persons,
+                group_image=group_image,
+            )
+        else:
+            person_count = max(1, min(int(person_count), max_persons))
+        plans = [
+            {"description": _default_person_description(i), "bbox": None}
+            for i in range(1, person_count + 1)
+        ]
+        return person_count, plans, "count-only"
+
+
 def count_persons_in_image(
     image_path: str,
     max_persons: int = 12,
@@ -3186,16 +3543,7 @@ def count_persons_in_image(
     except Exception as e:
         raise RuntimeError(_friendly_gemini_timeout_message(e)) from e
 
-    text = (getattr(response, "text", None) or "").strip()
-    if not text:
-        parts = _iter_gemini_response_parts(response)
-        chunks = []
-        for part in parts:
-            part_text = getattr(part, "text", None)
-            if part_text:
-                chunks.append(part_text)
-        text = " ".join(chunks).strip()
-
+    text = _gemini_response_text(response)
     match = re.search(r"\b(\d{1,2})\b", text)
     if not match:
         raise RuntimeError(f"Could not parse person count from model response: {text!r}")
@@ -3206,16 +3554,353 @@ def count_persons_in_image(
     return min(count, max_persons)
 
 
+def plan_group_person_extraction(
+    image_path: str,
+    max_persons: int = 12,
+    person_count: Optional[int] = None,
+    group_image: Optional[Image.Image] = None,
+) -> Tuple[int, List[Dict[str, Any]]]:
+    """
+    One text call: person count + tight bbox (%) + short identity cue per person.
+
+    Bounding boxes enable fast local crop+rembg cutouts instead of N image gens.
+    """
+    if group_image is None and not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image not found: {image_path}")
+
+    client = get_gemini_client()
+    image = group_image if group_image is not None else _load_group_image_for_gemini(image_path)
+    line_format = (
+        "N: left,top,right,bottom | <row/position>, <age/gender cue>, <hair>, "
+        "<top clothing color+type>, <one unique detail>\n"
+        "Bounding box values are integer PERCENTAGES of image width/height "
+        "(0-100). Box must tightly cover ONE person only (head to feet / wheelchair)."
+    )
+
+    if person_count is not None:
+        person_count = max(1, min(int(person_count), max_persons))
+        prompt = (
+            f"There are exactly {person_count} distinct people in this photo.\n"
+            "Number them 1..N in reading order: front row left→right, then each row "
+            "behind left→right (bottom-to-top).\n"
+            "For EACH person write ONE line:\n"
+            f"{line_format}\n"
+            "Return ONLY those numbered lines."
+        )
+        operation = "group_person_describe"
+    else:
+        prompt = (
+            f"Count distinct people clearly visible (ignore reflections/posters/tiny background figures), "
+            f"max {max_persons}.\n"
+            "Number them 1..N in reading order: front row left→right, then rows behind "
+            "left→right (bottom-to-top).\n"
+            "Line 1 MUST be: COUNT: <integer>\n"
+            "Then one line per person:\n"
+            f"{line_format}\n"
+            "No other text."
+        )
+        operation = "group_person_plan"
+
+    try:
+        response = _generate_content_text_with_retry(
+            client=client,
+            model=get_gemini_text_model(),
+            contents=[image, prompt],
+            operation=operation,
+        )
+    except Exception as e:
+        raise RuntimeError(_friendly_gemini_timeout_message(e)) from e
+
+    text = _gemini_response_text(response)
+    print(f"🧭 Group person plan raw:\n{text}")
+
+    if person_count is None:
+        count_match = re.search(r"(?i)\bCOUNT\s*:\s*(\d{1,2})\b", text)
+        if not count_match:
+            count_match = re.search(r"\b(\d{1,2})\b", text)
+        if not count_match:
+            raise RuntimeError(f"Could not parse person count from model response: {text!r}")
+        person_count = max(1, min(int(count_match.group(1)), max_persons))
+
+    return person_count, _parse_person_plan_lines(text, person_count)
+
+
+def describe_persons_in_group(
+    image_path: str,
+    person_count: int,
+    group_image: Optional[Image.Image] = None,
+) -> List[str]:
+    """Build short clothing/position descriptions (compat wrapper around the plan call)."""
+    _, plans = plan_group_person_extraction(
+        image_path,
+        max_persons=max(1, int(person_count)),
+        person_count=person_count,
+        group_image=group_image,
+    )
+    return [plan["description"] for plan in plans]
+
+
+def _border_mean_luminance(img: Image.Image, border_frac: float = 0.08) -> float:
+    """Average luminance of a thin border ring (0–255)."""
+    rgb = _to_rgb_image(img)
+    width, height = rgb.size
+    bw = max(2, int(width * border_frac))
+    bh = max(2, int(height * border_frac))
+    strips = [
+        rgb.crop((0, 0, width, bh)),
+        rgb.crop((0, height - bh, width, height)),
+        rgb.crop((0, bh, bw, height - bh)),
+        rgb.crop((width - bw, bh, width, height - bh)),
+    ]
+    if NUMPY_AVAILABLE:
+        total = 0.0
+        count = 0
+        for strip in strips:
+            arr = np.asarray(strip, dtype=np.float32)
+            if arr.size == 0:
+                continue
+            lum = 0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]
+            total += float(lum.sum())
+            count += int(lum.size)
+        return (total / count) if count else 255.0
+
+    samples = []
+    for strip in strips:
+        for r, g, b in strip.getdata():
+            samples.append(0.299 * r + 0.587 * g + 0.114 * b)
+    if not samples:
+        return 255.0
+    return sum(samples) / len(samples)
+
+
+def _cutout_looks_like_full_group(
+    img: Image.Image,
+    source_group: Optional[Image.Image] = None,
+) -> Tuple[bool, str]:
+    """
+    Heuristic for common failure modes: whole-group returns (original outdoor
+    scene or dark studio void) instead of a single person on white.
+    """
+    width, height = img.size
+    if width <= 0 or height <= 0:
+        return True, "empty image"
+
+    # Requested portrait is 3:4; full-group returns are usually wider than tall.
+    if width / float(height) >= 1.15:
+        return True, f"landscape/group aspect ({width}x{height})"
+
+    border_lum = _border_mean_luminance(img)
+    # Failed group cutouts land on near-black studio void. Do not require bright
+    # white here — a large subject can touch the frame and darken the border ring.
+    if border_lum < 55:
+        return True, f"dark studio backdrop (border luminance {border_lum:.0f})"
+
+    # Flash often echoes the original group into a portrait frame — catch via similarity.
+    if source_group is not None and _images_too_similar(img, source_group, threshold=0.14):
+        return True, "too similar to full group photo"
+
+    return False, "ok"
+
+
+def _cutout_has_occlusion_void(img: Image.Image) -> Tuple[bool, str]:
+    """
+    Detect 'swiss cheese' / side-bitten cutouts where a neighbor overlapped.
+    Those are unusable for art — prefer a face crop.
+    """
+    if not NUMPY_AVAILABLE:
+        return False, "ok"
+    rgb = _to_rgb_image(img)
+    arr = np.asarray(rgb, dtype=np.int16)
+    if arr.size == 0:
+        return True, "empty cutout"
+    # Near-white studio fill.
+    white = (arr[:, :, 0] >= 248) & (arr[:, :, 1] >= 248) & (arr[:, :, 2] >= 248)
+    content = ~white
+    if not bool(content.any()):
+        return True, "empty cutout"
+    ys, xs = np.where(content)
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    box = content[y0:y1, x0:x1]
+    fill = float(box.mean()) if box.size else 0.0
+    # Sparse subject bbox → body mostly missing / eaten by overlap.
+    if fill < 0.58:
+        return True, f"occluded cutout (content fill {fill:.0%})"
+    h, w = box.shape
+    if h >= 24 and w >= 24:
+        mid = box[int(h * 0.28) : int(h * 0.72), :]
+        if mid.size and float(mid.mean()) < 0.34:
+            return True, f"hollow midsection (fill {float(mid.mean()):.0%})"
+        left_f = float(box[:, : w // 2].mean())
+        right_f = float(box[:, w // 2 :].mean())
+        # One side mostly white — classic neighbor silhouette bite.
+        if min(left_f, right_f) < 0.40 and abs(left_f - right_f) > 0.18:
+            return True, f"side occlusion void (L/R {left_f:.0%}/{right_f:.0%})"
+    return False, "ok"
+
+
+def _is_valid_single_person_cutout(
+    img: Image.Image,
+    source_group: Optional[Image.Image] = None,
+) -> Tuple[bool, str]:
+    """
+    Reject full-group / multi-person failure modes using local heuristics only.
+
+    No extra Gemini calls here — those were doubling extract latency.
+    """
+    bad, reason = _cutout_looks_like_full_group(img, source_group=source_group)
+    if bad:
+        return False, reason
+    hollow, hollow_reason = _cutout_has_occlusion_void(img)
+    if hollow:
+        return False, hollow_reason
+    return True, "ok"
+
+
+def _crop_person_head_region(
+    group_image: Image.Image,
+    bbox: Tuple[float, float, float, float],
+) -> Image.Image:
+    """Tight head/shoulders crop when the full body is hidden behind others."""
+    left, top, right, bottom = bbox
+    bh = max(1e-6, bottom - top)
+    bw = max(1e-6, right - left)
+    # Upper ~48% of the person box, slightly widened for hair.
+    head_bottom = top + bh * 0.48
+    pad_x = bw * 0.12
+    pad_top = bh * 0.10
+    head_box = (
+        max(0.0, left - pad_x),
+        max(0.0, top - pad_top),
+        min(1.0, right + pad_x),
+        min(1.0, head_bottom + bh * 0.06),
+    )
+    return _crop_person_region(group_image, head_box, pad_frac=0.02)
+
+
+def _build_person_extract_prompt(
+    person_index: int,
+    total_persons: int,
+    person_description: str,
+    *,
+    strict: bool = False,
+) -> str:
+    target = (person_description or "").strip() or (
+        f"person #{person_index} (front row left→right, then rows behind)"
+    )
+    base = (
+        "EDIT THIS UPLOADED GROUP PHOTO.\n"
+        f"Isolate EXACTLY ONE person: person #{person_index} of {total_persons}.\n"
+        f"Target identity: {target}\n"
+        "Output requirements:\n"
+        "- Photorealistic cutout of THAT single person only\n"
+        "- Plain pure white background (RGB 255,255,255) — never black, grey, or studio void\n"
+        "- Prefer a clear face. If the body is hidden behind someone else, output "
+        "face + hair + upper shoulders only — never a hollow body with white cutouts\n"
+        "- Preserve exact face, hair, skin tone, clothes, accessories, and pose\n"
+        "- Keep wheelchair / mobility aids if this person uses them and they are visible\n"
+        "Hard bans:\n"
+        "- Do NOT include any other person, even partially or as a white silhouette\n"
+        "- Do NOT return the whole group or a multi-person cluster\n"
+        "- Do NOT remove the background of the entire group onto black\n"
+        "- No text, borders, frames, watermarks, or new props"
+    )
+    if strict:
+        base += (
+            "\nRETRY: Your previous output incorrectly showed multiple people or a dark group "
+            "backdrop. Return ONLY the single named person on pure white. Zero other people."
+        )
+    return base
+
+
+def _extract_person_via_gemini_on_crop(
+    crop: Image.Image,
+    person_index: int,
+    total_persons: int,
+    person_description: str,
+    source_group: Image.Image,
+    *,
+    face_only: bool = False,
+) -> Optional[Image.Image]:
+    """
+    Gemini cleanup on an already-cropped single-person region.
+
+    Much more reliable/faster than asking the model to isolate from the full group.
+    """
+    client = get_gemini_client()
+    extract_model = get_gemini_group_extract_image_model()
+    target = (person_description or "").strip() or f"person #{person_index}"
+    if face_only:
+        prompt = (
+            "EDIT THIS CROPPED PHOTO — focus on the clear face.\n"
+            f"Target: {target} (person #{person_index} of {total_persons}).\n"
+            "Output requirements:\n"
+            "- Keep ONLY this one person's face, hair, and upper shoulders\n"
+            "- Plain pure white background (RGB 255,255,255)\n"
+            "- Face must be sharp, fully visible, and identity-accurate\n"
+            "- If the body is hidden or cut off, do NOT invent a body — face/shoulders only\n"
+            "Hard bans:\n"
+            "- Do NOT include any other person, even as a silhouette\n"
+            "- Do NOT leave white holes shaped like other people\n"
+            "- Do NOT return a group photo\n"
+            "- No text, borders, frames, or new props"
+        )
+    else:
+        prompt = (
+            "EDIT THIS CROPPED PHOTO of mostly one person.\n"
+            f"Target: {target} (person #{person_index} of {total_persons}).\n"
+            "Output requirements:\n"
+            "- Keep ONLY this one person (full body / as much as visible)\n"
+            "- If the body is mostly hidden behind someone else, keep a clear "
+            "face + shoulders only — never a hollow body with white cutouts\n"
+            "- Plain pure white background (RGB 255,255,255)\n"
+            "- Preserve exact face, hair, clothes, pose, wheelchair/mobility aids\n"
+            "Hard bans:\n"
+            "- Do NOT include any other person, even partially\n"
+            "- Do NOT return a group photo\n"
+            "- No text, borders, frames, or new props"
+        )
+    print(f"⚡ Person #{person_index} Gemini crop-cleanup model={extract_model}")
+    response = _generate_content_image(
+        client=client,
+        model=extract_model,
+        contents=[crop, prompt],
+        aspect_ratio="3:4",
+        image_size="1K",
+        operation="art_generation:extract_person_crop",
+    )
+    img = _extract_final_image_from_response(response)
+    if img is None:
+        return None
+    if not isinstance(img, Image.Image):
+        return None
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGB")
+    valid, reason = _is_valid_single_person_cutout(img, source_group=source_group)
+    if not valid:
+        print(f"⚠️ Person #{person_index} Gemini crop-cleanup rejected: {reason}")
+        return None
+    return img.convert("RGB") if img.mode != "RGB" else img
+
+
 def extract_single_person_from_group(
     image_path: str,
     person_index: int,
     total_persons: int,
     output_path: str,
     group_image: Optional[Image.Image] = None,
+    person_description: Optional[str] = None,
+    person_bbox: Optional[Tuple[float, float, float, float]] = None,
+    person_cutout: Optional[Image.Image] = None,
+    max_attempts: Optional[int] = None,
 ) -> Tuple[bool, str]:
     """
     Isolate one person from a group photo onto a plain white background.
-    person_index is 1-based, ordered left-to-right then top-to-bottom.
+
+    Preferred path (fast + accurate):
+      1) YOLO-seg instance mask cutout (already on white)
+      2) else bbox crop + rembg / Gemini crop cleanup
+      3) legacy full-group Gemini only when no bbox/cutout exists
     """
     try:
         if group_image is None and not os.path.exists(image_path):
@@ -3223,40 +3908,173 @@ def extract_single_person_from_group(
         if person_index < 1 or person_index > total_persons:
             return False, f"Invalid person_index {person_index} for total {total_persons}"
 
-        client = get_gemini_client()
+        if max_attempts is None:
+            try:
+                max_attempts = int(os.getenv("GROUP_EXTRACT_MAX_ATTEMPTS", "2"))
+            except ValueError:
+                max_attempts = 2
+
         image = group_image if group_image is not None else _load_group_image_for_gemini(image_path)
-        # Portrait cutouts are usually closer to 3:4 than the original group frame.
-        aspect_ratio = "3:4"
+        mode = (os.getenv("GROUP_EXTRACT_MODE") or "local").strip().lower()
+        t0 = time.time()
+        img: Optional[Image.Image] = None
+        method = "none"
 
-        prompt = (
-            f"From this group photo, isolate ONLY person #{person_index} of {total_persons} "
-            f"(count left-to-right, then top-to-bottom).\n"
-            "Return one photorealistic cutout of that person alone on a plain white background.\n"
-            "Keep the exact face, hair, skin tone, clothes, and pose.\n"
-            "Do not include other people, text, borders, or new props."
+        # Best path: precomputed YOLO-seg cutout (no rembg — rembg shreds crowds).
+        yolo_reject_reason = ""
+        if person_cutout is not None and mode != "gemini":
+            cut = person_cutout
+            if not isinstance(cut, Image.Image):
+                cut = None
+            if cut is not None:
+                if cut.mode != "RGB":
+                    cut = cut.convert("RGB")
+                valid, reason = _is_valid_single_person_cutout(cut, source_group=image)
+                if valid:
+                    img = cut
+                    method = "yolo-seg"
+                else:
+                    yolo_reject_reason = reason
+                    print(f"⚠️ Person #{person_index} YOLO-seg cutout rejected: {reason}")
+
+        prefer_face = bool(
+            yolo_reject_reason
+            and any(
+                token in yolo_reject_reason.lower()
+                for token in (
+                    "occluded",
+                    "hollow",
+                    "content fill",
+                    "side occlusion",
+                    "landscape",
+                    "group aspect",
+                )
+            )
         )
 
-        response = _generate_content_image(
-            client=client,
-            model=get_gemini_image_model(),
-            contents=[image, prompt],
-            aspect_ratio=aspect_ratio,
-            image_size="1K",
-            operation="art_generation:extract_person",
-        )
-        img = _extract_final_image_from_response(response)
+        if img is None and person_bbox is not None and mode != "gemini":
+            crop = (
+                _crop_person_head_region(image, person_bbox)
+                if prefer_face
+                else _crop_person_region(image, person_bbox)
+            )
+            # Prefer Gemini cleanup on the crop over rembg for crowded scenes.
+            prefer_gemini = (
+                os.getenv("GROUP_EXTRACT_PREFER_GEMINI_CROP", "true").lower()
+                in ("1", "true", "yes")
+            )
+            if prefer_gemini:
+                try:
+                    img = _extract_person_via_gemini_on_crop(
+                        crop=crop,
+                        person_index=person_index,
+                        total_persons=total_persons,
+                        person_description=person_description or "",
+                        source_group=image,
+                        face_only=prefer_face,
+                    )
+                    if img is not None:
+                        method = "gemini-face-crop" if prefer_face else "gemini-crop-cleanup"
+                except Exception as gem_exc:
+                    print(f"⚠️ Person #{person_index} Gemini crop-cleanup failed: {gem_exc}")
+            if img is None:
+                img = _rembg_person_on_white(crop)
+                if img is not None:
+                    valid, reason = _is_valid_single_person_cutout(img, source_group=image)
+                    if valid:
+                        method = "local-head+rembg" if prefer_face else "local-crop+rembg"
+                    else:
+                        print(f"⚠️ Person #{person_index} rembg cutout rejected: {reason}")
+                        img = None
+                        # Body rembg often fails on crowds — retry head crop once.
+                        if not prefer_face:
+                            prefer_face = True
+                            head_crop = _crop_person_head_region(image, person_bbox)
+                            img = _rembg_person_on_white(head_crop)
+                            if img is not None:
+                                valid, reason = _is_valid_single_person_cutout(
+                                    img, source_group=image
+                                )
+                                if valid:
+                                    method = "local-head+rembg"
+                                else:
+                                    print(
+                                        f"⚠️ Person #{person_index} head rembg rejected: {reason}"
+                                    )
+                                    img = None
+            if img is None and not prefer_gemini:
+                try:
+                    img = _extract_person_via_gemini_on_crop(
+                        crop=crop if not prefer_face else _crop_person_head_region(
+                            image, person_bbox
+                        ),
+                        person_index=person_index,
+                        total_persons=total_persons,
+                        person_description=person_description or "",
+                        source_group=image,
+                        face_only=prefer_face,
+                    )
+                    if img is not None:
+                        method = "gemini-face-crop" if prefer_face else "gemini-crop-cleanup"
+                except Exception as gem_exc:
+                    print(f"⚠️ Person #{person_index} Gemini crop-cleanup failed: {gem_exc}")
+
+        # Legacy / no-bbox path: Gemini on the full group (Flash), with validation retries.
         if img is None:
-            return False, f"No image returned for person #{person_index}"
-        if not isinstance(img, Image.Image):
-            return False, f"Invalid image object for person #{person_index}"
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
+            client = get_gemini_client()
+            attempts = max(1, min(int(max_attempts), 2))
+            last_reject = "no bbox and Gemini full-group extract failed"
+            extract_model = get_gemini_group_extract_image_model()
+            for attempt in range(1, attempts + 1):
+                prompt = _build_person_extract_prompt(
+                    person_index,
+                    total_persons,
+                    person_description or "",
+                    strict=(attempt > 1),
+                )
+                if attempt == 1:
+                    print(f"⚡ Person #{person_index} full-group Gemini model={extract_model}")
+                response = _generate_content_image(
+                    client=client,
+                    model=extract_model,
+                    contents=[image, prompt],
+                    aspect_ratio="3:4",
+                    image_size="1K",
+                    operation="art_generation:extract_person",
+                )
+                candidate = _extract_final_image_from_response(response)
+                if candidate is None or not isinstance(candidate, Image.Image):
+                    last_reject = f"No image returned for person #{person_index}"
+                    continue
+                if candidate.mode not in ("RGB", "RGBA"):
+                    candidate = candidate.convert("RGB")
+                valid, reason = _is_valid_single_person_cutout(candidate, source_group=image)
+                if not valid:
+                    last_reject = reason
+                    print(
+                        f"⚠️ Person #{person_index} attempt {attempt}/{attempts} rejected: {reason}"
+                    )
+                    continue
+                img = candidate.convert("RGB")
+                method = "gemini-full-group"
+                break
+            if img is None:
+                print(
+                    f"❌ Person #{person_index} failed in {time.time() - t0:.1f}s: {last_reject}"
+                )
+                return False, (
+                    f"Person #{person_index} cutout failed validation after {attempts} attempt(s): "
+                    f"{last_reject}"
+                )
 
         output_dir = os.path.dirname(output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
         img.save(output_path, "PNG", optimize=True)
-        return True, f"Extracted person #{person_index}"
+        print(
+            f"✅ Person #{person_index} extracted in {time.time() - t0:.1f}s via {method}"
+        )
+        return True, f"Extracted person #{person_index} ({method})"
     except Exception as e:
         print(f"extract_single_person_from_group error (person {person_index}): {e}")
         import traceback
@@ -3274,8 +4092,8 @@ def extract_persons_from_group_image(
     """
     Detect people in a group photo and extract each person as an individual PNG.
 
-    Uses limited parallelism (default 3, via GROUP_EXTRACT_MAX_WORKERS) so
-    multi-person groups finish faster without flooding Gemini into 503s.
+    Fast path: YOLO-seg instance masks → white cutouts.
+    Fallbacks: Gemini crop cleanup, rembg, then full-group Gemini.
 
     Returns (success, message, results) where results is a list of dicts with
     index / success / output_path / error keys.
@@ -3286,29 +4104,44 @@ def extract_persons_from_group_image(
 
         if max_workers is None:
             try:
-                max_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "3")), 4))
+                # Local rembg is cheap; allow a bit more parallelism than Gemini-only days.
+                max_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "4")), 6))
             except ValueError:
-                max_workers = 3
+                max_workers = 4
         else:
-            max_workers = max(1, min(int(max_workers), 4))
+            max_workers = max(1, min(int(max_workers), 6))
 
         os.makedirs(output_dir, exist_ok=True)
+        # Keep a higher-res source for local crops; Gemini plan still uses a bounded copy.
+        source_full = _to_rgb_image(Image.open(image_path))
         group_image = _load_group_image_for_gemini(image_path)
+        t_start = time.time()
 
-        if person_count is None:
-            person_count = count_persons_in_image(
-                image_path,
-                max_persons=max_persons,
-                group_image=group_image,
-            )
-        else:
-            person_count = max(1, min(int(person_count), max_persons))
+        person_count, person_plans, plan_source = _build_person_plans_for_group(
+            image_path=image_path,
+            source_full=source_full,
+            group_image=group_image,
+            max_persons=max_persons,
+            person_count=person_count,
+        )
 
-        print(f"👥 Group extract: {person_count} person(s), workers={max(1, min(max_workers, person_count))}")
+        bbox_count = sum(1 for plan in person_plans if plan.get("bbox"))
+        print(
+            f"👥 Group extract: {person_count} person(s), {bbox_count} bbox(es), "
+            f"detector={plan_source}, "
+            f"workers={max(1, min(max_workers, person_count))} "
+            f"(plan {time.time() - t_start:.1f}s)"
+        )
+        for i, plan in enumerate(person_plans, start=1):
+            print(f"   #{i}: bbox={plan.get('bbox')} | {plan.get('description')}")
 
+        # Prefer full-res crops when available (same aspect as plan image).
+        crop_source = source_full
         results: List[Dict[str, Any]] = []
+        group_fp = _image_fingerprint(crop_source)
 
         def _run(idx: int) -> Dict[str, Any]:
+            plan = person_plans[idx - 1]
             filename = f"extracted_person_{idx}_{uuid.uuid4().hex[:10]}.png"
             out_path = os.path.join(output_dir, filename)
             ok, msg = extract_single_person_from_group(
@@ -3316,9 +4149,33 @@ def extract_persons_from_group_image(
                 person_index=idx,
                 total_persons=person_count,
                 output_path=out_path,
-                group_image=group_image,
+                group_image=crop_source,
+                person_description=plan.get("description"),
+                person_bbox=plan.get("bbox"),
+                person_cutout=plan.get("cutout"),
             )
             if ok:
+                # Drop near-duplicates of the original group that slipped past validators.
+                try:
+                    out_img = Image.open(out_path)
+                    if (
+                        _image_fingerprint(out_img) == group_fp
+                        or _images_too_similar(out_img, crop_source, threshold=0.12)
+                    ):
+                        print(f"⚠️ Person #{idx} rejected post-save: duplicate of group photo")
+                        try:
+                            os.remove(out_path)
+                        except OSError:
+                            pass
+                        return {
+                            "index": idx - 1,
+                            "person_number": idx,
+                            "success": False,
+                            "error": "Cutout looked like the full group photo",
+                            "description": plan.get("description"),
+                        }
+                except Exception as post_exc:
+                    print(f"⚠️ Person #{idx} post-check skipped: {post_exc}")
                 return {
                     "index": idx - 1,
                     "person_number": idx,
@@ -3326,12 +4183,14 @@ def extract_persons_from_group_image(
                     "message": msg,
                     "output_filename": filename,
                     "output_path": out_path,
+                    "description": plan.get("description"),
                 }
             return {
                 "index": idx - 1,
                 "person_number": idx,
                 "success": False,
                 "error": msg,
+                "description": plan.get("description"),
             }
 
         workers = max(1, min(max_workers, person_count))
@@ -3360,10 +4219,13 @@ def extract_persons_from_group_image(
         results.sort(key=lambda item: item.get("index", 0))
         success_count = sum(1 for item in results if item.get("success"))
         failure_count = len(results) - success_count
+        elapsed = time.time() - t_start
         message = (
             f"Extracted {success_count} of {person_count} person(s)"
             + (f" ({failure_count} failed)" if failure_count else "")
+            + f" in {elapsed:.0f}s"
         )
+        print(f"👥 Group extract done: {message}")
         return success_count > 0, message, results
     except Exception as e:
         print(f"extract_persons_from_group_image error: {e}")

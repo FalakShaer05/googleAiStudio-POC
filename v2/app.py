@@ -43,6 +43,7 @@ from utils.character_utils import (
     extract_persons_from_group_image,
 )
 from utils.bg_remover import remove_background, warmup_rembg_sessions
+from utils.person_detector import warmup_person_detector
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
 from utils.prompts import HOBBY_PROMPTS, COMPOSITING_PROMPT, COMPOSITING_PROMPT_NO_BACKGROUND, BIRTHDAY_STATION_PREFILLED_PROMPTS
@@ -563,16 +564,15 @@ def extract_persons_from_group():
         except ValueError:
             max_persons = 12
 
-        # Parallel Gemini cutouts (default 3). Override via form or GROUP_EXTRACT_MAX_WORKERS.
-        # Cap at 4 — higher concurrency tends to hit Gemini 503 deadline timeouts.
+        # Parallel local cutouts (default 4). Override via form or GROUP_EXTRACT_MAX_WORKERS.
         try:
-            default_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "3")), 4))
+            default_workers = max(1, min(int(os.getenv("GROUP_EXTRACT_MAX_WORKERS", "4")), 6))
         except ValueError:
-            default_workers = 3
+            default_workers = 4
         max_workers = default_workers
         if max_workers_raw:
             try:
-                max_workers = max(1, min(int(max_workers_raw), 4))
+                max_workers = max(1, min(int(max_workers_raw), 6))
             except ValueError:
                 return jsonify({"error": "max_workers must be an integer"}), 400
 
@@ -2496,6 +2496,7 @@ def api_docs_redirect():
 
 if __name__ == "__main__":
     warmup_rembg_sessions()
+    warmup_person_detector()
     # Prefer threaded so rembg/S3 work does not freeze /health and other routes.
     debug = os.getenv("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
     app.run(debug=debug, host="0.0.0.0", port=5000, threaded=True)
