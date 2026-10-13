@@ -3202,6 +3202,30 @@ def _to_rgb_image(img: Image.Image) -> Image.Image:
     return img
 
 
+def downscale_pil_for_gemini(image: Image.Image, max_side: int = 1536) -> Image.Image:
+    """
+    Bound the longest side of a PIL image before sending it to Gemini.
+
+    Full print canvases (e.g. 3:2 @ 300 DPI = 4500x3000) plus multiple
+    character PNGs routinely exceed Gemini deadlines and proxy timeouts.
+    """
+    if image is None:
+        return image
+    try:
+        max_side = max(512, int(max_side))
+    except (TypeError, ValueError):
+        max_side = 1536
+
+    width, height = image.size
+    if max(width, height) <= max_side:
+        return image
+
+    resized = image.copy()
+    resized.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+    print(f"📐 Gemini input resized {width}x{height} → {resized.size[0]}x{resized.size[1]}")
+    return resized
+
+
 def _load_group_image_for_gemini(image_path: str, max_side: int = 1536) -> Image.Image:
     """
     Load a group photo for Gemini and downscale large inputs.
@@ -3215,11 +3239,7 @@ def _load_group_image_for_gemini(image_path: str, max_side: int = 1536) -> Image
     except ValueError:
         max_side = 1536
 
-    width, height = image.size
-    if max(width, height) > max_side:
-        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-        print(f"📐 Group extract resized {width}x{height} → {image.size[0]}x{image.size[1]}")
-    return image
+    return downscale_pil_for_gemini(image, max_side=max_side)
 
 
 def _generate_content_text_with_retry(client: genai.Client, model: str, contents, operation: str = "text"):

@@ -1575,6 +1575,22 @@ def composite_characters_on_background():
             canvas_pixels = get_canvas_size_pixels(canvas_size, dpi) if canvas_size else None
             if not canvas_pixels:
                 canvas_pixels = get_canvas_size_pixels("8x10", dpi) or (2400, 3000)
+            # Cap blank canvases. 3:2 @ 300 DPI is 4500x3000 and that alone
+            # makes Gemini compositing exceed nginx/browser timeouts.
+            try:
+                blank_max_side = max(
+                    512, int(os.getenv("COMPOSITE_BLANK_CANVAS_MAX_SIDE", "2048"))
+                )
+            except ValueError:
+                blank_max_side = 2048
+            cw, ch = canvas_pixels
+            if max(cw, ch) > blank_max_side:
+                scale_down = blank_max_side / float(max(cw, ch))
+                canvas_pixels = (max(1, int(cw * scale_down)), max(1, int(ch * scale_down)))
+                print(
+                    f"📐 Blank composite canvas capped to {canvas_pixels[0]}x{canvas_pixels[1]} "
+                    f"(from {cw}x{ch})"
+                )
             background_image = Image.new("RGB", canvas_pixels, (255, 255, 255))
         
         bg_w, bg_h = background_image.size
@@ -1651,9 +1667,37 @@ def composite_characters_on_background():
         # Use Gemini for artistic backgrounds to better integrate characters
         # This provides better blending and integration with watercolor/artistic backgrounds
         use_gemini_compositing = request.form.get("use_gemini_compositing", "false").lower() == "true"
-        
+
+        def _pil_composite_characters():
+            """Deterministic local composite — always finishes within proxy timeouts."""
+            total_char_width = sum(char.size[0] for char in resized_characters)
+            spacing = (
+                (bg_w - total_char_width) / (num_characters + 1)
+                if num_characters > 1
+                else (bg_w - total_char_width) / 2
+            )
+            result = background_image.copy()
+            if position == "bottom":
+                y_pos = bg_h - target_char_height - int(bg_h * 0.05)  # 5% from bottom
+            else:  # center
+                y_pos = (bg_h - target_char_height) // 2
+            x_offset = spacing if num_characters > 1 else (bg_w - total_char_width) / 2
+            for char_img in resized_characters:
+                char_w, _char_h = char_img.size
+                temp_bg = Image.new("RGBA", result.size, (0, 0, 0, 0))
+                temp_bg.paste(char_img, (int(x_offset), y_pos), char_img)
+                result = Image.alpha_composite(result.convert("RGBA"), temp_bg).convert("RGB")
+                x_offset += char_w + spacing
+            return result
+
+        composite = None
+        used_gemini = False
+
         if use_gemini_compositing:
-            # Use Gemini for better artistic integration
+            # Use Gemini for better artistic integration.
+            # Downscale inputs first: 3:2 @ 300 DPI is 4500x3000 and with 4
+            # character PNGs that routinely exceeds Gemini + nginx 120s limits
+            # (browser shows the aborted request as "canceled").
             from utils.character_utils import (
                 get_gemini_client,
                 get_gemini_image_model,
@@ -1663,38 +1707,57 @@ def composite_characters_on_background():
                 generate_seed_from_prompt,
                 select_gemini_aspect_ratio,
                 build_background_orientation_prompt,
+                downscale_pil_for_gemini,
             )
-            import io
-            
-            client = get_gemini_client()
-            bg_w, bg_h = background_image.size
-            bg_aspect_ratio = select_gemini_aspect_ratio(bg_w, bg_h)
-            orientation_prompt = build_background_orientation_prompt(bg_w, bg_h)
-            
-            num_characters = len(character_images)
-            canvas_context = ""
-            if canvas_size:
-                canvas_label = "provided background" if has_background else "canvas"
-                canvas_context = (
-                    f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
-                    f"the {canvas_label} ({bg_w}x{bg_h}, {bg_aspect_ratio})."
+
+            try:
+                try:
+                    gemini_max_side = max(
+                        512, int(os.getenv("COMPOSITE_GEMINI_MAX_SIDE", "1536"))
+                    )
+                except ValueError:
+                    gemini_max_side = 1536
+
+                gemini_background = downscale_pil_for_gemini(
+                    background_image, max_side=gemini_max_side
+                )
+                gemini_characters = [
+                    downscale_pil_for_gemini(char_img, max_side=gemini_max_side)
+                    for char_img in character_images
+                ]
+
+                client = get_gemini_client()
+                gemini_bg_w, gemini_bg_h = gemini_background.size
+                bg_aspect_ratio = select_gemini_aspect_ratio(gemini_bg_w, gemini_bg_h)
+                orientation_prompt = build_background_orientation_prompt(
+                    gemini_bg_w, gemini_bg_h
                 )
 
-            canvas_context_str = f"\n{canvas_context}" if canvas_context else ""
-            
-            # Get custom compositing prompt if provided, otherwise use default
-            custom_compositing_prompt = request.form.get("compositing_prompt", "").strip()
-            default_prompt = COMPOSITING_PROMPT if has_background else COMPOSITING_PROMPT_NO_BACKGROUND
-            base_prompt = custom_compositing_prompt if custom_compositing_prompt else default_prompt
-            background_output = (
-                "Return a SINGLE final composited image with all characters naturally placed on the EXACT background, ready for printing.\n"
-                "The background must be identical to the input background."
-                if has_background
-                else "Return a SINGLE final composited image with all characters naturally placed on a plain white canvas, ready for printing.\n"
-                "Do not invent scenery or extra background elements."
-            )
-            
-            full_prompt = f"""{base_prompt}
+                num_characters = len(character_images)
+                canvas_context = ""
+                if canvas_size:
+                    canvas_label = "provided background" if has_background else "canvas"
+                    canvas_context = (
+                        f"\nTarget print size: {canvas_size} at {dpi} DPI. Keep the same aspect ratio as "
+                        f"the {canvas_label} ({gemini_bg_w}x{gemini_bg_h}, {bg_aspect_ratio})."
+                    )
+
+                canvas_context_str = f"\n{canvas_context}" if canvas_context else ""
+
+                custom_compositing_prompt = request.form.get("compositing_prompt", "").strip()
+                default_prompt = (
+                    COMPOSITING_PROMPT if has_background else COMPOSITING_PROMPT_NO_BACKGROUND
+                )
+                base_prompt = custom_compositing_prompt if custom_compositing_prompt else default_prompt
+                background_output = (
+                    "Return a SINGLE final composited image with all characters naturally placed on the EXACT background, ready for printing.\n"
+                    "The background must be identical to the input background."
+                    if has_background
+                    else "Return a SINGLE final composited image with all characters naturally placed on a plain white canvas, ready for printing.\n"
+                    "Do not invent scenery or extra background elements."
+                )
+
+                full_prompt = f"""{base_prompt}
 
 {orientation_prompt}
 
@@ -1715,48 +1778,33 @@ OUTPUT:
 {background_output}
 Each character must appear exactly as they do in their original image, with no extra objects added. And all of the characters must match the  {num_characters}"""
 
-            # Prepare contents for Gemini (background + all characters)
-            # Normalize prompt and generate seed for consistency
-            normalized_prompt = normalize_prompt_for_consistency(full_prompt)
-            seed = generate_seed_from_prompt(normalized_prompt)  # Pass already normalized prompt
-            contents = [normalized_prompt, background_image] + character_images
+                normalized_prompt = normalize_prompt_for_consistency(full_prompt)
+                seed = generate_seed_from_prompt(normalized_prompt)
+                contents = [normalized_prompt, gemini_background] + gemini_characters
 
-            response = _generate_content_image(
-                client=client,
-                model=get_gemini_image_model(),
-                contents=contents,
-                seed=seed,
-                aspect_ratio=bg_aspect_ratio,
-                operation="art_generation:batch_composite",
-            )
+                response = _generate_content_image(
+                    client=client,
+                    model=get_gemini_image_model(),
+                    contents=contents,
+                    seed=seed,
+                    aspect_ratio=bg_aspect_ratio,
+                    operation="art_generation:batch_composite",
+                )
 
-            composite = _extract_final_image_from_response(response)
-            if composite is None:
-                return jsonify({"error": "No composited image generated by Gemini"}), 500
+                composite = _extract_final_image_from_response(response)
+                if composite is None:
+                    raise RuntimeError("No composited image generated by Gemini")
+                used_gemini = True
+            except Exception as gemini_err:
+                print(
+                    f"⚠️ Gemini compositing failed, falling back to PIL: {gemini_err}"
+                )
+                composite = _pil_composite_characters()
         else:
-            # Use PIL for simple compositing (preserves background exactly)
-            # Calculate positions for characters
-            total_char_width = sum(char.size[0] for char in resized_characters)
-            spacing = (bg_w - total_char_width) / (num_characters + 1) if num_characters > 1 else (bg_w - total_char_width) / 2
-            
-            # Create final composite
-            composite = background_image.copy()
-            
-            # Calculate Y position based on position parameter
-            if position == "bottom":
-                y_pos = bg_h - target_char_height - int(bg_h * 0.05)  # 5% from bottom
-            else:  # center
-                y_pos = (bg_h - target_char_height) // 2
-            
-            # Place characters
-            x_offset = spacing if num_characters > 1 else (bg_w - total_char_width) / 2
-            for char_img in resized_characters:
-                char_w, char_h = char_img.size
-                # Create a temporary image to composite with alpha
-                temp_bg = Image.new("RGBA", composite.size, (0, 0, 0, 0))
-                temp_bg.paste(char_img, (int(x_offset), y_pos), char_img)
-                composite = Image.alpha_composite(composite.convert("RGBA"), temp_bg).convert("RGB")
-                x_offset += char_w + spacing
+            composite = _pil_composite_characters()
+
+        if composite is None:
+            return jsonify({"error": "Failed to composite characters"}), 500
 
         # Skip logo/signature when is_transparent=true (e.g. die-cut / cutout use)
         if not is_transparent:
@@ -1795,6 +1843,7 @@ Each character must appear exactly as they do in their original image, with no e
                 "position": position,
                 "scale": scale,
                 "is_transparent": is_transparent,
+                "compositing_method": "gemini" if used_gemini else "pil",
             },
         }
         
