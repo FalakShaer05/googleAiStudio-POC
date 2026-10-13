@@ -657,12 +657,18 @@ def extract_persons_from_group():
 
         success_count = sum(1 for item in response_results if item.get("success"))
         if not ok or success_count == 0:
+            error_message = message or "Failed to extract persons from group image"
+            # Client input issues (e.g. single-person photo) → 400; extraction failures → 500
+            is_client_error = (
+                "only one person detected" in error_message.lower()
+                or "no people detected" in error_message.lower()
+            )
             return jsonify({
                 "success": False,
-                "error": message or "Failed to extract persons from group image",
+                "error": error_message,
                 "group_filename": group_filename,
                 "results": response_results,
-            }), 500
+            }), 400 if is_client_error else 500
 
         return jsonify({
             "success": True,

@@ -12,14 +12,11 @@ MERCH_DIR = os.path.join(PACKAGE_DIR, "static", "images", "merch")
 # rgb=None → use light blank as-is (no tint).
 COLOR_PRESETS: Dict[str, Dict[str, Any]] = {
     "white": {"label": "White", "rgb": None, "hex": "#FFFFFF"},
-    "red": {"label": "Red", "rgb": (190, 28, 36), "hex": "#BE1C24"},
-    "green": {"label": "Green", "rgb": (34, 120, 58), "hex": "#22783A"},
-    "black": {"label": "Black", "rgb": (28, 28, 30), "hex": "#1A1A1A"},
-    "gray": {"label": "Gray", "rgb": (128, 128, 132), "hex": "#808084"},
-    "grey": {"label": "Gray", "rgb": (128, 128, 132), "hex": "#808084"},
+    "charcoal": {"label": "Charcoal", "rgb": (61, 61, 64), "hex": "#3D3D40"},
+    "black": {"label": "Black", "rgb": (0, 0, 0), "hex": "#000000"},
 }
 
-_DEFAULT_SUGGESTED = ["white", "red", "green", "black", "gray"]
+_DEFAULT_SUGGESTED = ["white", "charcoal", "black"]
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _RGB_RE = re.compile(
     r"^rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$",
@@ -41,9 +38,9 @@ def parse_color_token(raw: str) -> Optional[Dict[str, Any]]:
     Resolve a frontend color token into a generation spec.
 
     Accepts:
-      - preset names: white, red, green, black, gray
+      - preset names: white, charcoal, black
       - hex: #RGB, #RRGGBB, RGB, RRGGBB
-      - rgb(): rgb(190, 28, 36)
+      - rgb(): rgb(61, 61, 64)
 
     Returns dict with: id, label, hex, tint (optional RGB), prefer_dark (bool)
     """
@@ -59,7 +56,7 @@ def parse_color_token(raw: str) -> Optional[Dict[str, Any]]:
         rgb = preset.get("rgb")
         hex_val = str(preset.get("hex") or "#FFFFFF")
         return {
-            "id": "gray" if lower == "grey" else lower,
+            "id": lower,
             "label": preset["label"],
             "hex": hex_val,
             "tint": None if rgb is None else tuple(int(x) for x in rgb),
@@ -91,8 +88,6 @@ def parse_color_token(raw: str) -> Optional[Dict[str, Any]]:
         hex_val = f"#{slug.upper()}"
         # Map known swatch hexes back to named presets for clean labels.
         for name, preset in COLOR_PRESETS.items():
-            if name == "grey":
-                continue
             if str(preset.get("hex", "")).upper() == hex_val:
                 return parse_color_token(name)
         rgb = (
@@ -178,7 +173,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "colorable": True,
         "template": "cap.jpg",
         "suggested_colors": list(_DEFAULT_SUGGESTED),
-        "default_colors": ["white", "black"],
+        "default_colors": ["black"],
         # Front crown only — visor left blank; lower on the panel.
         "print_box": (0.30, 0.28, 0.70, 0.58),
         "fit": "cover",
@@ -197,7 +192,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "template": "tshirt_white.png",
         "dark_template": "tshirt.png",
         "suggested_colors": list(_DEFAULT_SUGGESTED),
-        "default_colors": ["white", "black"],
+        "default_colors": list(_DEFAULT_SUGGESTED),
         # Landscape / wide art — compact chest band.
         "print_box": (0.32, 0.28, 0.68, 0.53),
         # Portrait / square art — larger than landscape band, not full-chest.
@@ -217,7 +212,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "template": "hoodie_white.png",
         "dark_template": "hoodie.png",
         "suggested_colors": list(_DEFAULT_SUGGESTED),
-        "default_colors": ["white", "black"],
+        "default_colors": list(_DEFAULT_SUGGESTED),
         # Landscape — compact band above pocket.
         "print_box": (0.30, 0.36, 0.70, 0.61),
         # Portrait / square — medium chest print, still above pocket.
@@ -236,7 +231,7 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "colorable": True,
         "template": "tote.png",
         "suggested_colors": list(_DEFAULT_SUGGESTED),
-        "default_colors": ["white", "black"],
+        "default_colors": list(_DEFAULT_SUGGESTED),
         # Larger centered panel with a bit of margin.
         "print_box": (0.14, 0.18, 0.86, 0.82),
         "fit": "cover",
@@ -363,7 +358,7 @@ def expand_products_for_colors(
     """
     choices = color_choices or {}
     expanded: List[Dict[str, Any]] = []
-    preset_ids = set(COLOR_PRESETS.keys()) | {"gray"}
+    preset_ids = set(COLOR_PRESETS.keys())
 
     for product in products:
         if not product.get("colorable"):
