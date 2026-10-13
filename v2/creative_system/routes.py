@@ -29,7 +29,10 @@ from .shared.maps import fetch_static_map
 from .shared.registry import STATION_IDS, STATIONS, get_generator
 from .stations.content_filter import classify_content
 from .stations.merch import MERCH_PRODUCTS, generate_all as generate_merch_all
-from .stations.merch.catalog import list_products as list_merch_products
+from .stations.merch.catalog import (
+    COLORABLE_PRODUCT_IDS,
+    list_products as list_merch_products,
+)
 from .stations.puzzle_collage import assemble_puzzle, render_coloring_page, split_puzzle
 
 HOLDING_HANDS_TEXT_MAX = 30
@@ -644,7 +647,13 @@ def _parse_merch_product_ids() -> list[str] | None:
 
 
 def _parse_merch_color_choices() -> dict[str, list[str]] | None:
-    """Parse apparel color picks: {"tshirt":["black","white"],"hoodie":["black"]}."""
+    """
+    Parse product color picks from the frontend.
+
+    Accepts names or hex/rgb tokens, e.g.:
+      {"tshirt":["black","#BE1C24"], "cap":["#2244AA"], "tote":["rgb(34,120,58)"]}
+    Case is preserved for hex; names are lowercased by the catalog parser.
+    """
     raw = (request.form.get("colors") or request.form.get("color_choices") or "").strip()
     if not raw:
         return None
@@ -660,9 +669,9 @@ def _parse_merch_color_choices() -> dict[str, list[str]] | None:
         if not pid:
             continue
         if isinstance(val, list):
-            colors = [str(x).strip().lower() for x in val if str(x).strip()]
+            colors = [str(x).strip() for x in val if str(x).strip()]
         elif isinstance(val, str) and val.strip():
-            colors = [part.strip().lower() for part in val.replace("\n", ",").split(",") if part.strip()]
+            colors = [part.strip() for part in val.replace("\n", ",").split(",") if part.strip()]
         else:
             continue
         if colors:
@@ -696,10 +705,10 @@ def _merch_generate_impl():
             if unknown:
                 return json_error(f"Unknown merch product id(s): {', '.join(unknown)}")
 
-        # Apparel with colors requires at least one color when that product is selected.
+        # Colorable products require at least one color token when selected.
         if product_ids and color_choices is not None:
-            for pid in ("tshirt", "hoodie"):
-                if pid in product_ids and pid in color_choices and not color_choices[pid]:
+            for pid in product_ids:
+                if pid in COLORABLE_PRODUCT_IDS and pid in color_choices and not color_choices[pid]:
                     return json_error(f"Select at least one color for {pid}")
 
         ok, message, items = generate_merch_all(

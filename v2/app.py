@@ -1541,6 +1541,9 @@ def composite_characters_on_background():
         scale = float(request.form.get("scale", "1.0"))
         canvas_size = request.form.get("canvas_size", "").strip() or None
         dpi = int(request.form.get("dpi", "300"))
+        is_transparent = request.form.get("is_transparent", "false").strip().lower() in (
+            "1", "true", "yes", "on"
+        )
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
@@ -1749,13 +1752,14 @@ Each character must appear exactly as they do in their original image, with no e
                 composite = Image.alpha_composite(composite.convert("RGBA"), temp_bg).convert("RGB")
                 x_offset += char_w + spacing
 
-        # Always add the station/signature overlay to the final composite
-        try:
-            # For multi-character composites we default to the cartoon-style signature
-            composite = add_signature_image_overlay(composite, style="cartoon")
-        except Exception as _e:
-            # Non-fatal: if signature fails, continue without blocking the composite
-            print(f"⚠️ Failed to add signature overlay to composite: {_e}")
+        # Skip logo/signature when is_transparent=true (e.g. die-cut / cutout use)
+        if not is_transparent:
+            try:
+                # For multi-character composites we default to the cartoon-style signature
+                composite = add_signature_image_overlay(composite, style="cartoon")
+            except Exception as _e:
+                # Non-fatal: if signature fails, continue without blocking the composite
+                print(f"⚠️ Failed to add signature overlay to composite: {_e}")
 
         # Generate output filename
         output_filename = generate_unique_filename(f"composited_batch_{num_characters}chars.png", "output")
@@ -1784,6 +1788,7 @@ Each character must appear exactly as they do in their original image, with no e
                 "num_characters": num_characters,
                 "position": position,
                 "scale": scale,
+                "is_transparent": is_transparent,
             },
         }
         

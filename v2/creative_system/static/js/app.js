@@ -659,9 +659,49 @@
     result.style.display = items.length ? "block" : "none";
   }
 
+  function addMerchColorSwatch(wrap, hex) {
+    const value = String(hex || "").trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(value)) return null;
+    const normalized = value.toUpperCase();
+    const existing = Array.from(wrap.querySelectorAll(".merch-color-chip")).find(
+      (el) => String(el.value).toUpperCase() === normalized
+    );
+    if (existing) {
+      existing.checked = true;
+      return existing.closest("label");
+    }
+    const pid = wrap.getAttribute("data-merch-colors") || "";
+    const label = document.createElement("label");
+    label.className = "merch-color-swatch";
+    label.title = normalized;
+    label.dataset.colorId = normalized.slice(1).toLowerCase();
+    label.innerHTML =
+      `<input type="checkbox" class="merch-color-chip" name="color_${pid}" value="${normalized}" checked />` +
+      `<span class="merch-color-dot" style="background: ${normalized};" aria-hidden="true"></span>` +
+      `<span class="merch-color-name">${normalized}</span>`;
+    const custom = wrap.querySelector(".merch-color-custom");
+    if (custom) wrap.insertBefore(label, custom);
+    else wrap.appendChild(label);
+    return label;
+  }
+
   document.querySelectorAll("form[data-merch-form]").forEach((form) => {
     form.querySelectorAll('input[type="file"]').forEach((input) => {
       input.addEventListener("change", () => rememberFileInput(form, input));
+    });
+    form.querySelectorAll("[data-merch-color-picker]").forEach((picker) => {
+      picker.addEventListener("input", () => {
+        const pid = picker.getAttribute("data-merch-color-picker");
+        const wrap = form.querySelector(`[data-merch-colors="${pid}"]`);
+        if (!wrap) return;
+        addMerchColorSwatch(wrap, picker.value);
+      });
+      picker.addEventListener("change", () => {
+        const pid = picker.getAttribute("data-merch-color-picker");
+        const wrap = form.querySelector(`[data-merch-colors="${pid}"]`);
+        if (!wrap) return;
+        addMerchColorSwatch(wrap, picker.value);
+      });
     });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -689,7 +729,9 @@
       const missingColor = Object.keys(colorChoices).find((pid) => !colorChoices[pid].length);
       if (missingColor) {
         const status = form.querySelector(".cs-status");
-        const label = missingColor === "tshirt" ? "T-Shirt" : missingColor === "hoodie" ? "Hoodie" : missingColor;
+        const chip = form.querySelector(`.merch-product-chip[value="${missingColor}"]`);
+        const label =
+          (chip && chip.closest("label") && chip.closest("label").textContent.trim()) || missingColor;
         if (status) {
           status.className = "status-message status-error cs-status";
           status.textContent = `Select at least one color for ${label}.`;

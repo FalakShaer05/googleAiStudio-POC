@@ -2,27 +2,127 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple
 
 PACKAGE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MERCH_DIR = os.path.join(PACKAGE_DIR, "static", "images", "merch")
 
-# Apparel colors available for tee / hoodie.
-# tint = recolor light blank (white template) while keeping fabric folds.
-APPAREL_COLORS: List[Dict[str, Any]] = [
-    {"id": "white", "label": "White"},
-    {"id": "red", "label": "Red", "tint": (190, 28, 36)},
-    {"id": "green", "label": "Green", "tint": (34, 120, 58)},
-    {"id": "black", "label": "Black"},
-    {"id": "gray", "label": "Gray", "tint": (128, 128, 132)},
-]
+# Suggested swatches for the UI. Backend accepts these names OR any #RRGGBB.
+# rgb=None → use light blank as-is (no tint).
+COLOR_PRESETS: Dict[str, Dict[str, Any]] = {
+    "white": {"label": "White", "rgb": None, "hex": "#FFFFFF"},
+    "red": {"label": "Red", "rgb": (190, 28, 36), "hex": "#BE1C24"},
+    "green": {"label": "Green", "rgb": (34, 120, 58), "hex": "#22783A"},
+    "black": {"label": "Black", "rgb": (28, 28, 30), "hex": "#1A1A1A"},
+    "gray": {"label": "Gray", "rgb": (128, 128, 132), "hex": "#808084"},
+    "grey": {"label": "Gray", "rgb": (128, 128, 132), "hex": "#808084"},
+}
 
-_APPAREL_COLOR_IDS = {c["id"] for c in APPAREL_COLORS}
+_DEFAULT_SUGGESTED = ["white", "red", "green", "black", "gray"]
+_HEX_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_RGB_RE = re.compile(
+    r"^rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$",
+    re.IGNORECASE,
+)
+
+
+def _clamp_byte(v: int) -> int:
+    return max(0, min(255, int(v)))
+
+
+def _luma(rgb: Tuple[int, int, int]) -> float:
+    r, g, b = rgb
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def parse_color_token(raw: str) -> Optional[Dict[str, Any]]:
+    """
+    Resolve a frontend color token into a generation spec.
+
+    Accepts:
+      - preset names: white, red, green, black, gray
+      - hex: #RGB, #RRGGBB, RGB, RRGGBB
+      - rgb(): rgb(190, 28, 36)
+
+    Returns dict with: id, label, hex, tint (optional RGB), prefer_dark (bool)
+    """
+    if raw is None:
+        return None
+    token = str(raw).strip()
+    if not token:
+        return None
+
+    lower = token.lower()
+    preset = COLOR_PRESETS.get(lower)
+    if preset:
+        rgb = preset.get("rgb")
+        hex_val = str(preset.get("hex") or "#FFFFFF")
+        return {
+            "id": "gray" if lower == "grey" else lower,
+            "label": preset["label"],
+            "hex": hex_val,
+            "tint": None if rgb is None else tuple(int(x) for x in rgb),
+            "prefer_dark": lower == "black",
+        }
+
+    m_rgb = _RGB_RE.match(token)
+    if m_rgb:
+        rgb = (
+            _clamp_byte(int(m_rgb.group(1))),
+            _clamp_byte(int(m_rgb.group(2))),
+            _clamp_byte(int(m_rgb.group(3))),
+        )
+        slug = f"{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+        return {
+            "id": slug,
+            "label": f"#{slug.upper()}",
+            "hex": f"#{slug.upper()}",
+            "tint": rgb,
+            "prefer_dark": _luma(rgb) <= 28,
+        }
+
+    m_hex = _HEX_RE.match(token)
+    if m_hex:
+        hx = m_hex.group(1)
+        if len(hx) == 3:
+            hx = "".join(ch * 2 for ch in hx)
+        slug = hx.lower()
+        hex_val = f"#{slug.upper()}"
+        # Map known swatch hexes back to named presets for clean labels.
+        for name, preset in COLOR_PRESETS.items():
+            if name == "grey":
+                continue
+            if str(preset.get("hex", "")).upper() == hex_val:
+                return parse_color_token(name)
+        rgb = (
+            int(hx[0:2], 16),
+            int(hx[2:4], 16),
+            int(hx[4:6], 16),
+        )
+        # Near-white → leave blank untinted.
+        if _luma(rgb) >= 245 and max(rgb) - min(rgb) <= 12:
+            return {
+                "id": "white" if slug in {"ffffff", "fefefe"} else slug,
+                "label": "White" if slug in {"ffffff", "fefefe"} else hex_val,
+                "hex": hex_val,
+                "tint": None,
+                "prefer_dark": False,
+            }
+        return {
+            "id": slug,
+            "label": hex_val,
+            "hex": hex_val,
+            "tint": rgb,
+            "prefer_dark": _luma(rgb) <= 28,
+        }
+
+    return None
+
 
 # All products use fast PIL overlays (place art on blank templates).
-# print_box = max zone; match_art_aspect=True keeps artwork proportions
-# and centers the largest fitting rectangle inside that zone.
-# auto_orientation=True → portrait/landscape is detected from artwork size.
+# colorable=True → frontend may send any colors; light blank is tinted dynamically.
+# dark_template (optional) used when the requested color is near-black.
 MERCH_PRODUCTS: List[Dict[str, Any]] = [
     {
         "id": "sticker",
@@ -72,10 +172,13 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
     {
         "id": "cap",
         "label": "Cap",
-        "tags": ["White", "One Size"],
+        "tags": ["One Size"],
         "mode": "mockup",
         "engine": "composite",
+        "colorable": True,
         "template": "cap.jpg",
+        "suggested_colors": list(_DEFAULT_SUGGESTED),
+        "default_colors": ["white", "black"],
         # Front crown only — visor left blank; lower on the panel.
         "print_box": (0.30, 0.28, 0.70, 0.58),
         "fit": "cover",
@@ -90,25 +193,10 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "tags": ["Medium"],
         "mode": "mockup",
         "engine": "composite",
-        "colors": {
-            "white": {"label": "White", "template": "tshirt_white.png"},
-            "red": {
-                "label": "Red",
-                "template": "tshirt_white.png",
-                "tint": (190, 28, 36),
-            },
-            "green": {
-                "label": "Green",
-                "template": "tshirt_white.png",
-                "tint": (34, 120, 58),
-            },
-            "black": {"label": "Black", "template": "tshirt.png"},
-            "gray": {
-                "label": "Gray",
-                "template": "tshirt_white.png",
-                "tint": (128, 128, 132),
-            },
-        },
+        "colorable": True,
+        "template": "tshirt_white.png",
+        "dark_template": "tshirt.png",
+        "suggested_colors": list(_DEFAULT_SUGGESTED),
         "default_colors": ["white", "black"],
         # Landscape / wide art — compact chest band.
         "print_box": (0.32, 0.28, 0.68, 0.53),
@@ -125,25 +213,10 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "tags": ["Medium"],
         "mode": "mockup",
         "engine": "composite",
-        "colors": {
-            "white": {"label": "White", "template": "hoodie_white.png"},
-            "red": {
-                "label": "Red",
-                "template": "hoodie_white.png",
-                "tint": (190, 28, 36),
-            },
-            "green": {
-                "label": "Green",
-                "template": "hoodie_white.png",
-                "tint": (34, 120, 58),
-            },
-            "black": {"label": "Black", "template": "hoodie.png"},
-            "gray": {
-                "label": "Gray",
-                "template": "hoodie_white.png",
-                "tint": (128, 128, 132),
-            },
-        },
+        "colorable": True,
+        "template": "hoodie_white.png",
+        "dark_template": "hoodie.png",
+        "suggested_colors": list(_DEFAULT_SUGGESTED),
         "default_colors": ["white", "black"],
         # Landscape — compact band above pocket.
         "print_box": (0.30, 0.36, 0.70, 0.61),
@@ -160,7 +233,10 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "tags": ["One Size"],
         "mode": "mockup",
         "engine": "composite",
+        "colorable": True,
         "template": "tote.png",
+        "suggested_colors": list(_DEFAULT_SUGGESTED),
+        "default_colors": ["white", "black"],
         # Larger centered panel with a bit of margin.
         "print_box": (0.14, 0.18, 0.86, 0.82),
         "fit": "cover",
@@ -190,6 +266,8 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
     },
 ]
 
+COLORABLE_PRODUCT_IDS = {p["id"] for p in MERCH_PRODUCTS if p.get("colorable")}
+
 
 def merch_templates_dir() -> str:
     return MERCH_DIR
@@ -202,34 +280,51 @@ def product_path(filename: Optional[str]) -> Optional[str]:
     return path if os.path.isfile(path) else None
 
 
+def _suggested_color_opts(product: Dict[str, Any]) -> List[Dict[str, Any]]:
+    suggested = product.get("suggested_colors") or _DEFAULT_SUGGESTED
+    opts = []
+    seen = set()
+    for token in suggested:
+        parsed = parse_color_token(str(token))
+        if not parsed or parsed["id"] in seen:
+            continue
+        seen.add(parsed["id"])
+        opts.append(
+            {
+                "id": parsed["id"],
+                "label": parsed["label"],
+                "hex": parsed["hex"],
+            }
+        )
+    return opts
+
+
 def list_products() -> List[Dict[str, Any]]:
     """Public catalog for the UI (no filesystem paths)."""
     out = []
     for item in MERCH_PRODUCTS:
         if item.get("hidden"):
             continue
-        colors = item.get("colors") or {}
-        color_opts = [
-            {
-                "id": cid,
-                "label": meta.get("label") or cid.title(),
-                "has_template": bool(product_path(meta.get("template"))),
-            }
-            for cid, meta in colors.items()
-        ]
+        colorable = bool(item.get("colorable"))
+        color_opts = _suggested_color_opts(item) if colorable else []
         templates = []
         if item.get("template"):
             templates.append(item["template"])
-        templates.extend(meta.get("template") for meta in colors.values() if meta.get("template"))
+        if item.get("dark_template"):
+            templates.append(item["dark_template"])
+        defaults = list(item.get("default_colors") or [c["id"] for c in color_opts[:2]])
         out.append(
             {
                 "id": item["id"],
                 "label": item["label"],
                 "tags": list(item.get("tags") or []),
                 "mode": item["mode"],
-                "has_template": any(product_path(t) for t in templates) if templates else True,
+                "has_template": (
+                    any(product_path(t) for t in templates) if templates else True
+                ),
+                "colorable": colorable,
                 "colors": color_opts,
-                "default_colors": list(item.get("default_colors") or [c["id"] for c in color_opts]),
+                "default_colors": defaults,
                 # Orientation is auto-detected from artwork — no UI picker.
                 "orientations": [],
                 "default_orientation": None,
@@ -239,45 +334,81 @@ def list_products() -> List[Dict[str, Any]]:
     return out
 
 
+def _resolve_job_template(
+    product: Dict[str, Any],
+    parsed: Dict[str, Any],
+) -> Optional[str]:
+    """Pick light or dark blank; require the file to exist on disk."""
+    dark = product.get("dark_template")
+    if parsed.get("prefer_dark") and dark and product_path(dark):
+        return dark
+    light = product.get("template")
+    if product_path(light):
+        return light
+    if dark and product_path(dark):
+        return dark
+    return None
+
+
 def expand_products_for_colors(
     products: List[Dict[str, Any]],
     color_choices: Optional[Dict[str, List[str]]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Expand apparel products into one job per selected color.
-    color_choices: {"tshirt": ["black","white"], "hoodie": ["black"]}
+    Expand colorable products into one job per frontend color token.
+
+    color_choices example:
+      {"tshirt": ["black", "#BE1C24", "rgb(34,120,58)"], "cap": ["#2244AA"]}
+    Unknown / unparseable tokens are skipped.
     """
     choices = color_choices or {}
     expanded: List[Dict[str, Any]] = []
+    preset_ids = set(COLOR_PRESETS.keys()) | {"gray"}
+
     for product in products:
-        colors = product.get("colors") or {}
-        if not colors:
+        if not product.get("colorable"):
             expanded.append(dict(product))
             continue
 
         wanted = choices.get(product["id"])
         if wanted is None:
-            wanted = list(product.get("default_colors") or colors.keys())
-        # Preserve catalog order; drop unknowns / missing templates.
-        for cid, meta in colors.items():
-            if cid not in wanted:
+            wanted = list(product.get("default_colors") or _DEFAULT_SUGGESTED[:2])
+
+        seen_ids = set()
+        for token in wanted:
+            parsed = parse_color_token(str(token))
+            if not parsed:
                 continue
-            template = meta.get("template")
-            if not product_path(template):
+            cid = parsed["id"]
+            if cid in seen_ids:
                 continue
-            color_label = meta.get("label") or cid.title()
+            template = _resolve_job_template(product, parsed)
+            if not template:
+                continue
+            seen_ids.add(cid)
+
             job = dict(product)
             job["template"] = template
             job["color"] = cid
-            job["color_label"] = color_label
-            if meta.get("tint"):
-                job["tint"] = tuple(meta["tint"])
+            job["color_label"] = parsed["label"]
+            job["color_hex"] = parsed["hex"]
+            # Dark blank already is black — skip tint. Otherwise tint light blank.
+            used_dark = (
+                parsed.get("prefer_dark")
+                and product.get("dark_template")
+                and template == product.get("dark_template")
+            )
+            if parsed.get("tint") and not used_dark:
+                job["tint"] = tuple(parsed["tint"])
+            else:
+                job.pop("tint", None)
             job["variant_id"] = f"{product['id']}-{cid}"
             base_tags = [
                 t
                 for t in (product.get("tags") or [])
-                if str(t).lower() not in _APPAREL_COLOR_IDS
+                if str(t).lower() not in preset_ids
             ]
-            job["tags"] = base_tags + [color_label]
+            job["tags"] = base_tags + [parsed["label"]]
             expanded.append(job)
+
     return expanded
