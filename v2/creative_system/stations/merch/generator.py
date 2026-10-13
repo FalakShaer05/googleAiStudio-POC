@@ -221,8 +221,8 @@ def generate_all(
     trimming white margins cannot flip the run to portrait. orientation_choices
     is ignored (kept for API compatibility).
     is_transparent: when True, apparel/cap/tote key out the art backdrop;
-    1 sticker / 3 stickers become die-cut (no MOSIDA, smooth white contour);
-    sticker sheet becomes a 4+5+8 die-cut pack with no brand logos.
+    1 / 3 stickers become die-cut on transparent PNG (uniform free-transform);
+    sticker sheet becomes aligned die-cut grids on the paint page + brand logos.
 
     Returns (success, message, items).
     """
@@ -284,7 +284,7 @@ def generate_all(
                 errors.append(f"{label}: {message or 'failed'}")
 
     order = {p["id"]: i for i, p in enumerate(MERCH_PRODUCTS)}
-    color_order = {"white": 0, "red": 1, "green": 2, "black": 3, "gray": 4}
+    color_order = {"white": 0, "charcoal": 1, "black": 2}
     orientation_order = {"portrait": 0, "landscape": 1}
 
     def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, str, int]:

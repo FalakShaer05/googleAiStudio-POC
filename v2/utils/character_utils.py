@@ -3558,7 +3558,14 @@ def _build_person_plans_for_group(
                 f"🟦 YOLO detected {len(yolo_plans)} person(s) "
                 f"({cutout_count} seg cutout(s))"
             )
-            if len(yolo_plans) >= 2:
+            # Accept 1+ detections. Only fall back to Gemini when YOLO found a
+            # lone subject but the caller explicitly asked for more people.
+            requested_more = (
+                person_count is not None
+                and int(person_count) > 1
+                and len(yolo_plans) == 1
+            )
+            if yolo_plans and not requested_more:
                 if person_count is not None:
                     person_count = max(1, min(int(person_count), max_persons))
                     plans = yolo_plans[:person_count]
@@ -3573,7 +3580,13 @@ def _build_person_plans_for_group(
                     yolo_plans,
                     "yolo-seg" if cutout_count else "yolo",
                 )
-            print("⚠️ YOLO returned too few people; falling back to Gemini plan")
+            if requested_more:
+                print(
+                    "⚠️ YOLO found only 1 person but more requested; "
+                    "falling back to Gemini plan"
+                )
+            else:
+                print("⚠️ YOLO returned no people; falling back to Gemini plan")
         except Exception as yolo_exc:
             print(f"⚠️ YOLO person detect failed ({yolo_exc}); falling back to Gemini plan")
 
@@ -4212,6 +4225,19 @@ def extract_persons_from_group_image(
             max_persons=max_persons,
             person_count=person_count,
         )
+
+        if person_count < 1 or not person_plans:
+            msg = "No people detected in the image; cannot use the group extraction feature"
+            print(f"❌ Group extract aborted: {msg} (detector={plan_source})")
+            return False, msg, []
+
+        if person_count == 1:
+            msg = (
+                "Only one person detected; cannot use the group extraction feature. "
+                "Please upload a photo with 2 or more people."
+            )
+            print(f"❌ Group extract aborted: {msg} (detector={plan_source})")
+            return False, msg, []
 
         bbox_count = sum(1 for plan in person_plans if plan.get("bbox"))
         print(

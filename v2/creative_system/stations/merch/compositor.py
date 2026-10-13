@@ -416,6 +416,9 @@ def tint_garment_template(
         ),
         dtype=np.float32,
     )
+    # Pure black collapses fold shading — lift slightly so fabric still reads.
+    if float(target.max()) < 1.0:
+        target[:] = (18.0, 18.0, 20.0)
     # Normalize against the bright fabric so mid-grays become soft shades of tint.
     fabric_luma = luma[~backdrop]
     ref = float(np.percentile(fabric_luma, 92)) if fabric_luma.size else 255.0
@@ -1052,8 +1055,7 @@ def make_sticker_single(
     Single sticker product.
 
     Default: full rectangular artwork with a thin dark edge + drop shadow.
-    Transparent mode: strip MOSIDA logo, die-cut white contour around the
-    subject silhouette (1 sticker only — not sticker sheet).
+    Transparent mode: strip MOSIDA logo, die-cut white contour, transparent PNG.
     """
     art = _sticker_art_for_orientation(artwork, orientation)
     if is_transparent:
@@ -1063,12 +1065,46 @@ def make_sticker_single(
             strip_logo=True,
         )
         sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
-        return _studio_pad_sticker(sticker)
+        pad = max(40, int(min(sticker.size) * 0.08))
+        canvas = Image.new(
+            "RGBA",
+            (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2),
+            (0, 0, 0, 0),
+        )
+        canvas.alpha_composite(sticker, dest=(pad, pad))
+        return canvas
 
     del diecut  # Rectangular listing keeps the full scene + logo.
     sticker = _rect_sticker_card(art, max_side=900)
     sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
     return _studio_pad_sticker(sticker)
+
+
+def _free_transform_sticker(
+    sticker: Image.Image,
+    max_w: int,
+    max_h: int,
+    *,
+    cell: bool = False,
+) -> Image.Image:
+    """
+    Uniform free-transform: scale a die-cut to fit max_w×max_h (contain).
+
+    When cell=True, center the result on a transparent max_w×max_h tile so
+    every sticker in a grid occupies the same aligned bounding box.
+    """
+    tile = _to_rgba(sticker)
+    tw, th = max(1, tile.size[0]), max(1, tile.size[1])
+    mw, mh = max(1, max_w), max(1, max_h)
+    scale = min(mw / float(tw), mh / float(th))
+    nw = max(1, int(round(tw * scale)))
+    nh = max(1, int(round(th * scale)))
+    resized = tile.resize((nw, nh), Image.Resampling.LANCZOS)
+    if not cell:
+        return resized
+    canvas = Image.new("RGBA", (mw, mh), (0, 0, 0, 0))
+    canvas.alpha_composite(resized, dest=((mw - nw) // 2, (mh - nh) // 2))
+    return canvas
 
 
 def make_sticker_fan(
@@ -1083,8 +1119,8 @@ def make_sticker_fan(
     Pack mockup of identical stickers.
 
     Default: rectangular cards stacked diagonally (store listing).
-    Transparent mode (3 stickers): die-cut white contour, no MOSIDA logo,
-    slight horizontal overlap — not used for sticker sheet.
+    Transparent mode: die-cut white contour, no MOSIDA logo, uniform
+    free-transform — neat evenly-spaced row on a transparent canvas.
     """
     art = _sticker_art_for_orientation(artwork, orientation)
     if is_transparent:
@@ -1093,23 +1129,22 @@ def make_sticker_fan(
             stroke_frac=0.055,
             strip_logo=True,
         )
-        if max(card.size) > 520:
-            card = card.copy()
-            card.thumbnail((520, 520), Image.Resampling.LANCZOS)
-        card = _sticker_shadow(card, blur=10, offset=(4, 6))
-        sw, sh = card.size
-        # Side-by-side fan with overlap (matches die-cut pack reference).
-        step_x = max(36, int(sw * 0.55))
-        step_y = max(8, int(sh * 0.04))
-        margin = 56
-        w = sw + step_x * (count - 1) + margin * 2
-        h = sh + step_y * (count - 1) + margin * 2
-        canvas = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+        # One free-transform size for every copy — perfect alignment.
+        target_h = 480
+        tile = _free_transform_sticker(card, int(target_h * 1.35), target_h)
+        # Soft contact shadow (keeps rim readable on light / dark UIs).
+        tile = _sticker_shadow(tile, blur=12, offset=(5, 8))
+        sw, sh = tile.size
+        gap = max(28, int(sw * 0.10))
+        margin = max(48, int(min(sw, sh) * 0.12))
+        w = count * sw + max(0, count - 1) * gap + margin * 2
+        h = sh + margin * 2
+        canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         for i in range(count):
-            x = margin + i * step_x
-            y = margin + i * step_y
-            canvas.alpha_composite(card, dest=(x, y))
-        return flatten_on_white(canvas)
+            x = margin + i * (sw + gap)
+            y = margin
+            canvas.alpha_composite(tile, dest=(x, y))
+        return canvas
 
     del diecut
     card = _rect_sticker_card(art, max_side=520)
@@ -1547,111 +1582,227 @@ def _sheet_art_is_portrait(art: Image.Image) -> bool:
 
 def _fit_diecut_tile(sticker: Image.Image, max_h: int) -> Image.Image:
     """Scale a die-cut sticker to a target height (keep aspect)."""
-    tile = _to_rgba(sticker)
-    if tile.size[1] <= 0:
-        return tile
-    if tile.size[1] != max_h:
-        scale = max_h / float(tile.size[1])
-        nw = max(1, int(round(tile.size[0] * scale)))
-        tile = tile.resize((nw, max_h), Image.Resampling.LANCZOS)
-    return tile
+    return _free_transform_sticker(sticker, int(max_h * 2.5), max_h)
 
 
-def _diecut_row_from_width(
+def _diecut_cell_tile(
     sticker: Image.Image,
-    count: int,
-    usable_w: int,
-    *,
-    gap_frac: float = 0.05,
-) -> Tuple[Image.Image, int]:
+    cell_w: int,
+    cell_h: int,
+) -> Image.Image:
     """
-    Size a die-cut so `count` copies span nearly the full usable width.
-    Returns (tile, gap_px).
+    Identical free-transformed die-cut centered in a fixed cell_w×cell_h box.
+
+    Inner inset keeps white rims from kissing neighbors while every grid
+    slot stays the same size for perfect column/row alignment.
     """
-    tile = _to_rgba(sticker)
-    count = max(1, count)
-    usable_w = max(1, usable_w)
-    # count*tw + (count-1)*gap = usable_w, gap = gap_frac*tw
-    denom = count + gap_frac * max(0, count - 1)
-    tw = max(1.0, usable_w / denom)
-    scale = tw / float(max(1, tile.size[0]))
-    nw = max(1, int(round(tile.size[0] * scale)))
-    nh = max(1, int(round(tile.size[1] * scale)))
-    out = tile.resize((nw, nh), Image.Resampling.LANCZOS)
-    gap = max(4, int(round(nw * gap_frac)))
-    return out, gap
+    cw, ch = max(1, cell_w), max(1, cell_h)
+    inset = max(4, int(min(cw, ch) * 0.04))
+    fitted = _free_transform_sticker(
+        sticker,
+        max(1, cw - inset * 2),
+        max(1, ch - inset * 2),
+        cell=False,
+    )
+    canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    fw, fh = fitted.size
+    canvas.alpha_composite(fitted, dest=((cw - fw) // 2, (ch - fh) // 2))
+    return canvas
 
 
-def _paste_diecut_row(
-    sheet: Image.Image,
-    tile: Image.Image,
-    count: int,
-    y: int,
-    sheet_w: int,
-    *,
-    side_pad: int,
-    gap: Optional[int] = None,
-) -> None:
-    """Center a horizontal row of identical die-cut stickers."""
-    tw, th = tile.size
-    if gap is None:
-        gap = max(8, int(tw * 0.05))
-    total_w = count * tw + max(0, count - 1) * gap
-    usable = max(1, sheet_w - side_pad * 2)
-    if total_w > usable and count > 1:
-        gap = max(4, (usable - count * tw) // max(1, count - 1))
+def _make_sticker_sheet_diecut_landscape(diecut: Image.Image) -> Image.Image:
+    """
+    Transparent-mode landscape sheet matching the store reference:
+    paint-splatter page, 2×3 die-cuts beside brand logos, full-width 3×2
+    bottom band — every hero sticker free-transformed to one uniform size
+    per band so the grid reads perfectly aligned.
+    """
+    sheet, sheet_w, sheet_h = _sheet_canvas()
+    aw, ah = max(1, diecut.size[0]), max(1, diecut.size[1])
+    art_aspect = max(0.5, aw / float(ah))
+
+    pad_x = int(sheet_w * 0.028)
+    pad_y = int(sheet_h * 0.020)
+    pad_bot = int(sheet_h * 0.022)
+    gap_x = max(12, int(sheet_w * 0.014))
+    gap_y = max(10, int(sheet_h * 0.010))
+    section_gap = max(14, int(sheet_h * 0.014))
+    side_gap = max(10, int(sheet_w * 0.012))
+    side_w = int(sheet_w * 0.20)
+
+    main_w = max(1, sheet_w - pad_x * 2 - side_gap - side_w)
+    side_left = pad_x + main_w + side_gap
+    full_w = max(1, sheet_w - pad_x * 2)
+    usable_h = sheet_h - pad_y - pad_bot
+
+    # Bottom 3×2 first — largest uniform cells that keep aspect.
+    bot_cw = max(1, (full_w - gap_x * 2) // 3)
+    bot_ch = max(1, int(round(bot_cw / art_aspect)))
+    bot_grid_w = 3 * bot_cw + gap_x * 2
+    bot_grid_h = 2 * bot_ch + gap_y
+
+    top_budget = max(1, usable_h - bot_grid_h - section_gap)
+    top_cw, top_ch = _cell_for_aspect(
+        max(1, (main_w - gap_x) // 2),
+        max(1, (top_budget - gap_y * 2) // 3),
+        art_aspect,
+    )
+    top_grid_h = 3 * top_ch + gap_y * 2
+
+    large = _diecut_cell_tile(diecut, top_cw, top_ch)
+    small = _diecut_cell_tile(diecut, bot_cw, bot_ch)
+
+    y_top = pad_y
+    y_bot = y_top + top_grid_h + section_gap
+    _paste_art_grid_xy(sheet, large, pad_x, y_top, 2, 3, gap_x, gap_y)
+    bot_x = pad_x + max(0, (full_w - bot_grid_w) // 2)
+    _paste_art_grid_xy(sheet, small, bot_x, y_bot, 3, 2, gap_x, gap_y)
+    _paste_side_column(
+        sheet,
+        (side_left, pad_y, sheet_w - pad_x, y_bot - max(4, section_gap // 2)),
+        mosida_frac=0.55,
+        align="start",
+    )
+    print(
+        f"🧾 diecut landscape top={top_cw}x{top_ch} bot={bot_cw}x{bot_ch} "
+        f"aspect={art_aspect:.3f}"
+    )
+    return flatten_on_white(sheet)
+
+
+def _make_sticker_sheet_diecut_portrait(diecut: Image.Image) -> Image.Image:
+    """
+    Transparent-mode portrait sheet: brand row, 2×2 die-cuts, side logos,
+    full-width 3×1 bottom — uniform free-transform per band.
+    """
+    sheet, sheet_w, sheet_h = _sheet_canvas()
+    aw, ah = max(1, diecut.size[0]), max(1, diecut.size[1])
+    art_aspect = min(aw / float(ah), 0.92)
+
+    top_brand = (0.03, 0.02, 0.97, 0.13)
+    main = (0.04, 0.15, 0.76, 0.72)
+    side = (0.78, 0.15, 0.96, 0.72)
+    bottom = (0.04, 0.74, 0.96, 0.97)
+    gap = max(12, int(min(sheet_w, sheet_h) * 0.016))
+
+    def _box(norm: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
+        x0, y0, x1, y1 = norm
+        return (
+            int(x0 * sheet_w),
+            int(y0 * sheet_h),
+            int(x1 * sheet_w),
+            int(y1 * sheet_h),
+        )
+
+    _paste_portrait_top_brand(sheet, _box(top_brand))
+
+    mx0, my0, mx1, my1 = _box(main)
+    bx0, by0, bx1, by1 = _box(bottom)
+    main_w, main_h = max(1, mx1 - mx0), max(1, my1 - my0)
+    bot_w, bot_h = max(1, bx1 - bx0), max(1, by1 - by0)
+
+    top_cw, top_ch = _grid_cell_size(main_w, main_h, 2, 2, gap, art_aspect)
+    bot_cw, bot_ch = _grid_cell_size(bot_w, bot_h, 3, 1, gap, art_aspect)
+    if bot_cw > int(top_cw * 0.92):
+        scale = (top_cw * 0.92) / float(bot_cw)
+        bot_cw = max(1, int(bot_cw * scale))
+        bot_ch = max(1, int(bot_ch * scale))
+
+    large = _diecut_cell_tile(diecut, top_cw, top_ch)
+    small = _diecut_cell_tile(diecut, bot_cw, bot_ch)
+    _paste_art_grid(sheet, large, (mx0, my0), (main_w, main_h), 2, 2, gap)
+    _paste_art_grid(sheet, small, (bx0, by0), (bot_w, bot_h), 3, 1, gap)
+    _paste_side_column(sheet, _box(side), mosida_frac=0.40, align="center")
+    print(f"🧾 diecut portrait top={top_cw}x{top_ch} bot={bot_cw}x{bot_ch}")
+    return flatten_on_white(sheet)
+
+
+def _make_sticker_sheet_diecut_pack(diecut: Image.Image) -> Image.Image:
+    """
+    Fallback pack sheet: transparent canvas, 4 + 5 + 8 uniform rows.
+    Each row free-transforms once so every sticker in that row matches.
+    """
+    sheet_w = 1400
+    side_pad = int(sheet_w * 0.028)
+    usable_w = sheet_w - side_pad * 2
+    gap_frac = 0.045
+
+    def _row(count: int, gap_f: float) -> Tuple[Image.Image, int]:
+        count = max(1, count)
+        denom = count + gap_f * max(0, count - 1)
+        tw = max(1.0, usable_w / denom)
+        tile = _free_transform_sticker(diecut, int(tw), int(tw * 2.2))
+        # Re-fit width if height-bound shrunk it.
+        if tile.size[0] != int(round(tw)):
+            scale = tw / float(max(1, tile.size[0]))
+            tile = tile.resize(
+                (
+                    max(1, int(round(tile.size[0] * scale))),
+                    max(1, int(round(tile.size[1] * scale))),
+                ),
+                Image.Resampling.LANCZOS,
+            )
+        gap = max(4, int(round(tile.size[0] * gap_f)))
+        return tile, gap
+
+    large, gap_l = _row(4, gap_frac)
+    medium, gap_m = _row(5, gap_frac)
+    small, gap_s = _row(8, 0.040)
+
+    row_gap = max(16, int(large.size[1] * 0.06))
+    top_pad = max(28, int(large.size[1] * 0.08))
+    content_h = large.size[1] + medium.size[1] + small.size[1] + row_gap * 2
+    sheet_h = content_h + top_pad * 2
+
+    sheet = Image.new("RGBA", (sheet_w, sheet_h), (0, 0, 0, 0))
+
+    def _paste_row(tile: Image.Image, count: int, y: int, gap: int) -> None:
+        tw = tile.size[0]
         total_w = count * tw + max(0, count - 1) * gap
-    x = max(side_pad, (sheet_w - total_w) // 2)
-    for i in range(count):
-        sheet.alpha_composite(tile, dest=(x + i * (tw + gap), y))
+        x = max(side_pad, (sheet_w - total_w) // 2)
+        for i in range(count):
+            sheet.alpha_composite(tile, dest=(x + i * (tw + gap), y))
+
+    y = top_pad
+    _paste_row(large, 4, y, gap_l)
+    y += large.size[1] + row_gap
+    _paste_row(medium, 5, y, gap_m)
+    y += medium.size[1] + row_gap
+    _paste_row(small, 8, y, gap_s)
+    print(f"🧾 diecut pack 4+5+8 transparent {sheet_w}x{sheet_h}")
+    return sheet
 
 
-def _make_sticker_sheet_diecut(artwork: Image.Image) -> Image.Image:
+def _make_sticker_sheet_diecut(
+    artwork: Image.Image,
+    orientation: Optional[str] = None,
+    *,
+    pack_layout: bool = False,
+) -> Image.Image:
     """
-    Transparent-mode sticker sheet (no MOSIDA brand marks):
-    plain white page with 4 large + 5 medium + 8 small die-cut stickers,
-    sized to fill the sheet (minimal empty margin).
+    Transparent-mode sticker sheet.
+
+    Default: paint-splatter page with brand column + uniform die-cut grids
+    (matches the Wynwood / MOSIDA sheet reference). Set pack_layout=True for
+    a plain transparent 4+5+8 size pack with no brand marks.
     """
     diecut = build_diecut_sticker(
         artwork,
         stroke_frac=0.055,
         strip_logo=True,
     )
+    if pack_layout:
+        return _make_sticker_sheet_diecut_pack(diecut)
 
-    sheet_w = 1400
-    side_pad = int(sheet_w * 0.028)
-    usable_w = sheet_w - side_pad * 2
-
-    # Size each row to span nearly full width so stickers read large.
-    large, gap_l = _diecut_row_from_width(diecut, 4, usable_w, gap_frac=0.045)
-    medium, gap_m = _diecut_row_from_width(diecut, 5, usable_w, gap_frac=0.045)
-    small, gap_s = _diecut_row_from_width(diecut, 8, usable_w, gap_frac=0.040)
-
-    row_gap = max(16, int(large.size[1] * 0.06))
-    top_pad = max(28, int(large.size[1] * 0.08))
-    bot_pad = top_pad
-    content_h = large.size[1] + medium.size[1] + small.size[1] + row_gap * 2
-    sheet_h = content_h + top_pad + bot_pad
-
-    sheet = Image.new("RGBA", (sheet_w, sheet_h), (255, 255, 255, 255))
-    y = top_pad
-    _paste_diecut_row(
-        sheet, large, 4, y, sheet_w, side_pad=side_pad, gap=gap_l
+    orient = _normalize_orientation(orientation)
+    use_portrait = (
+        orient == "portrait"
+        if orient is not None
+        else _sheet_art_is_portrait(artwork)
     )
-    y += large.size[1] + row_gap
-    _paste_diecut_row(
-        sheet, medium, 5, y, sheet_w, side_pad=side_pad, gap=gap_m
-    )
-    y += medium.size[1] + row_gap
-    _paste_diecut_row(
-        sheet, small, 8, y, sheet_w, side_pad=side_pad, gap=gap_s
-    )
-
-    print(
-        f"🧾 Sticker sheet layout=diecut pack (4+5+8 full-bleed) "
-        f"{sheet_w}x{sheet_h}"
-    )
-    return flatten_on_white(sheet)
+    if use_portrait:
+        return _make_sticker_sheet_diecut_portrait(diecut)
+    return _make_sticker_sheet_diecut_landscape(diecut)
 
 
 def make_sticker_sheet(
@@ -1663,14 +1814,15 @@ def make_sticker_sheet(
 ) -> Image.Image:
     """
     Sticker sheet layouts:
-    - transparent → die-cut pack (4/5/8), no MOSIDA logos
-    - landscape art → 2×3 + full-width 3×2 bottom + right logos
+    - transparent → die-cut grids on paint page (2×3+3×2 or portrait) + logos
+    - landscape art → rectangular 2×3 + full-width 3×2 bottom + right logos
     - portrait / square art → top brand row + 2×2 + 3×1 bottom + right column
     """
     del diecut
     art = _to_rgba(artwork)
     if is_transparent:
-        return _make_sticker_sheet_diecut(art)
+        print("🧾 Sticker sheet layout=transparent die-cut (aligned free-transform)")
+        return _make_sticker_sheet_diecut(art, orientation=orientation)
 
     orient = _normalize_orientation(orientation)
     use_portrait = (
