@@ -16,7 +16,6 @@ from .compositor import (
     make_sticker_sheet,
     make_sticker_single,
     tint_garment_template,
-    trim_artwork,
 )
 
 _MAX_ART_SIDE = 1400
@@ -160,17 +159,12 @@ def _generate_one(
 
 def detect_artwork_orientation(artwork: Image.Image) -> str:
     """
-    Detect from the trimmed design, not the full canvas.
+    Orientation from the upload canvas only.
 
-    Uploads often sit on a taller/wider studio canvas; stickers and prints
-    already trim to content, so orientation must use that same box.
-
-    Square / near-square counts as portrait (sheet brand refs). Only clearly
-    wider art (width > height * 1.15) is landscape.
+    White margins are intentional — never classify from a trimmed content box.
     """
-    trimmed = trim_artwork(artwork, pad=2)
-    w, h = max(1, trimmed.size[0]), max(1, trimmed.size[1])
-    return "portrait" if (w / float(h)) <= 1.15 else "landscape"
+    full_w, full_h = max(1, artwork.size[0]), max(1, artwork.size[1])
+    return "landscape" if full_w > full_h else "portrait"
 
 
 def _apply_auto_orientations(
@@ -213,8 +207,9 @@ def generate_all(
     Place one artwork onto every selected product blank (local PIL, no Gemini).
 
     color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
-    Orientation is auto-detected from artwork size (portrait if taller than wide).
-    orientation_choices is ignored (kept for API compatibility).
+    Orientation follows the upload canvas (landscape if wider than tall) so
+    trimming white margins cannot flip the run to portrait. orientation_choices
+    is ignored (kept for API compatibility).
     is_transparent: when True, apparel/cap/tote keep or key out the art backdrop
     so the garment shows through; when False (default), keep the background plate.
 
