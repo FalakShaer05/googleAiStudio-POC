@@ -74,6 +74,37 @@ def trim_artwork(img: Image.Image, pad: int = 6) -> Image.Image:
     return rgba.crop((x0, y0, x1, y1))
 
 
+def pad_art_margin(
+    img: Image.Image,
+    frac: float = 0.06,
+    *,
+    rgba: Tuple[int, int, int, int] = (255, 255, 255, 255),
+) -> Image.Image:
+    """Re-add white breathing room after trim so logos aren't edge-flush."""
+    art = _to_rgba(img)
+    aw, ah = max(1, art.size[0]), max(1, art.size[1])
+    pad = max(10, int(round(min(aw, ah) * max(0.0, frac))))
+    canvas = Image.new("RGBA", (aw + pad * 2, ah + pad * 2), rgba)
+    canvas.alpha_composite(art, dest=(pad, pad))
+    return canvas
+
+
+def art_for_orientation(
+    artwork: Image.Image,
+    orientation: Optional[str],
+    *,
+    margin_frac: float = 0.06,
+) -> Image.Image:
+    """
+    Return the upload as-is.
+
+    White margins are part of the composition (landscape framing, logo inset).
+    Never crop them — orientation is taken from the canvas, not a trimmed box.
+    """
+    del orientation, margin_frac
+    return _to_rgba(artwork)
+
+
 def knockout_paper(img: Image.Image) -> Image.Image:
     """Make studio/paper white transparent so prints sit on the garment."""
     rgba = _to_rgba(img)
@@ -211,22 +242,31 @@ def prepare_print_art(
     *,
     is_transparent: bool = False,
 ) -> Image.Image:
-    art = trim_artwork(img)
+    """
+    Prepare art for product placement.
+
+    Opaque prints keep the full upload (including white margins). Knockout /
+    transparent modes may key the backdrop, but still avoid cropping the frame
+    unless transparency made edge pixels empty.
+    """
+    art = _to_rgba(img)
     if knockout:
         art = knockout_paper(art)
-        art = trim_artwork(art, pad=2)
-        return art
+        # Only crop fully transparent edges after keying — never paper-white trim.
+        bbox = art.getbbox()
+        return art.crop(bbox) if bbox else art
 
-    art = _to_rgba(art)
     # Apparel / cap / tote — only strip backdrop when caller opts in.
     if is_transparent:
         if _has_transparent_backdrop(art):
             return art
         keyed = knockout_corner_backdrop(art)
         if _has_transparent_backdrop(keyed):
-            return trim_artwork(keyed, pad=2)
+            bbox = keyed.getbbox()
+            return keyed.crop(bbox) if bbox else keyed
+        return keyed
 
-    # Default: keep background plate as an opaque print rectangle.
+    # Default: keep background plate + white margins as an opaque print.
     return _force_opaque_print(art)
 
 
@@ -377,25 +417,14 @@ def composite_on_template(
     orientation: Optional[str] = None,
     is_transparent: bool = False,
 ) -> Image.Image:
-    """Paste trimmed artwork into a normalized print box on the blank product."""
+    """Paste artwork into a normalized print box on the blank product."""
+    del orientation  # Frame comes from the upload; do not re-letterbox/crop.
     base = _to_rgba(template)
     art = prepare_print_art(
         artwork,
         knockout=knockout,
         is_transparent=is_transparent,
     )
-    orient = _normalize_orientation(orientation)
-    if orient is not None:
-        aw, ah = max(1, art.size[0]), max(1, art.size[1])
-        matches = (ah >= aw) if orient == "portrait" else (aw > ah)
-        if not matches:
-            # Only letterbox when forcing the opposite orientation.
-            art = fit_art_to_orientation(
-                art,
-                orient,
-                mode="contain",
-                pad_rgba=(242, 242, 244, 255),
-            )
     tw, th = base.size
 
     box = print_box
@@ -501,8 +530,8 @@ def make_photo_print(
     No drop shadow or dark outline.
     """
     del template  # Build a matted photo print; ignore blank template.
-    art = trim_artwork(artwork, pad=2)
-    art = _to_rgb(art).convert("RGBA")
+    # Keep upload margins — only letterbox if forcing the opposite orientation.
+    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
     art = fit_art_to_orientation(art, orientation, mode="contain")
     max_side = 1100
     if max(art.size) > max_side:
@@ -535,9 +564,7 @@ def make_canvas_print(
     No drop shadow, no black border, no white mat.
     """
     del template
-    art = trim_artwork(artwork, pad=2)
-    art = _to_rgb(art).convert("RGBA")
-    # Letterbox into the chosen orientation so the full artwork stays visible.
+    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
     art = fit_art_to_orientation(
         art,
         orientation,
@@ -598,7 +625,7 @@ def build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> Im
     """Knock out paper and add a thick white die-cut rim (no shadow yet)."""
     # Keep rectangular prints as solid cards with a white rim (don't punch
     # holes through light areas of the art — that breaks Wynwood-style scenes).
-    art = trim_artwork(artwork, pad=4)
+    art = _to_rgba(artwork)
     # Cap size before MaxFilter — large kernels on big images are very slow.
     if max(art.size) > 720:
         art = art.copy()
@@ -626,10 +653,9 @@ def _rect_sticker_card(
     artwork: Image.Image,
     max_side: int = 900,
 ) -> Image.Image:
-    """Full rectangular artwork with a thin dark edge so stacked stickers read clearly."""
-    art = trim_artwork(artwork, pad=2)
-    # Flatten to an opaque card so splash backgrounds / white highlights stay.
-    art = _to_rgb(art).convert("RGBA")
+    """Full rectangular artwork with a thin dark edge — upload margins kept."""
+    # Flatten to an opaque card; do NOT trim white space from the upload.
+    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
     if max(art.size) > max_side:
         art = art.copy()
         art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
@@ -648,25 +674,8 @@ def _sticker_art_for_orientation(
     artwork: Image.Image,
     orientation: Optional[str],
 ) -> Image.Image:
-    """
-    Keep natural artwork aspect when it already matches the orientation
-    (including square → portrait). Only letterbox when forcing the opposite.
-    """
-    art = trim_artwork(artwork, pad=2)
-    key = _normalize_orientation(orientation)
-    if key is None:
-        return art
-    aw, ah = max(1, art.size[0]), max(1, art.size[1])
-    matches = (ah >= aw) if key == "portrait" else (aw > ah)
-    if matches:
-        return art
-    # Slightly off-white so later trim_artwork won't crop the letterbox away.
-    return fit_art_to_orientation(
-        art,
-        key,
-        mode="contain",
-        pad_rgba=(242, 242, 244, 255),
-    )
+    """Keep the upload frame intact (no white-space crop)."""
+    return art_for_orientation(artwork, orientation)
 
 
 def make_sticker_single(
@@ -739,9 +748,10 @@ def _sheet_art_tile(artwork: Image.Image, cell_w: int, cell_h: int) -> Image.Ima
     """
     Opaque rectangular sticker tile.
 
-    Uses cover-fit so artwork keeps its aspect ratio (never stretched/squeezed).
+    Cover-fit fills the cell (keeps aspect, never stretches). Does not trim the
+    upload first — composition margins stay on single-sticker products.
     """
-    art = trim_artwork(_to_rgb(artwork).convert("RGBA"), pad=0)
+    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
     fitted = _fit(art, (max(1, cell_w), max(1, cell_h)), "cover")
     tile = Image.new("RGBA", (cell_w, cell_h), (255, 255, 255, 255))
     tile.paste(fitted, (0, 0), fitted)
@@ -1037,14 +1047,13 @@ def _make_sticker_sheet_landscape(art: Image.Image) -> Image.Image:
     bot_grid_w = 3 * bot_cw + gap_x * 2
     bot_grid_h = 2 * bot_ch + gap_y
 
-    # Top 2×3 gets whatever height remains above the bottom band.
+    # Top 2×3 gets whatever height remains above the bottom band — fills main_w.
     top_budget = max(1, usable_h - bot_grid_h - section_gap)
     top_cw, top_ch = _cell_for_aspect(
         max(1, (main_w - gap_x) // 2),
         max(1, (top_budget - gap_y * 2) // 3),
         art_aspect,
     )
-    top_grid_w = 2 * top_cw + gap_x
     top_grid_h = 3 * top_ch + gap_y * 2
 
     large = _sheet_art_tile(art, top_cw, top_ch)
@@ -1153,12 +1162,18 @@ def make_sticker_sheet(
     - landscape art → 2×3 + full-width 3×2 bottom + right logos
     - portrait / square art → top brand row + 2×2 + 3×1 bottom + right column
 
-    Layout follows trimmed artwork shape (not a stale orientation tag).
+    Uses the orientation tag when present; otherwise artwork aspect.
+    Does not trim white margins from the upload.
     """
     del diecut
-    _ = orientation  # Sheet layout is driven by artwork aspect, not the tag.
-    art = trim_artwork(artwork, pad=2)
-    if _sheet_art_is_portrait(art):
+    art = _to_rgba(artwork)
+    orient = _normalize_orientation(orientation)
+    use_portrait = (
+        orient == "portrait"
+        if orient is not None
+        else _sheet_art_is_portrait(art)
+    )
+    if use_portrait:
         print("🧾 Sticker sheet layout=portrait (2×2 + 3×1)")
         return _make_sticker_sheet_portrait(art)
     print("🧾 Sticker sheet layout=landscape (2×3 + large full-width 3×2)")
