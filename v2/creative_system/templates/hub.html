@@ -861,7 +861,7 @@
             <div class="form-text">One design becomes stickers, cap, tee, hoodie, tote, print, and poster. Portrait vs landscape is detected automatically from your artwork.</div>
             <label class="form-check mt-2 mb-0 user-select-none">
               <input class="form-check-input" type="checkbox" name="is_transparent" id="merch-is-transparent" value="true" />
-              <span class="form-check-label">Transparent artwork background (cap / tee / hoodie / tote)</span>
+              <span class="form-check-label">Transparent artwork background (stickers die-cut · cap / tee / hoodie / tote)</span>
             </label>
           </div>
           <div class="col-lg-4">
@@ -881,21 +881,25 @@
                 <input type="checkbox" class="merch-product-chip" name="product_pick" value="{{ product.id }}" checked />
                 <span>{{ product.label }}</span>
               </label>
-              {% if product.colors %}
+              {% if product.colorable %}
               <div class="merch-color-swatches" data-merch-colors="{{ product.id }}">
                 {% for color in product.colors %}
-                <label class="merch-color-swatch merch-color-swatch--{{ color.id }}" title="{{ color.label }}">
+                <label class="merch-color-swatch" title="{{ color.label }}" data-color-id="{{ color.id }}">
                   <input
                     type="checkbox"
                     class="merch-color-chip"
                     name="color_{{ product.id }}"
-                    value="{{ color.id }}"
+                    value="{{ color.hex or color.id }}"
                     {% if color.id in product.default_colors %}checked{% endif %}
                   />
-                  <span class="merch-color-dot" aria-hidden="true"></span>
+                  <span class="merch-color-dot" style="background: {{ color.hex or '#ccc' }};" aria-hidden="true"></span>
                   <span class="merch-color-name">{{ color.label }}</span>
                 </label>
                 {% endfor %}
+                <label class="merch-color-custom" title="Add any color">
+                  <input type="color" class="merch-color-picker" value="#3B82F6" data-merch-color-picker="{{ product.id }}" />
+                  <span class="merch-color-custom-btn">+</span>
+                </label>
               </div>
               {% endif %}
               {% if product.orientations %}

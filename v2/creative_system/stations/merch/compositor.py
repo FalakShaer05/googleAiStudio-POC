@@ -140,12 +140,19 @@ def _has_transparent_backdrop(img: Image.Image, min_frac: float = 0.02) -> bool:
     return float((alpha < 128).mean()) >= min_frac
 
 
-def knockout_corner_backdrop(img: Image.Image) -> Image.Image:
+def knockout_corner_backdrop(
+    img: Image.Image,
+    *,
+    soft_fringe: bool = True,
+) -> Image.Image:
     """
     Clear solid studio plates (white or black) connected to the image border.
 
     Flood-fill from the edges so interior black ink (outlines, glasses, cleats)
     stays opaque — only the backdrop plate becomes transparent.
+
+    soft_fringe: fade near-plate edge pixels. Disable for die-cut stickers so
+    hair / jersey whites aren't chewed into jagged holes.
     """
     rgba = _to_rgba(img)
     if not NUMPY_AVAILABLE:
@@ -213,15 +220,16 @@ def knockout_corner_backdrop(img: Image.Image) -> Image.Image:
     clear = np.isin(labeled, list(border_labels))
     arr[clear, 3] = 0
 
-    # Soft fringe on remaining near-plate edge pixels.
-    if med <= 28:
-        fringe = (~clear) & (luma <= 48) & (chroma <= 22) & (arr[:, :, 3] > 0)
-        fade = np.clip(luma[fringe] / 48.0, 0, 1)
-        arr[fringe, 3] = (arr[fringe, 3].astype(np.float32) * fade).astype(np.uint8)
-    else:
-        fringe = (~clear) & (luma >= 220) & (chroma <= 24) & (arr[:, :, 3] > 0)
-        fade = np.clip((246 - luma[fringe]) / 26.0, 0, 1)
-        arr[fringe, 3] = (arr[fringe, 3].astype(np.float32) * fade).astype(np.uint8)
+    # Soft fringe on remaining near-plate edge pixels (apparel only).
+    if soft_fringe:
+        if med <= 28:
+            fringe = (~clear) & (luma <= 48) & (chroma <= 22) & (arr[:, :, 3] > 0)
+            fade = np.clip(luma[fringe] / 48.0, 0, 1)
+            arr[fringe, 3] = (arr[fringe, 3].astype(np.float32) * fade).astype(np.uint8)
+        else:
+            fringe = (~clear) & (luma >= 220) & (chroma <= 24) & (arr[:, :, 3] > 0)
+            fade = np.clip((246 - luma[fringe]) / 26.0, 0, 1)
+            arr[fringe, 3] = (arr[fringe, 3].astype(np.float32) * fade).astype(np.uint8)
 
     return Image.fromarray(arr, "RGBA")
 
@@ -319,30 +327,93 @@ def _shade_with_fabric(art: Image.Image, fabric: Image.Image) -> Image.Image:
     return shaded
 
 
+def _studio_backdrop_mask(arr: "np.ndarray") -> "np.ndarray":
+    """
+    True for studio plate pixels that should not be recolored.
+
+    Handles dark-studio blanks (tee/hoodie/tote) and light-studio blanks (cap)
+    by flooding plate-colored pixels connected to the image border.
+    """
+    rgb = arr[:, :, :3].astype(np.float32)
+    alpha = arr[:, :, 3]
+    h, w = alpha.shape
+    luma = (0.299 * rgb[:, :, 0] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 2]).astype(
+        np.float32
+    )
+    chroma = rgb.max(axis=2) - rgb.min(axis=2)
+    transparent = alpha < 8
+
+    corners = [
+        (0, 0),
+        (0, w - 1),
+        (h - 1, 0),
+        (h - 1, w - 1),
+    ]
+    corner_luma = [float(luma[y, x]) for y, x in corners if alpha[y, x] >= 8]
+    if not corner_luma:
+        return transparent
+
+    med = float(np.median(corner_luma))
+    if med <= 40:
+        plate = (luma <= 36) & (chroma <= 22) & (~transparent)
+    elif med >= 220:
+        # Tight near-white plate so lightly shaded fabric (caps) is preserved.
+        plate = (luma >= 248) & (chroma <= 14) & (~transparent)
+    else:
+        plate = np.zeros((h, w), dtype=bool)
+
+    backdrop = transparent.copy()
+    if not plate.any():
+        # Fallback: treat near-black OR fully transparent as plate.
+        return backdrop | ((luma < 28) & (chroma < 18))
+
+    try:
+        from scipy import ndimage
+    except Exception:
+        return backdrop | plate
+
+    seed = np.zeros((h, w), dtype=bool)
+    seed[0, :] = plate[0, :]
+    seed[-1, :] = plate[-1, :]
+    seed[:, 0] = plate[:, 0]
+    seed[:, -1] = plate[:, -1]
+    if not seed.any():
+        return backdrop | ((luma < 28) & (chroma < 18))
+
+    labeled, _num = ndimage.label(plate, structure=np.ones((3, 3), dtype=bool))
+    border_labels = {int(v) for v in np.unique(labeled[seed]) if v != 0}
+    if not border_labels:
+        return backdrop | ((luma < 28) & (chroma < 18))
+    return backdrop | np.isin(labeled, list(border_labels))
+
+
 def tint_garment_template(
     template: Image.Image,
     rgb: Tuple[int, int, int],
 ) -> Image.Image:
     """
-    Recolor a light apparel blank (white tee/hoodie on dark studio) to `rgb`.
+    Recolor a light product blank to `rgb` while keeping fabric folds.
 
-    Keeps fabric folds via per-pixel luminance; leaves near-black / transparent
-    backdrop untouched so the studio plate stays the same.
+    Leaves the studio backdrop (dark or light, edge-connected) untouched so
+    tee/hoodie/tote/cap blanks all tint cleanly from whatever color the
+    frontend sends.
     """
     rgba = _to_rgba(template)
     if not NUMPY_AVAILABLE:
         return rgba
     arr = np.array(rgba)
     rgb_a = arr[:, :, :3].astype(np.float32)
-    alpha = arr[:, :, 3]
     luma = rgb_a.mean(axis=2)
-    chroma = rgb_a.max(axis=2) - rgb_a.min(axis=2)
-    backdrop = ((luma < 28) & (chroma < 18)) | (alpha < 8)
+    backdrop = _studio_backdrop_mask(arr)
     if not (~backdrop).any():
         return rgba
 
     target = np.array(
-        (max(0, min(255, int(rgb[0]))), max(0, min(255, int(rgb[1]))), max(0, min(255, int(rgb[2])))),
+        (
+            max(0, min(255, int(rgb[0]))),
+            max(0, min(255, int(rgb[1]))),
+            max(0, min(255, int(rgb[2]))),
+        ),
         dtype=np.float32,
     )
     # Normalize against the bright fabric so mid-grays become soft shades of tint.
@@ -587,24 +658,66 @@ def make_canvas_print(
 
 
 def _white_stroke(art: Image.Image, px: int) -> Image.Image:
-    """Die-cut white border around the artwork silhouette."""
+    """
+    Smooth die-cut white border around the artwork silhouette.
+
+    Uses a distance-transform (or Gaussian expand) at 2× resolution so the
+    contour follows curves cleanly instead of MaxFilter stair-steps.
+    """
     rgba = _to_rgba(art)
-    # Grow canvas so the border isn't clipped at the edges.
-    pad = px + 4
-    canvas = Image.new("RGBA", (rgba.size[0] + pad * 2, rgba.size[1] + pad * 2), (0, 0, 0, 0))
-    canvas.paste(rgba, (pad, pad), rgba)
-    alpha = canvas.split()[3]
-    # MaxFilter kernel must be odd.
-    kernel = max(3, px * 2 + 1)
-    if kernel % 2 == 0:
-        kernel += 1
-    outline = alpha.filter(ImageFilter.MaxFilter(kernel))
-    # Soften the rim slightly for a cleaner die-cut edge.
-    outline = outline.filter(ImageFilter.GaussianBlur(0.6))
-    sticker = Image.new("RGBA", canvas.size, (255, 255, 255, 0))
-    sticker.paste(Image.new("RGBA", canvas.size, (255, 255, 255, 255)), mask=outline)
-    sticker.alpha_composite(canvas)
-    return sticker
+    scale = 2
+    hi_w = max(1, rgba.size[0] * scale)
+    hi_h = max(1, rgba.size[1] * scale)
+    hi = rgba.resize((hi_w, hi_h), Image.Resampling.LANCZOS)
+    stroke_hi = max(2, int(round(px * scale)))
+    pad = stroke_hi + 8
+    canvas = Image.new("RGBA", (hi_w + pad * 2, hi_h + pad * 2), (0, 0, 0, 0))
+    canvas.paste(hi, (pad, pad), hi)
+    alpha = np.asarray(canvas.split()[3], dtype=np.float32) if NUMPY_AVAILABLE else None
+
+    outline_img: Image.Image
+    if NUMPY_AVAILABLE and alpha is not None:
+        solid = alpha >= 128.0
+        try:
+            from scipy.ndimage import distance_transform_edt, gaussian_filter
+
+            # Distance outside the subject → expand by stroke_hi pixels.
+            dist_out = distance_transform_edt(~solid)
+            expanded = solid | (dist_out <= float(stroke_hi))
+            # Soft AA rim so downscale stays smooth.
+            soft = gaussian_filter(expanded.astype(np.float32), sigma=1.1)
+            outline_a = np.clip(soft * 255.0, 0, 255).astype(np.uint8)
+        except Exception:
+            # Gaussian expand fallback (still much smoother than MaxFilter).
+            hard = Image.fromarray((solid.astype(np.uint8) * 255), mode="L")
+            blur_r = max(1.0, stroke_hi * 0.62)
+            expanded = hard.filter(ImageFilter.GaussianBlur(radius=blur_r))
+            outline_a = np.asarray(
+                expanded.point(lambda p: 255 if p > 36 else 0),
+                dtype=np.uint8,
+            )
+            outline_a = np.asarray(
+                Image.fromarray(outline_a, mode="L").filter(
+                    ImageFilter.GaussianBlur(radius=1.0)
+                ),
+                dtype=np.uint8,
+            )
+        outline_img = Image.fromarray(outline_a, mode="L")
+    else:
+        hard = canvas.split()[3].point(lambda p: 255 if p > 128 else 0)
+        blur_r = max(1.0, stroke_hi * 0.62)
+        expanded = hard.filter(ImageFilter.GaussianBlur(radius=blur_r))
+        outline_img = expanded.point(lambda p: 255 if p > 36 else 0).filter(
+            ImageFilter.GaussianBlur(radius=1.0)
+        )
+
+    sticker_hi = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    sticker_hi.paste(Image.new("RGBA", canvas.size, (255, 255, 255, 255)), mask=outline_img)
+    sticker_hi.alpha_composite(canvas)
+
+    out_w = max(1, int(round(sticker_hi.size[0] / scale)))
+    out_h = max(1, int(round(sticker_hi.size[1] / scale)))
+    return sticker_hi.resize((out_w, out_h), Image.Resampling.LANCZOS)
 
 
 def _sticker_shadow(sticker: Image.Image, blur: int = 10, offset: Tuple[int, int] = (4, 6)) -> Image.Image:
@@ -621,32 +734,282 @@ def _sticker_shadow(sticker: Image.Image, blur: int = 10, offset: Tuple[int, int
     return out
 
 
-def build_diecut_sticker(artwork: Image.Image, stroke_frac: float = 0.045) -> Image.Image:
-    """Knock out paper and add a thick white die-cut rim (no shadow yet)."""
-    # Keep rectangular prints as solid cards with a white rim (don't punch
-    # holes through light areas of the art — that breaks Wynwood-style scenes).
-    art = _to_rgba(artwork)
-    # Cap size before MaxFilter — large kernels on big images are very slow.
-    if max(art.size) > 720:
-        art = art.copy()
-        art.thumbnail((720, 720), Image.Resampling.LANCZOS)
-    rgba = _to_rgba(art)
-    alpha = rgba.split()[3]
-    opaque_frac = 0.0
-    if NUMPY_AVAILABLE:
-        opaque_frac = float((np.asarray(alpha) > 200).mean())
-    if opaque_frac < 0.85:
-        # Cutout / character art — knock out studio white, then rim silhouette.
-        art = prepare_print_art(art, knockout=True)
-        if max(art.size) > 720:
-            art = art.copy()
-            art.thumbnail((720, 720), Image.Resampling.LANCZOS)
-    else:
-        art = _to_rgb(art).convert("RGBA")
+_MOSIDA_LOGO_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "constants")
+)
+# Edge placements only — never search the image center (that punches holes
+# through faces / jerseys when contrast matching misfires).
+_MOSIDA_LOGO_POSITIONS = (
+    "top_right",
+    "top_left",
+    "top_center",
+    "bottom_center",
+    "bottom_right",
+    "bottom_left",
+)
 
-    # Keep stroke modest so MaxFilter stays fast.
-    stroke = max(10, min(22, int(round(min(art.size) * stroke_frac))))
-    return _white_stroke(art, stroke)
+
+def _trim_logo_rgba(logo: Image.Image) -> Image.Image:
+    rgba = _to_rgba(logo)
+    bbox = rgba.split()[3].getbbox()
+    return rgba.crop(bbox) if bbox else rgba
+
+
+def _mosida_logo_geometry(
+    img_w: int,
+    img_h: int,
+    sig_aspect: float,
+    position: str,
+    *,
+    scale: float = 1.0,
+) -> Tuple[int, int, int, int]:
+    """Match character_utils signature placement (20% box + padding), optional scale."""
+    sig_width = int(img_w * 0.20 * scale)
+    sig_height = int(img_h * 0.20 * scale)
+    target_aspect = sig_width / sig_height if sig_height else sig_aspect
+    if sig_aspect > target_aspect:
+        new_w = max(1, sig_width)
+        new_h = max(1, int(sig_width / sig_aspect))
+    else:
+        new_h = max(1, sig_height)
+        new_w = max(1, int(sig_height * sig_aspect))
+
+    pad_x = max(8, int(img_w * 0.02))
+    pad_y = max(8, int(img_h * 0.02))
+    bottom_inset = max(2, int(img_h * 0.012))
+    vertical, horizontal = position.split("_", 1)
+
+    if horizontal == "left":
+        x = pad_x
+    elif horizontal == "center":
+        x = (img_w - new_w) // 2
+    else:
+        x = img_w - new_w - pad_x
+
+    if vertical == "top":
+        y = pad_y
+    elif vertical == "center":
+        y = (img_h - new_h) // 2
+    else:
+        y = img_h - new_h - bottom_inset
+    return x, y, new_w, new_h
+
+
+def _load_mosida_logo_templates() -> List[Image.Image]:
+    templates: List[Image.Image] = []
+    for name in ("cartoon.png", "others.png"):
+        path = os.path.join(_MOSIDA_LOGO_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            img = Image.open(path)
+            img.load()
+            templates.append(_trim_logo_rgba(img))
+        except Exception:
+            continue
+    return templates
+
+
+def _erase_logo_region(
+    arr: "np.ndarray",
+    logo: Image.Image,
+    x: int,
+    y: int,
+    lw: int,
+    lh: int,
+) -> bool:
+    """
+    Erase one logo placement only on a strict RGB template match.
+
+    Contrast-only heuristics are intentionally avoided — light jersey stripes /
+    skin highlights false-positive as white Mosida and carve holes in the art.
+    """
+    h, w = arr.shape[:2]
+    if lw < 8 or lh < 8 or x < 0 or y < 0 or x + lw > w or y + lh > h:
+        return False
+    logo_r = logo.resize((lw, lh), Image.Resampling.LANCZOS)
+    logo_arr = np.asarray(logo_r)
+    logo_a = logo_arr[:, :, 3].astype(np.float32) / 255.0
+    ink = logo_a >= 0.40
+    ink_n = int(ink.sum())
+    if ink_n < 40:
+        return False
+
+    region = arr[y : y + lh, x : x + lw]
+    # Skip placements that land mostly on already-transparent pixels.
+    if float((region[:, :, 3] > 16).mean()) < 0.15:
+        return False
+
+    art_rgb = region[:, :, :3].astype(np.float32)
+    logo_rgb = logo_arr[:, :, :3].astype(np.float32)
+    dist = np.sqrt(((art_rgb - logo_rgb) ** 2).sum(axis=2))
+    matched = ink & (dist <= 55.0)
+    match_ratio = float(matched.sum()) / float(ink_n)
+    if match_ratio < 0.55:
+        return False
+
+    # Erase only well-matched ink (+ light dilate for AA fringe).
+    erase = matched.copy()
+    try:
+        from scipy import ndimage
+
+        erase = ndimage.binary_dilation(erase, iterations=1)
+    except Exception:
+        pass
+    region[erase, 3] = 0
+    arr[y : y + lh, x : x + lw] = region
+    return True
+
+
+def _drop_floating_logo_islands(img: Image.Image) -> Image.Image:
+    """
+    Drop logo leftovers and speckles (the stray white dots beside stickers).
+
+    Keeps the largest component and nearby sizable props (ball/grass/hand).
+    Always removes tiny disconnected blobs — even inside the hero pad box.
+    """
+    rgba = _to_rgba(img)
+    if not NUMPY_AVAILABLE:
+        return rgba
+    try:
+        from scipy import ndimage
+    except Exception:
+        return rgba
+
+    arr = np.array(rgba)
+    solid = arr[:, :, 3] >= 128
+    if not bool(solid.any()):
+        return rgba
+
+    labeled, num = ndimage.label(solid)
+    if num <= 1:
+        return rgba
+
+    sizes = ndimage.sum(solid, labeled, index=list(range(1, num + 1)))
+    sizes_arr = np.asarray(sizes, dtype=np.float64)
+    largest_i = int(np.argmax(sizes_arr)) + 1
+    largest_n = float(sizes_arr[largest_i - 1])
+    keep = {largest_i}
+    # Specks / registration dots — drop anything this small anywhere.
+    speck_max = max(80.0, largest_n * 0.008)
+
+    ys, xs = np.where(labeled == largest_i)
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    pad_x = max(8, int((x1 - x0) * 0.18))
+    pad_y = max(8, int((y1 - y0) * 0.12))
+    x0, y0 = max(0, x0 - pad_x), max(0, y0 - pad_y)
+    x1, y1 = min(arr.shape[1] - 1, x1 + pad_x), min(arr.shape[0] - 1, y1 + pad_y)
+
+    for i, sz in enumerate(sizes_arr, start=1):
+        if i == largest_i:
+            continue
+        area = float(sz)
+        if area <= speck_max:
+            continue  # stray white dots / dust
+        cys, cxs = np.where(labeled == i)
+        cx = float(cxs.mean())
+        cy = float(cys.mean())
+        inside = x0 <= cx <= x1 and y0 <= cy <= y1
+        if inside or area >= largest_n * 0.35:
+            keep.add(i)
+
+    mask = np.isin(labeled, list(keep))
+    dropped = num - len(keep)
+    if dropped <= 0:
+        return rgba
+    arr[~mask, 3] = 0
+    print(f"🧹 Dropped {dropped} floating logo/speck component(s)")
+    return Image.fromarray(arr, "RGBA")
+
+
+def remove_mosida_signature(img: Image.Image) -> Image.Image:
+    """Erase baked-in MOSIDA MIAMI marks via strict multi-scale template match."""
+    rgba = _to_rgba(img).copy()
+    templates = _load_mosida_logo_templates()
+    if not templates or not NUMPY_AVAILABLE:
+        return rgba
+
+    arr = np.array(rgba)
+    h, w = arr.shape[:2]
+    erased_any = False
+    # Modest scale sweep — avoid giant boxes that cover the face.
+    scales = (0.85, 1.0, 1.20)
+
+    for logo in templates:
+        aspect = logo.size[0] / max(1, logo.size[1])
+        for position in _MOSIDA_LOGO_POSITIONS:
+            for scale in scales:
+                x, y, lw, lh = _mosida_logo_geometry(
+                    w, h, aspect, position, scale=scale
+                )
+                if _erase_logo_region(arr, logo, x, y, lw, lh):
+                    erased_any = True
+
+    if erased_any:
+        print("🧹 Removed MOSIDA signature for die-cut sticker")
+        return Image.fromarray(arr, "RGBA")
+    return rgba
+
+
+def build_diecut_sticker(
+    artwork: Image.Image,
+    stroke_frac: float = 0.045,
+    *,
+    strip_logo: bool = False,
+) -> Image.Image:
+    """Knock out studio plate and add a thick smooth white die-cut rim."""
+    art = _to_rgba(artwork)
+    if strip_logo:
+        art = remove_mosida_signature(art)
+
+    # Work at a healthy size for smooth contours, then stroke.
+    if max(art.size) > 900:
+        art = art.copy()
+        art.thumbnail((900, 900), Image.Resampling.LANCZOS)
+
+    # If art is already a cutout, keep its alpha — don't re-key and chew edges.
+    if _has_transparent_backdrop(art, min_frac=0.08):
+        keyed = art
+    else:
+        # No soft fringe — fringe fade was carving jagged holes in hair/jersey.
+        keyed = knockout_corner_backdrop(art, soft_fringe=False)
+        if not _has_transparent_backdrop(keyed, min_frac=0.02):
+            paper = knockout_paper(art)
+            keyed = paper if _has_transparent_backdrop(paper, min_frac=0.02) else art
+    art = keyed
+
+    if strip_logo:
+        # Logos that survive keying become separate islands — drop those only.
+        art = remove_mosida_signature(art)
+        art = _drop_floating_logo_islands(art)
+
+    bbox = art.getbbox()
+    if bbox:
+        # Small pad so soft fringe / hair isn't cropped flush before stroke.
+        pad = 4
+        x0 = max(0, bbox[0] - pad)
+        y0 = max(0, bbox[1] - pad)
+        x1 = min(art.size[0], bbox[2] + pad)
+        y1 = min(art.size[1], bbox[3] + pad)
+        art = art.crop((x0, y0, x1, y1))
+
+    stroke = max(14, min(32, int(round(min(art.size) * max(stroke_frac, 0.055)))))
+    sticker = _white_stroke(art, stroke)
+    # Stroke turns leftover dust into visible white dots — scrub again.
+    return _drop_floating_logo_islands(sticker)
+
+
+def _studio_pad_sticker(sticker: Image.Image, pad_frac: float = 0.10) -> Image.Image:
+    """Place a die-cut sticker on a white studio card with soft margin."""
+    pad = max(48, int(min(sticker.size) * pad_frac))
+    canvas = Image.new(
+        "RGBA",
+        (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2),
+        (255, 255, 255, 255),
+    )
+    canvas.paste(sticker, (pad, pad), sticker)
+    return flatten_on_white(canvas)
 
 
 def _rect_sticker_card(
@@ -682,27 +1045,30 @@ def make_sticker_single(
     artwork: Image.Image,
     diecut: Optional[Image.Image] = None,
     orientation: Optional[str] = None,
+    *,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """
-    Single sticker product: full rectangular artwork with a thin dark edge,
-    soft drop shadow — matches store listing style.
-    """
-    del diecut  # Don't use silhouette die-cut; keep the full rectangular scene.
-    sticker = _rect_sticker_card(
-        _sticker_art_for_orientation(artwork, orientation),
-        max_side=900,
-    )
-    sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
+    Single sticker product.
 
-    # Studio-style white margin around the product.
-    pad = max(48, min(sticker.size) // 10)
-    canvas = Image.new(
-        "RGBA",
-        (sticker.size[0] + pad * 2, sticker.size[1] + pad * 2),
-        (255, 255, 255, 255),
-    )
-    canvas.paste(sticker, (pad, pad), sticker)
-    return flatten_on_white(canvas)
+    Default: full rectangular artwork with a thin dark edge + drop shadow.
+    Transparent mode: strip MOSIDA logo, die-cut white contour around the
+    subject silhouette (1 sticker only — not sticker sheet).
+    """
+    art = _sticker_art_for_orientation(artwork, orientation)
+    if is_transparent:
+        sticker = diecut if diecut is not None else build_diecut_sticker(
+            art,
+            stroke_frac=0.055,
+            strip_logo=True,
+        )
+        sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
+        return _studio_pad_sticker(sticker)
+
+    del diecut  # Rectangular listing keeps the full scene + logo.
+    sticker = _rect_sticker_card(art, max_side=900)
+    sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
+    return _studio_pad_sticker(sticker)
 
 
 def make_sticker_fan(
@@ -710,16 +1076,43 @@ def make_sticker_fan(
     count: int = 5,
     diecut: Optional[Image.Image] = None,
     orientation: Optional[str] = None,
+    *,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """
-    Pack mockup: identical rectangular stickers stacked diagonally
-    (back-left → front-right) with drop shadows — store listing style.
+    Pack mockup of identical stickers.
+
+    Default: rectangular cards stacked diagonally (store listing).
+    Transparent mode (3 stickers): die-cut white contour, no MOSIDA logo,
+    slight horizontal overlap — not used for sticker sheet.
     """
+    art = _sticker_art_for_orientation(artwork, orientation)
+    if is_transparent:
+        card = diecut if diecut is not None else build_diecut_sticker(
+            art,
+            stroke_frac=0.055,
+            strip_logo=True,
+        )
+        if max(card.size) > 520:
+            card = card.copy()
+            card.thumbnail((520, 520), Image.Resampling.LANCZOS)
+        card = _sticker_shadow(card, blur=10, offset=(4, 6))
+        sw, sh = card.size
+        # Side-by-side fan with overlap (matches die-cut pack reference).
+        step_x = max(36, int(sw * 0.55))
+        step_y = max(8, int(sh * 0.04))
+        margin = 56
+        w = sw + step_x * (count - 1) + margin * 2
+        h = sh + step_y * (count - 1) + margin * 2
+        canvas = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+        for i in range(count):
+            x = margin + i * step_x
+            y = margin + i * step_y
+            canvas.alpha_composite(card, dest=(x, y))
+        return flatten_on_white(canvas)
+
     del diecut
-    card = _rect_sticker_card(
-        _sticker_art_for_orientation(artwork, orientation),
-        max_side=520,
-    )
+    card = _rect_sticker_card(art, max_side=520)
     card = _sticker_shadow(card, blur=10, offset=(4, 6))
     sw, sh = card.size
     # Diagonal stack offset (matches the fanned pack reference).
@@ -1152,21 +1545,133 @@ def _sheet_art_is_portrait(art: Image.Image) -> bool:
     return (aw / float(ah)) <= 1.15
 
 
+def _fit_diecut_tile(sticker: Image.Image, max_h: int) -> Image.Image:
+    """Scale a die-cut sticker to a target height (keep aspect)."""
+    tile = _to_rgba(sticker)
+    if tile.size[1] <= 0:
+        return tile
+    if tile.size[1] != max_h:
+        scale = max_h / float(tile.size[1])
+        nw = max(1, int(round(tile.size[0] * scale)))
+        tile = tile.resize((nw, max_h), Image.Resampling.LANCZOS)
+    return tile
+
+
+def _diecut_row_from_width(
+    sticker: Image.Image,
+    count: int,
+    usable_w: int,
+    *,
+    gap_frac: float = 0.05,
+) -> Tuple[Image.Image, int]:
+    """
+    Size a die-cut so `count` copies span nearly the full usable width.
+    Returns (tile, gap_px).
+    """
+    tile = _to_rgba(sticker)
+    count = max(1, count)
+    usable_w = max(1, usable_w)
+    # count*tw + (count-1)*gap = usable_w, gap = gap_frac*tw
+    denom = count + gap_frac * max(0, count - 1)
+    tw = max(1.0, usable_w / denom)
+    scale = tw / float(max(1, tile.size[0]))
+    nw = max(1, int(round(tile.size[0] * scale)))
+    nh = max(1, int(round(tile.size[1] * scale)))
+    out = tile.resize((nw, nh), Image.Resampling.LANCZOS)
+    gap = max(4, int(round(nw * gap_frac)))
+    return out, gap
+
+
+def _paste_diecut_row(
+    sheet: Image.Image,
+    tile: Image.Image,
+    count: int,
+    y: int,
+    sheet_w: int,
+    *,
+    side_pad: int,
+    gap: Optional[int] = None,
+) -> None:
+    """Center a horizontal row of identical die-cut stickers."""
+    tw, th = tile.size
+    if gap is None:
+        gap = max(8, int(tw * 0.05))
+    total_w = count * tw + max(0, count - 1) * gap
+    usable = max(1, sheet_w - side_pad * 2)
+    if total_w > usable and count > 1:
+        gap = max(4, (usable - count * tw) // max(1, count - 1))
+        total_w = count * tw + max(0, count - 1) * gap
+    x = max(side_pad, (sheet_w - total_w) // 2)
+    for i in range(count):
+        sheet.alpha_composite(tile, dest=(x + i * (tw + gap), y))
+
+
+def _make_sticker_sheet_diecut(artwork: Image.Image) -> Image.Image:
+    """
+    Transparent-mode sticker sheet (no MOSIDA brand marks):
+    plain white page with 4 large + 5 medium + 8 small die-cut stickers,
+    sized to fill the sheet (minimal empty margin).
+    """
+    diecut = build_diecut_sticker(
+        artwork,
+        stroke_frac=0.055,
+        strip_logo=True,
+    )
+
+    sheet_w = 1400
+    side_pad = int(sheet_w * 0.028)
+    usable_w = sheet_w - side_pad * 2
+
+    # Size each row to span nearly full width so stickers read large.
+    large, gap_l = _diecut_row_from_width(diecut, 4, usable_w, gap_frac=0.045)
+    medium, gap_m = _diecut_row_from_width(diecut, 5, usable_w, gap_frac=0.045)
+    small, gap_s = _diecut_row_from_width(diecut, 8, usable_w, gap_frac=0.040)
+
+    row_gap = max(16, int(large.size[1] * 0.06))
+    top_pad = max(28, int(large.size[1] * 0.08))
+    bot_pad = top_pad
+    content_h = large.size[1] + medium.size[1] + small.size[1] + row_gap * 2
+    sheet_h = content_h + top_pad + bot_pad
+
+    sheet = Image.new("RGBA", (sheet_w, sheet_h), (255, 255, 255, 255))
+    y = top_pad
+    _paste_diecut_row(
+        sheet, large, 4, y, sheet_w, side_pad=side_pad, gap=gap_l
+    )
+    y += large.size[1] + row_gap
+    _paste_diecut_row(
+        sheet, medium, 5, y, sheet_w, side_pad=side_pad, gap=gap_m
+    )
+    y += medium.size[1] + row_gap
+    _paste_diecut_row(
+        sheet, small, 8, y, sheet_w, side_pad=side_pad, gap=gap_s
+    )
+
+    print(
+        f"🧾 Sticker sheet layout=diecut pack (4+5+8 full-bleed) "
+        f"{sheet_w}x{sheet_h}"
+    )
+    return flatten_on_white(sheet)
+
+
 def make_sticker_sheet(
     artwork: Image.Image,
     diecut: Optional[Image.Image] = None,
     orientation: Optional[str] = None,
+    *,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """
-    MOSIDA sticker sheet with orientation-specific layouts:
+    Sticker sheet layouts:
+    - transparent → die-cut pack (4/5/8), no MOSIDA logos
     - landscape art → 2×3 + full-width 3×2 bottom + right logos
     - portrait / square art → top brand row + 2×2 + 3×1 bottom + right column
-
-    Uses the orientation tag when present; otherwise artwork aspect.
-    Does not trim white margins from the upload.
     """
     del diecut
     art = _to_rgba(artwork)
+    if is_transparent:
+        return _make_sticker_sheet_diecut(art)
+
     orient = _normalize_orientation(orientation)
     use_portrait = (
         orient == "portrait"

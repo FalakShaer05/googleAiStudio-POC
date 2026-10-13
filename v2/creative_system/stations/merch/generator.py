@@ -71,21 +71,30 @@ def _composite_one(
     mode = product["mode"]
     template = _load_template(product.get("template"))
 
+    # Die-cut + logo strip for 1 sticker / 3 stickers / sticker sheet when transparent.
+    sticker_diecut = bool(is_transparent) and product.get("id") in {
+        "sticker",
+        "stickers-3",
+    }
+
     if mode == "sticker_single":
         out = make_sticker_single(
             artwork,
             orientation=product.get("orientation"),
+            is_transparent=sticker_diecut,
         )
     elif mode == "sticker_fan":
         out = make_sticker_fan(
             artwork,
             count=int(product.get("sticker_count") or 5),
             orientation=product.get("orientation"),
+            is_transparent=sticker_diecut,
         )
     elif mode == "sticker_sheet":
         out = make_sticker_sheet(
             artwork,
             orientation=product.get("orientation"),
+            is_transparent=bool(is_transparent),
         )
     elif mode == "photo_print":
         out = make_photo_print(
@@ -206,12 +215,14 @@ def generate_all(
     """
     Place one artwork onto every selected product blank (local PIL, no Gemini).
 
-    color_choices selects apparel colors, e.g. {"tshirt": ["black","white"]}.
+    color_choices selects product colors, e.g.
+    {"tshirt": ["black","#BE1C24"], "cap": ["#2244AA"]}.
     Orientation follows the upload canvas (landscape if wider than tall) so
     trimming white margins cannot flip the run to portrait. orientation_choices
     is ignored (kept for API compatibility).
-    is_transparent: when True, apparel/cap/tote keep or key out the art backdrop
-    so the garment shows through; when False (default), keep the background plate.
+    is_transparent: when True, apparel/cap/tote key out the art backdrop;
+    1 sticker / 3 stickers become die-cut (no MOSIDA, smooth white contour);
+    sticker sheet becomes a 4+5+8 die-cut pack with no brand logos.
 
     Returns (success, message, items).
     """
@@ -276,10 +287,12 @@ def generate_all(
     color_order = {"white": 0, "red": 1, "green": 2, "black": 3, "gray": 4}
     orientation_order = {"portrait": 0, "landscape": 1}
 
-    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, int]:
+    def _sort_key(item: Dict[str, Any]) -> Tuple[int, int, str, int]:
+        color = item.get("color") or ""
         return (
             order.get(item["id"], 999),
-            color_order.get(item.get("color") or "", 9),
+            color_order.get(color, 50),
+            str(color),
             orientation_order.get(item.get("orientation") or "", 9),
         )
 

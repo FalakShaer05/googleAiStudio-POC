@@ -186,21 +186,42 @@
       border-radius: 50%;
       border: 1px solid rgba(0, 0, 0, 0.2);
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+      flex-shrink: 0;
     }
-    .merch-color-swatch--black .merch-color-dot {
-      background: #1a1a1a;
-    }
-    .merch-color-swatch--white .merch-color-dot {
+    .merch-color-custom {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      width: 28px;
+      height: 28px;
+      border: 1px dashed #c5c5c5;
+      border-radius: 999px;
       background: #fff;
+      cursor: pointer;
+      user-select: none;
     }
-    .merch-color-swatch--red .merch-color-dot {
-      background: #be1c24;
+    .merch-color-custom:hover {
+      border-color: #667eea;
+      color: #667eea;
     }
-    .merch-color-swatch--green .merch-color-dot {
-      background: #22783a;
+    .merch-color-picker {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+      border: 0;
+      padding: 0;
     }
-    .merch-color-swatch--gray .merch-color-dot {
-      background: #808084;
+    .merch-color-custom-btn {
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1;
+      color: #667eea;
+      pointer-events: none;
     }
     .merch-toolbar {
       display: flex;
