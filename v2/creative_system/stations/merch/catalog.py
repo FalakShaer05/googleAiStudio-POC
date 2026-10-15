@@ -232,8 +232,10 @@ MERCH_PRODUCTS: List[Dict[str, Any]] = [
         "template": "tote.png",
         "suggested_colors": list(_DEFAULT_SUGGESTED),
         "default_colors": list(_DEFAULT_SUGGESTED),
-        # Larger centered panel with a bit of margin.
+        # Transparent / keyed — large centered panel.
         "print_box": (0.14, 0.18, 0.86, 0.82),
+        # Opaque — inset so the white print plate reads on cream canvas.
+        "opaque_print_box": (0.20, 0.24, 0.80, 0.76),
         "fit": "cover",
         "match_art_aspect": True,
         "knockout": False,

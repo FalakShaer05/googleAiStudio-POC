@@ -42,7 +42,11 @@ from utils.character_utils import (
     get_canvas_size_pixels,
     extract_persons_from_group_image,
 )
-from utils.bg_remover import remove_background, warmup_rembg_sessions
+from utils.bg_remover import (
+    remove_background,
+    warmup_rembg_sessions,
+    _has_real_transparency,
+)
 from utils.person_detector import warmup_person_detector
 from utils.s3_utils import upload_image_to_s3, create_zip_archive, upload_zip_to_s3
 from utils.auth import require_api_key
@@ -300,11 +304,15 @@ def process_single_character(item_data, index):
                 }
             selfie_filename = os.path.basename(selfie_path)
 
-        # Generate output filename
+        # Generate output filenames (logo + no-logo)
         output_filename = generate_unique_filename(f"character_{selfie_filename}.png", "output")
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+        nologo_filename = generate_unique_filename(
+            f"character_nologo_{selfie_filename}.png", "output"
+        )
+        nologo_path = os.path.join(OUTPUT_FOLDER, nologo_filename)
 
-        # Generate character (no background)
+        # Generate character (no background); also writes a no-logo copy
         success, message = generate_character_with_identity(
             selfie_path=selfie_path,
             character_prompt=character_prompt,
@@ -317,6 +325,7 @@ def process_single_character(item_data, index):
             dpi=dpi,
             station=station,
             logo_position=logo_position,
+            nologo_output_path=nologo_path,
         )
 
         if not success:
@@ -328,9 +337,12 @@ def process_single_character(item_data, index):
                 "error": f"Character generation failed: {message}"
             }
 
-        # Upload to S3
+        # Upload both variants to S3
         cloudfront_url = upload_image_to_s3(output_path)
-        
+        nologo_cloudfront_url = (
+            upload_image_to_s3(nologo_path) if os.path.exists(nologo_path) else None
+        )
+
         # Cleanup downloaded/uploaded inputs only (keep extracted server files)
         if cleanup_selfie:
             cleanup_file(selfie_path)
@@ -351,6 +363,8 @@ def process_single_character(item_data, index):
 
         if cloudfront_url:
             result["image_url"] = cloudfront_url
+        if nologo_cloudfront_url:
+            result["image_url_nologo"] = nologo_cloudfront_url
 
         return result
 
@@ -1516,11 +1530,67 @@ def generate_characters_batch_web():
         return jsonify({"error": f"Error: {str(e)}"}), 500
 
 
+def _ensure_transparent_composite(composite, temp_dir: str):
+    """
+    Return an RGBA cutout. Gemini / RGB composites have no alpha — key white
+    studio plate first, then fall back to rembg if needed.
+    """
+    from PIL import Image as _Image
+    from utils.bg_remover import _bg_removed_output_path
+
+    rgba = composite.convert("RGBA")
+    if _has_real_transparency(rgba):
+        return rgba
+
+    try:
+        from creative_system.stations.merch.compositor import (
+            knockout_corner_backdrop,
+            knockout_paper,
+        )
+
+        keyed = knockout_corner_backdrop(rgba, soft_fringe=False)
+        if _has_real_transparency(keyed):
+            print("✅ Transparent composite via corner backdrop key")
+            return keyed
+        paper = knockout_paper(rgba)
+        if _has_real_transparency(paper):
+            print("✅ Transparent composite via paper key")
+            return paper
+    except Exception as exc:
+        print(f"⚠️ Fast backdrop key failed: {exc}")
+
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_in = os.path.join(temp_dir, generate_unique_filename("composite_opaque.png", "tmp"))
+    result_path = None
+    try:
+        rgba.convert("RGB").save(temp_in, "PNG")
+        result_path, method, err = remove_background(temp_in)
+        if result_path and os.path.isfile(result_path):
+            cut = _Image.open(result_path).convert("RGBA")
+            if _has_real_transparency(cut):
+                print(f"✅ Transparent composite via {method}")
+                return cut
+            print(f"⚠️ BG removal ({method}) produced no alpha: {err}")
+        else:
+            print(f"⚠️ BG removal failed: {err}")
+    finally:
+        for path in {temp_in, result_path, _bg_removed_output_path(temp_in)}:
+            try:
+                if path and os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                pass
+
+    print("⚠️ Could not produce transparency — returning original as RGBA")
+    return rgba
+
+
 @app.route("/composite-characters-on-background", methods=["POST"])
 def composite_characters_on_background():
     """
     Composite multiple generated characters onto a background using PIL or Gemini.
     Background is optional: when omitted, characters are placed on a plain white canvas.
+    When is_transparent=true (and no background), returns a true RGBA PNG cutout.
     """
     try:
         from PIL import Image, ImageDraw
@@ -1550,11 +1620,16 @@ def composite_characters_on_background():
         is_transparent = request.form.get("is_transparent", "false").strip().lower() in (
             "1", "true", "yes", "on"
         )
+        use_gemini_compositing = request.form.get("use_gemini_compositing", "false").lower() == "true"
+        # Gemini cannot emit real alpha. For transparent cutouts without a scene
+        # background, PIL-preserve character alpha (already cut out upstream).
+        if is_transparent and not has_background:
+            use_gemini_compositing = False
 
         if scale < 0.1 or scale > 3.0:
             return jsonify({"error": "Scale must be between 0.1 and 3.0"}), 400
         
-        # Load background image (in-memory; S3/URL preferred), or a white canvas if omitted
+        # Load background image (in-memory; S3/URL preferred), or a blank canvas if omitted
         if background_url:
             try:
                 resp = requests.get(background_url, timeout=30)
@@ -1575,7 +1650,10 @@ def composite_characters_on_background():
             canvas_pixels = get_canvas_size_pixels(canvas_size, dpi) if canvas_size else None
             if not canvas_pixels:
                 canvas_pixels = get_canvas_size_pixels("8x10", dpi) or (2400, 3000)
-            background_image = Image.new("RGB", canvas_pixels, (255, 255, 255))
+            if is_transparent:
+                background_image = Image.new("RGBA", canvas_pixels, (0, 0, 0, 0))
+            else:
+                background_image = Image.new("RGB", canvas_pixels, (255, 255, 255))
         
         bg_w, bg_h = background_image.size
 
@@ -1648,10 +1726,7 @@ def composite_characters_on_background():
             resized_char = char_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             resized_characters.append(resized_char)
 
-        # Use Gemini for artistic backgrounds to better integrate characters
-        # This provides better blending and integration with watercolor/artistic backgrounds
-        use_gemini_compositing = request.form.get("use_gemini_compositing", "false").lower() == "true"
-        
+        # use_gemini_compositing already resolved above (forced off for transparent cutouts)
         if use_gemini_compositing:
             # Use Gemini for better artistic integration
             from utils.character_utils import (
@@ -1734,29 +1809,29 @@ Each character must appear exactly as they do in their original image, with no e
             if composite is None:
                 return jsonify({"error": "No composited image generated by Gemini"}), 500
         else:
-            # Use PIL for simple compositing (preserves background exactly)
-            # Calculate positions for characters
+            # Use PIL for simple compositing (preserves background / character alpha)
             total_char_width = sum(char.size[0] for char in resized_characters)
             spacing = (bg_w - total_char_width) / (num_characters + 1) if num_characters > 1 else (bg_w - total_char_width) / 2
             
-            # Create final composite
-            composite = background_image.copy()
+            composite = background_image.convert("RGBA").copy()
             
-            # Calculate Y position based on position parameter
             if position == "bottom":
                 y_pos = bg_h - target_char_height - int(bg_h * 0.05)  # 5% from bottom
             else:  # center
                 y_pos = (bg_h - target_char_height) // 2
             
-            # Place characters
             x_offset = spacing if num_characters > 1 else (bg_w - total_char_width) / 2
             for char_img in resized_characters:
                 char_w, char_h = char_img.size
-                # Create a temporary image to composite with alpha
                 temp_bg = Image.new("RGBA", composite.size, (0, 0, 0, 0))
                 temp_bg.paste(char_img, (int(x_offset), y_pos), char_img)
-                composite = Image.alpha_composite(composite.convert("RGBA"), temp_bg).convert("RGB")
+                composite = Image.alpha_composite(composite, temp_bg)
                 x_offset += char_w + spacing
+            if not is_transparent:
+                # Flatten onto white for opaque print outputs
+                flat = Image.new("RGB", composite.size, (255, 255, 255))
+                flat.paste(composite, mask=composite.split()[3])
+                composite = flat
 
         # Skip logo/signature when is_transparent=true (e.g. die-cut / cutout use)
         if not is_transparent:
@@ -1770,9 +1845,16 @@ Each character must appear exactly as they do in their original image, with no e
         # Generate output filename
         output_filename = generate_unique_filename(f"composited_batch_{num_characters}chars.png", "output")
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
-        
-        # Save the composited result
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        os.makedirs(os.path.dirname(output_path) or OUTPUT_FOLDER, exist_ok=True)
+
+        if is_transparent and not has_background:
+            composite = _ensure_transparent_composite(composite, OUTPUT_FOLDER)
+            # Tight crop to visible subject so the cutout matches character previews
+            bbox = composite.getbbox()
+            if bbox:
+                composite = composite.crop(bbox)
+
+        # Save the composited result (RGBA PNG when transparent)
         composite.save(output_path, "PNG", dpi=(dpi, dpi))
         
         # Upload to S3
@@ -1780,13 +1862,16 @@ Each character must appear exactly as they do in their original image, with no e
         
         info = get_image_info(output_path)
         
+        if has_background:
+            msg = f"Successfully composited {num_characters} character(s) onto background"
+        elif is_transparent:
+            msg = f"Successfully composited {num_characters} character(s) onto a transparent canvas"
+        else:
+            msg = f"Successfully composited {num_characters} character(s) onto a white canvas"
+
         response_data = {
             "success": True,
-            "message": (
-                f"Successfully composited {num_characters} character(s) onto background"
-                if has_background
-                else f"Successfully composited {num_characters} character(s) onto a white canvas"
-            ),
+            "message": msg,
             "output_filename": output_filename,
             "local_path": f"/outputs/{output_filename}",
             "metadata": {
