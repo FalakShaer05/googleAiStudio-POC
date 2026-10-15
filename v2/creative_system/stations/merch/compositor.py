@@ -1763,22 +1763,88 @@ def _diecut_cell_tile(
     return canvas
 
 
+GridFit = Tuple[int, int, int, int]  # cols, rows, cell_w, cell_h
+
+
+def _best_grid(
+    area_w: int,
+    area_h: int,
+    aspect: float,
+    gap: int,
+    cols_range: Sequence[int],
+    rows_range: Sequence[int],
+    *,
+    min_cell_h: int = 1,
+    max_cell_h: Optional[int] = None,
+    count_penalty: float = 0.004,
+) -> Optional[GridFit]:
+    """
+    Pick the cols×rows grid of aspect-locked cells that best fills the area.
+
+    Scores by area coverage minus a small per-sticker penalty so the sheet
+    fills up without collapsing into a swarm of tiny stickers.
+    """
+    aspect = max(0.05, aspect)
+    area = float(max(1, area_w) * max(1, area_h))
+    best: Optional[GridFit] = None
+    best_score = float("-inf")
+    for cols in cols_range:
+        for rows in rows_range:
+            cw = (area_w - gap * (cols - 1)) / float(cols)
+            ch = (area_h - gap * (rows - 1)) / float(rows)
+            if cw <= 0 or ch <= 0:
+                continue
+            if cw / ch > aspect:
+                cw = ch * aspect
+            else:
+                ch = cw / aspect
+            if max_cell_h is not None and ch > max_cell_h:
+                ch = float(max_cell_h)
+                cw = ch * aspect
+            if ch < min_cell_h:
+                continue
+            score = cols * rows * cw * ch / area - count_penalty * cols * rows
+            if score > best_score:
+                best_score = score
+                best = (cols, rows, max(1, int(cw)), max(1, int(ch)))
+    return best
+
+
+def _paste_grid_spread(
+    sheet: Image.Image,
+    tile: Image.Image,
+    box: Tuple[int, int, int, int],
+    cols: int,
+    rows: int,
+) -> None:
+    """Paste cols×rows tiles with leftover space spread evenly around them."""
+    x0, y0, x1, y1 = box
+    tw, th = tile.size
+    slack_x = max(0, (x1 - x0) - cols * tw)
+    slack_y = max(0, (y1 - y0) - rows * th)
+    for row in range(rows):
+        y = y0 + int(round(slack_y * (row + 0.5) / rows)) + row * th
+        for col in range(cols):
+            x = x0 + int(round(slack_x * (col + 0.5) / cols)) + col * tw
+            sheet.alpha_composite(tile, dest=(x, y))
+
+
 def _make_sticker_sheet_diecut_landscape(diecut: Image.Image) -> Image.Image:
     """
-    Transparent-mode landscape sheet matching the store reference:
-    paint-splatter page, 2×3 die-cuts beside brand logos, full-width 3×2
-    bottom band — every hero sticker free-transformed to one uniform size
-    per band so the grid reads perfectly aligned.
+    Transparent-mode landscape sheet: paint-splatter page, die-cut grid
+    beside the brand column, full-width larger band below.
+
+    Grid sizes adapt to the die-cut aspect so both areas are filled — extra
+    stickers are added instead of leaving empty gaps.
     """
     sheet, sheet_w, sheet_h = _sheet_canvas()
     aw, ah = max(1, diecut.size[0]), max(1, diecut.size[1])
-    art_aspect = max(0.5, aw / float(ah))
+    art_aspect = aw / float(ah)
 
     pad_x = int(sheet_w * 0.028)
     pad_y = int(sheet_h * 0.020)
     pad_bot = int(sheet_h * 0.022)
-    gap_x = max(12, int(sheet_w * 0.014))
-    gap_y = max(10, int(sheet_h * 0.010))
+    gap = max(10, int(sheet_w * 0.010))
     section_gap = max(14, int(sheet_h * 0.014))
     side_gap = max(10, int(sheet_w * 0.012))
     side_w = int(sheet_w * 0.20)
@@ -1788,28 +1854,48 @@ def _make_sticker_sheet_diecut_landscape(diecut: Image.Image) -> Image.Image:
     full_w = max(1, sheet_w - pad_x * 2)
     usable_h = sheet_h - pad_y - pad_bot
 
-    # Bottom 3×2 first — largest uniform cells that keep aspect.
-    bot_cw = max(1, (full_w - gap_x * 2) // 3)
-    bot_ch = max(1, int(round(bot_cw / art_aspect)))
-    bot_grid_w = 3 * bot_cw + gap_x * 2
-    bot_grid_h = 2 * bot_ch + gap_y
-
-    top_budget = max(1, usable_h - bot_grid_h - section_gap)
-    top_cw, top_ch = _cell_for_aspect(
-        max(1, (main_w - gap_x) // 2),
-        max(1, (top_budget - gap_y * 2) // 3),
+    bot = _best_grid(
+        full_w,
+        int(usable_h * 0.52),
         art_aspect,
+        gap,
+        range(3, 6),
+        range(1, 4),
+        min_cell_h=int(sheet_h * 0.15),
+    ) or _best_grid(full_w, int(usable_h * 0.52), art_aspect, gap, (3,), (1,))
+    assert bot is not None
+    bot_cols, bot_rows, bot_cw, bot_ch = bot
+    bot_h = bot_rows * bot_ch + gap * (bot_rows - 1)
+
+    top_h = max(1, usable_h - bot_h - section_gap)
+    top = _best_grid(
+        main_w,
+        top_h,
+        art_aspect,
+        gap,
+        range(2, 7),
+        range(1, 7),
+        min_cell_h=int(sheet_h * 0.09),
+        max_cell_h=bot_ch,
+    ) or _best_grid(main_w, top_h, art_aspect, gap, (1, 2), (1, 2, 3))
+    assert top is not None
+    top_cols, top_rows, top_cw, top_ch = top
+
+    y_bot = pad_y + top_h + section_gap
+    _paste_grid_spread(
+        sheet,
+        _diecut_cell_tile(diecut, top_cw, top_ch),
+        (pad_x, pad_y, pad_x + main_w, pad_y + top_h),
+        top_cols,
+        top_rows,
     )
-    top_grid_h = 3 * top_ch + gap_y * 2
-
-    large = _diecut_cell_tile(diecut, top_cw, top_ch)
-    small = _diecut_cell_tile(diecut, bot_cw, bot_ch)
-
-    y_top = pad_y
-    y_bot = y_top + top_grid_h + section_gap
-    _paste_art_grid_xy(sheet, large, pad_x, y_top, 2, 3, gap_x, gap_y)
-    bot_x = pad_x + max(0, (full_w - bot_grid_w) // 2)
-    _paste_art_grid_xy(sheet, small, bot_x, y_bot, 3, 2, gap_x, gap_y)
+    _paste_grid_spread(
+        sheet,
+        _diecut_cell_tile(diecut, bot_cw, bot_ch),
+        (pad_x, y_bot, pad_x + full_w, y_bot + bot_h),
+        bot_cols,
+        bot_rows,
+    )
     _paste_side_column(
         sheet,
         (side_left, pad_y, sheet_w - pad_x, y_bot - max(4, section_gap // 2)),
@@ -1817,26 +1903,26 @@ def _make_sticker_sheet_diecut_landscape(diecut: Image.Image) -> Image.Image:
         align="start",
     )
     print(
-        f"🧾 diecut landscape top={top_cw}x{top_ch} bot={bot_cw}x{bot_ch} "
-        f"aspect={art_aspect:.3f}"
+        f"🧾 diecut landscape top={top_cols}x{top_rows}@{top_cw}x{top_ch} "
+        f"bot={bot_cols}x{bot_rows}@{bot_cw}x{bot_ch} aspect={art_aspect:.3f}"
     )
     return flatten_on_white(sheet)
 
 
 def _make_sticker_sheet_diecut_portrait(diecut: Image.Image) -> Image.Image:
     """
-    Transparent-mode portrait sheet: brand row, 2×2 die-cuts, side logos,
-    full-width 3×1 bottom — uniform free-transform per band.
+    Transparent-mode portrait sheet: brand row, die-cut grid beside the side
+    logos, full-width bottom band — grids adapt to fill each area.
     """
     sheet, sheet_w, sheet_h = _sheet_canvas()
     aw, ah = max(1, diecut.size[0]), max(1, diecut.size[1])
-    art_aspect = min(aw / float(ah), 0.92)
+    art_aspect = aw / float(ah)
 
     top_brand = (0.03, 0.02, 0.97, 0.13)
     main = (0.04, 0.15, 0.76, 0.72)
     side = (0.78, 0.15, 0.96, 0.72)
     bottom = (0.04, 0.74, 0.96, 0.97)
-    gap = max(12, int(min(sheet_w, sheet_h) * 0.016))
+    gap = max(10, int(min(sheet_w, sheet_h) * 0.012))
 
     def _box(norm: Tuple[float, float, float, float]) -> Tuple[int, int, int, int]:
         x0, y0, x1, y1 = norm
@@ -1849,24 +1935,56 @@ def _make_sticker_sheet_diecut_portrait(diecut: Image.Image) -> Image.Image:
 
     _paste_portrait_top_brand(sheet, _box(top_brand))
 
-    mx0, my0, mx1, my1 = _box(main)
-    bx0, by0, bx1, by1 = _box(bottom)
-    main_w, main_h = max(1, mx1 - mx0), max(1, my1 - my0)
-    bot_w, bot_h = max(1, bx1 - bx0), max(1, by1 - by0)
+    main_box = _box(main)
+    bot_box = _box(bottom)
+    main_w = max(1, main_box[2] - main_box[0])
+    main_h = max(1, main_box[3] - main_box[1])
+    bot_w = max(1, bot_box[2] - bot_box[0])
+    bot_h = max(1, bot_box[3] - bot_box[1])
 
-    top_cw, top_ch = _grid_cell_size(main_w, main_h, 2, 2, gap, art_aspect)
-    bot_cw, bot_ch = _grid_cell_size(bot_w, bot_h, 3, 1, gap, art_aspect)
-    if bot_cw > int(top_cw * 0.92):
-        scale = (top_cw * 0.92) / float(bot_cw)
-        bot_cw = max(1, int(bot_cw * scale))
-        bot_ch = max(1, int(bot_ch * scale))
+    top = _best_grid(
+        main_w,
+        main_h,
+        art_aspect,
+        gap,
+        range(2, 6),
+        range(2, 6),
+        min_cell_h=int(sheet_h * 0.11),
+    ) or _best_grid(main_w, main_h, art_aspect, gap, (2,), (2,))
+    assert top is not None
+    top_cols, top_rows, top_cw, top_ch = top
 
-    large = _diecut_cell_tile(diecut, top_cw, top_ch)
-    small = _diecut_cell_tile(diecut, bot_cw, bot_ch)
-    _paste_art_grid(sheet, large, (mx0, my0), (main_w, main_h), 2, 2, gap)
-    _paste_art_grid(sheet, small, (bx0, by0), (bot_w, bot_h), 3, 1, gap)
+    bot = _best_grid(
+        bot_w,
+        bot_h,
+        art_aspect,
+        gap,
+        range(3, 8),
+        range(1, 3),
+        min_cell_h=int(sheet_h * 0.09),
+    ) or _best_grid(bot_w, bot_h, art_aspect, gap, (3,), (1,))
+    assert bot is not None
+    bot_cols, bot_rows, bot_cw, bot_ch = bot
+
+    _paste_grid_spread(
+        sheet,
+        _diecut_cell_tile(diecut, top_cw, top_ch),
+        main_box,
+        top_cols,
+        top_rows,
+    )
+    _paste_grid_spread(
+        sheet,
+        _diecut_cell_tile(diecut, bot_cw, bot_ch),
+        bot_box,
+        bot_cols,
+        bot_rows,
+    )
     _paste_side_column(sheet, _box(side), mosida_frac=0.40, align="center")
-    print(f"🧾 diecut portrait top={top_cw}x{top_ch} bot={bot_cw}x{bot_ch}")
+    print(
+        f"🧾 diecut portrait top={top_cols}x{top_rows}@{top_cw}x{top_ch} "
+        f"bot={bot_cols}x{bot_rows}@{bot_cw}x{bot_ch}"
+    )
     return flatten_on_white(sheet)
 
 

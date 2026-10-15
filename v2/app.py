@@ -466,18 +466,25 @@ def generate_character_web():
                 cleanup_file(selfie_path)
                 return jsonify({"error": "Failed to download background from URL"}), 400
 
-        # Decide output filename
+        # Decide output filenames (logo + no-logo)
         if background_path:
             output_filename = generate_unique_filename(f"composited_{selfie_filename}.png", "output")
+            nologo_filename = generate_unique_filename(
+                f"composited_nologo_{selfie_filename}.png", "output"
+            )
         else:
             output_filename = generate_unique_filename(f"character_{selfie_filename}.png", "output")
+            nologo_filename = generate_unique_filename(
+                f"character_nologo_{selfie_filename}.png", "output"
+            )
         output_path = os.path.join(OUTPUT_FOLDER, output_filename)
+        nologo_path = os.path.join(OUTPUT_FOLDER, nologo_filename)
 
         print("🎨 Character Generator Flow")
         print(f"  Background provided: {bool(background_path)}")
         print(f"  Position: {position}, scale: {scale}, canvas_size: {canvas_size}, dpi: {dpi}, image_size: {image_size or '1K'}")
 
-        # Call appropriate helper
+        # Call appropriate helper (also writes a no-logo copy)
         if background_path:
             success, message = generate_character_composited_with_background(
                 selfie_path=selfie_path,
@@ -492,6 +499,7 @@ def generate_character_web():
                 station=station,
                 temperature=temperature,
                 image_size=image_size,
+                nologo_output_path=nologo_path,
             )
         else:
             success, message = generate_character_with_identity(
@@ -508,6 +516,7 @@ def generate_character_web():
                 temperature=temperature,
                 logo_position=logo_position,
                 image_size=image_size,
+                nologo_output_path=nologo_path,
             )
 
         if not success:
@@ -515,9 +524,12 @@ def generate_character_web():
             cleanup_file(background_path)
             return jsonify({"error": f"Character generation failed: {message}"}), 500
 
-        # Upload output image to S3 and get CloudFront URL
+        # Upload both variants to S3 and get CloudFront URLs
         print(f"📤 Attempting to upload to S3: {output_path}")
         cloudfront_url = upload_image_to_s3(output_path)
+        nologo_cloudfront_url = (
+            upload_image_to_s3(nologo_path) if os.path.exists(nologo_path) else None
+        )
 
         # Cleanup inputs
         cleanup_file(selfie_path)
@@ -539,13 +551,15 @@ def generate_character_web():
                 },
             }
         
-        # Add CloudFront URL if upload was successful
+        # Add CloudFront URLs if uploads were successful
         if cloudfront_url:
             response_data["image_url"] = cloudfront_url
             print(f"✅ S3 upload successful: {cloudfront_url}")
         else:
             print(f"⚠️ S3 upload failed or skipped. Check logs above for details.")
             print(f"   Make sure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and S3_BUCKET are set in .env")
+        if nologo_cloudfront_url:
+            response_data["image_url_nologo"] = nologo_cloudfront_url
 
         return jsonify(response_data)
     except Exception as e:
@@ -836,6 +850,10 @@ def generate_reference_style_web():
 
         out_filename = generate_unique_filename(f"reference_style_{src_filename}.png", "output")
         out_path = os.path.join(OUTPUT_FOLDER, out_filename)
+        nologo_filename = generate_unique_filename(
+            f"reference_style_nologo_{src_filename}.png", "output"
+        )
+        nologo_path = os.path.join(OUTPUT_FOLDER, nologo_filename)
 
         success, message = generate_image_in_reference_style(
             reference_path=ref_path,
@@ -846,6 +864,7 @@ def generate_reference_style_web():
             temperature=temperature,
             user_prompt=reference_prompt or None,
             logo_position=logo_position,
+            nologo_output_path=nologo_path,
         )
 
         cleanup_file(src_path)
@@ -857,6 +876,9 @@ def generate_reference_style_web():
             return jsonify({"success": False, "error": message}), 500
 
         cloudfront_url = upload_image_to_s3(out_path)
+        nologo_cloudfront_url = (
+            upload_image_to_s3(nologo_path) if os.path.exists(nologo_path) else None
+        )
         response_data = {
             "success": True,
             "message": "Style applied successfully",
@@ -865,6 +887,8 @@ def generate_reference_style_web():
         }
         if cloudfront_url:
             response_data["image_url"] = cloudfront_url
+        if nologo_cloudfront_url:
+            response_data["image_url_nologo"] = nologo_cloudfront_url
         return jsonify(response_data)
     except Exception as e:
         import traceback
@@ -1715,13 +1739,32 @@ def composite_characters_on_background():
         # Calculate character sizes and positions
         num_characters = len(character_images)
         target_char_height = int(bg_h * scale * 0.75)  # 75% of image height scaled
-        
+
+        # Opaque white plates would cover neighbouring characters when they sit close together.
+        from creative_system.stations.merch.compositor import knockout_corner_backdrop
+
+        cutout_characters = []
+        for char_img in character_images:
+            if not _has_real_transparency(char_img):
+                char_img = knockout_corner_backdrop(char_img, soft_fringe=False)
+            alpha_bbox = char_img.split()[3].getbbox()
+            if alpha_bbox:
+                char_img = char_img.crop(alpha_bbox)
+            cutout_characters.append(char_img)
+
+        # Shrink the shared height when the row would overflow the canvas width.
+        gap_px = int(bg_w * 0.03)
+        available_w = bg_w - gap_px * (num_characters + 1)
+        total_aspect = sum(c.size[0] / c.size[1] for c in cutout_characters)
+        if total_aspect > 0 and target_char_height * total_aspect > available_w:
+            target_char_height = max(1, int(available_w / total_aspect))
+
         # Resize all characters to consistent height
         resized_characters = []
-        for char_img in character_images:
+        for char_img in cutout_characters:
             char_w, char_h = char_img.size
             aspect_ratio = char_w / char_h
-            new_w = int(target_char_height * aspect_ratio)
+            new_w = max(1, int(target_char_height * aspect_ratio))
             new_h = target_char_height
             resized_char = char_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             resized_characters.append(resized_char)
