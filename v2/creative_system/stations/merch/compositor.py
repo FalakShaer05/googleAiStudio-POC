@@ -235,13 +235,20 @@ def knockout_corner_backdrop(
 
 
 def _force_opaque_print(img: Image.Image) -> Image.Image:
-    """Keep RGB (including studio plates) and force every pixel opaque."""
-    rgba = _to_rgba(img)
-    if not NUMPY_AVAILABLE:
-        return _to_rgb(rgba).convert("RGBA")
-    arr = np.array(rgba)
-    arr[:, :, 3] = 255
-    return Image.fromarray(arr, "RGBA")
+    """
+    Flatten onto white so cutout / alpha uploads become a solid print plate.
+
+    Setting alpha=255 alone leaves RGB under holes (often black) and can still
+    read as a transparent cutout on light garments like the tote.
+    """
+    return _to_rgb(_to_rgba(img)).convert("RGBA")
+
+
+def _strip_logo_for_transparent_print(art: Image.Image) -> Image.Image:
+    """Remove baked-in MOSIDA marks (same pass stickers use in die-cut mode)."""
+    out = remove_mosida_signature(art)
+    # After keying, orphan logo islands become separate components — drop those.
+    return _drop_floating_logo_islands(out)
 
 
 def prepare_print_art(
@@ -264,18 +271,31 @@ def prepare_print_art(
         bbox = art.getbbox()
         return art.crop(bbox) if bbox else art
 
-    # Apparel / cap / tote — only strip backdrop when caller opts in.
+    # Apparel / cap / tote — only strip backdrop (+ logo) when caller opts in.
     if is_transparent:
-        if _has_transparent_backdrop(art):
-            return art
-        keyed = knockout_corner_backdrop(art)
-        if _has_transparent_backdrop(keyed):
+        # Key the studio plate FIRST (same strategy as die-cut stickers).
+        # Never strip the logo before keying: erasing corner marks creates a
+        # few transparent pixels that used to short-circuit keying and leave
+        # a white rectangle on the garment.
+        if _has_transparent_backdrop(art, min_frac=0.08):
+            keyed = art
+        else:
+            keyed = knockout_corner_backdrop(art, soft_fringe=False)
+            if not _has_transparent_backdrop(keyed, min_frac=0.02):
+                paper = knockout_paper(art)
+                keyed = (
+                    paper
+                    if _has_transparent_backdrop(paper, min_frac=0.02)
+                    else art
+                )
+        if _has_transparent_backdrop(keyed, min_frac=0.02):
             bbox = keyed.getbbox()
-            return keyed.crop(bbox) if bbox else keyed
-        return keyed
+            keyed = keyed.crop(bbox) if bbox else keyed
+        # Logo pass after keying — orphans become floating islands we can drop.
+        return _strip_logo_for_transparent_print(keyed)
 
-    # Default: keep background plate + white margins as an opaque print.
-    return _force_opaque_print(art)
+    # Opaque apparel / tote: keep the plate, but never the baked-in MOSIDA mark.
+    return strip_mosida_for_opaque_print(art)
 
 
 def _fit(src: Image.Image, size: Tuple[int, int], mode: str) -> Image.Image:
@@ -598,14 +618,18 @@ def make_photo_print(
     artwork: Image.Image,
     template: Image.Image | None = None,
     orientation: Optional[str] = None,
+    *,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """
     Photo print: artwork on a white mat, flat on a light grey studio backdrop.
     No drop shadow or dark outline.
+    Always strips baked-in MOSIDA marks (holes filled white).
     """
     del template  # Build a matted photo print; ignore blank template.
+    del is_transparent  # Photo print is always an opaque plate; still strip logos.
+    art = strip_mosida_for_opaque_print(_to_rgba(artwork))
     # Keep upload margins — only letterbox if forcing the opposite orientation.
-    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
     art = fit_art_to_orientation(art, orientation, mode="contain")
     max_side = 1100
     if max(art.size) > max_side:
@@ -632,13 +656,17 @@ def make_canvas_print(
     artwork: Image.Image,
     template: Image.Image | None = None,
     orientation: Optional[str] = None,
+    *,
+    is_transparent: bool = False,
 ) -> Image.Image:
     """
     Poster: large full-bleed artwork on a light grey studio backdrop.
     No drop shadow, no black border, no white mat.
+    Always strips baked-in MOSIDA marks (holes filled white).
     """
     del template
-    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
+    del is_transparent  # Poster is always an opaque plate; still strip logos.
+    art = strip_mosida_for_opaque_print(_to_rgba(artwork))
     art = fit_art_to_orientation(
         art,
         orientation,
@@ -765,6 +793,8 @@ def _mosida_logo_geometry(
     position: str,
     *,
     scale: float = 1.0,
+    nudge_x: int = 0,
+    nudge_y: int = 0,
 ) -> Tuple[int, int, int, int]:
     """Match character_utils signature placement (20% box + padding), optional scale."""
     sig_width = int(img_w * 0.20 * scale)
@@ -777,9 +807,10 @@ def _mosida_logo_geometry(
         new_h = max(1, sig_height)
         new_w = max(1, int(sig_height * sig_aspect))
 
-    pad_x = max(8, int(img_w * 0.02))
-    pad_y = max(8, int(img_h * 0.02))
-    bottom_inset = max(2, int(img_h * 0.012))
+    # Keep in lockstep with character_utils._signature_overlay_geometry.
+    pad_x = max(12, int(img_w * 0.025))
+    pad_y = max(12, int(img_h * 0.025))
+    bottom_inset = max(2, int(img_h * 0.015))
     vertical, horizontal = position.split("_", 1)
 
     if horizontal == "left":
@@ -795,6 +826,9 @@ def _mosida_logo_geometry(
         y = (img_h - new_h) // 2
     else:
         y = img_h - new_h - bottom_inset
+
+    x = max(0, min(img_w - new_w, x + nudge_x))
+    y = max(0, min(img_h - new_h, y + nudge_y))
     return x, y, new_w, new_h
 
 
@@ -813,46 +847,108 @@ def _load_mosida_logo_templates() -> List[Image.Image]:
     return templates
 
 
-def _erase_logo_region(
+def _score_logo_region(
     arr: "np.ndarray",
     logo: Image.Image,
     x: int,
     y: int,
     lw: int,
     lh: int,
-) -> bool:
+    *,
+    allow_plate_fallback: bool = False,
+) -> Tuple[float, Optional["np.ndarray"], Tuple[int, int, int, int]]:
     """
-    Erase one logo placement only on a strict RGB template match.
+    Score one logo placement. Returns (score, erase_mask_or_None, box).
 
-    Contrast-only heuristics are intentionally avoided — light jersey stripes /
-    skin highlights false-positive as white Mosida and carve holes in the art.
+    RGB template match is preferred. Dark-ink-on-light-plate fallback is only
+    used for corner placements (never top_center) so hair highlights survive.
     """
     h, w = arr.shape[:2]
+    empty = (0.0, None, (x, y, lw, lh))
     if lw < 8 or lh < 8 or x < 0 or y < 0 or x + lw > w or y + lh > h:
-        return False
+        return empty
     logo_r = logo.resize((lw, lh), Image.Resampling.LANCZOS)
     logo_arr = np.asarray(logo_r)
     logo_a = logo_arr[:, :, 3].astype(np.float32) / 255.0
     ink = logo_a >= 0.40
     ink_n = int(ink.sum())
     if ink_n < 40:
-        return False
+        return empty
 
     region = arr[y : y + lh, x : x + lw]
     # Skip placements that land mostly on already-transparent pixels.
     if float((region[:, :, 3] > 16).mean()) < 0.15:
-        return False
+        return empty
 
     art_rgb = region[:, :, :3].astype(np.float32)
     logo_rgb = logo_arr[:, :, :3].astype(np.float32)
-    dist = np.sqrt(((art_rgb - logo_rgb) ** 2).sum(axis=2))
-    matched = ink & (dist <= 55.0)
-    match_ratio = float(matched.sum()) / float(ink_n)
-    if match_ratio < 0.55:
-        return False
+    solid = region[:, :, 3] > 16
+    plate = solid & (~ink)
+    if int(plate.sum()) < 80 or int((solid & ink).sum()) < 40:
+        return empty
 
-    # Erase only well-matched ink (+ light dilate for AA fringe).
-    erase = matched.copy()
+    def _luma(rgb: "np.ndarray") -> "np.ndarray":
+        return (
+            0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+        )
+
+    logo_ink_lum = float(np.median(_luma(logo_rgb[ink])))
+    art_ink_lum = float(np.median(_luma(art_rgb[solid & ink])))
+    plate_med = float(np.median(_luma(art_rgb[plate])))
+    plate_std = float(np.std(_luma(art_rgb[plate])))
+    contrast = abs(art_ink_lum - plate_med)
+
+    # White logo on white plate (or dark logo on dark plate) is not a mark.
+    if contrast < 40.0:
+        return empty
+    if logo_ink_lum >= 170.0 and art_ink_lum < 150.0:
+        return empty  # light template but art ink is dark
+    if logo_ink_lum <= 110.0 and art_ink_lum > 170.0:
+        return empty  # dark template but art ink is light
+    if logo_ink_lum >= 170.0 and plate_med >= 180.0:
+        return empty  # white logo invisible on light studio plate
+    if logo_ink_lum <= 110.0 and plate_med <= 80.0:
+        return empty  # dark logo invisible on dark plate
+
+    dist = np.sqrt(((art_rgb - logo_rgb) ** 2).sum(axis=2))
+    matched = ink & solid & (dist <= 65.0)
+    match_ratio = float(matched.sum()) / float(ink_n)
+    if match_ratio >= 0.50:
+        return (match_ratio + contrast / 255.0 + 1.0, matched, (x, y, lw, lh))
+
+    if not allow_plate_fallback:
+        return empty
+
+    # Dark brush logo on a near-white studio plate (common merch upload).
+    if logo_ink_lum > 140.0:
+        return empty
+    ink_lum = _luma(art_rgb[solid & ink])
+    dark_frac = float((ink_lum < (plate_med - 50.0)).sum()) / float(
+        max(1, ink_lum.size)
+    )
+    if not (
+        plate_med >= 210.0
+        and plate_std <= 22.0
+        and art_ink_lum <= 130.0
+        and (plate_med - art_ink_lum) >= 70.0
+        and dark_frac >= 0.45
+    ):
+        return empty
+    lum = _luma(art_rgb)
+    erase = ink & solid & (lum < (plate_med - 50.0))
+    if not bool(erase.any()):
+        return empty
+    # Plate fallback scores below RGB matches so a real template win wins.
+    return (0.35 + dark_frac * 0.5 + contrast / 255.0, erase, (x, y, lw, lh))
+
+
+def _apply_logo_erase(
+    arr: "np.ndarray",
+    erase: "np.ndarray",
+    box: Tuple[int, int, int, int],
+) -> None:
+    x, y, lw, lh = box
+    region = arr[y : y + lh, x : x + lw]
     try:
         from scipy import ndimage
 
@@ -861,7 +957,6 @@ def _erase_logo_region(
         pass
     region[erase, 3] = 0
     arr[y : y + lh, x : x + lw] = region
-    return True
 
 
 def _drop_floating_logo_islands(img: Image.Image) -> Image.Image:
@@ -927,7 +1022,7 @@ def _drop_floating_logo_islands(img: Image.Image) -> Image.Image:
 
 
 def remove_mosida_signature(img: Image.Image) -> Image.Image:
-    """Erase baked-in MOSIDA MIAMI marks via strict multi-scale template match."""
+    """Erase baked-in MOSIDA MIAMI marks via multi-scale template / plate match."""
     rgba = _to_rgba(img).copy()
     templates = _load_mosida_logo_templates()
     if not templates or not NUMPY_AVAILABLE:
@@ -935,24 +1030,82 @@ def remove_mosida_signature(img: Image.Image) -> Image.Image:
 
     arr = np.array(rgba)
     h, w = arr.shape[:2]
-    erased_any = False
-    # Modest scale sweep — avoid giant boxes that cover the face.
-    scales = (0.85, 1.0, 1.20)
+    # Prefer the real overlay corners; skip top_center (hits hair/faces).
+    positions = (
+        "top_right",
+        "top_left",
+        "bottom_center",
+        "bottom_right",
+        "bottom_left",
+    )
+    scales = (0.85, 1.0, 1.15, 1.30)
+    nudges = (
+        (0, 0),
+        (int(w * 0.01), 0),
+        (-int(w * 0.01), 0),
+        (0, int(h * 0.01)),
+        (0, -int(h * 0.01)),
+    )
 
+    # Prefer the usual overlay corner slightly when scores are close.
+    position_bonus = {
+        "top_right": 0.08,
+        "bottom_center": 0.05,
+        "top_left": 0.02,
+        "bottom_right": 0.01,
+        "bottom_left": 0.01,
+    }
+    candidates: List[Tuple[float, "np.ndarray", Tuple[int, int, int, int]]] = []
     for logo in templates:
         aspect = logo.size[0] / max(1, logo.size[1])
-        for position in _MOSIDA_LOGO_POSITIONS:
+        for position in positions:
+            allow_plate = position in {"top_right", "top_left", "bottom_center"}
             for scale in scales:
-                x, y, lw, lh = _mosida_logo_geometry(
-                    w, h, aspect, position, scale=scale
-                )
-                if _erase_logo_region(arr, logo, x, y, lw, lh):
-                    erased_any = True
+                for nx, ny in nudges:
+                    x, y, lw, lh = _mosida_logo_geometry(
+                        w,
+                        h,
+                        aspect,
+                        position,
+                        scale=scale,
+                        nudge_x=nx,
+                        nudge_y=ny,
+                    )
+                    score, erase, box = _score_logo_region(
+                        arr,
+                        logo,
+                        x,
+                        y,
+                        lw,
+                        lh,
+                        allow_plate_fallback=allow_plate,
+                    )
+                    if erase is not None and score > 0:
+                        candidates.append(
+                            (
+                                score + position_bonus.get(position, 0.0),
+                                erase.copy(),
+                                box,
+                            )
+                        )
 
-    if erased_any:
-        print("🧹 Removed MOSIDA signature for die-cut sticker")
-        return Image.fromarray(arr, "RGBA")
-    return rgba
+    if not candidates:
+        return rgba
+
+    # Keep only the best hit — applying every scale/nudge was chewing hair.
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    best_score, best_erase, best_box = candidates[0]
+    _apply_logo_erase(arr, best_erase, best_box)
+    print(
+        f"🧹 Removed MOSIDA signature (merch print) "
+        f"score={best_score:.2f} box={best_box}"
+    )
+    return Image.fromarray(arr, "RGBA")
+
+
+def strip_mosida_for_opaque_print(img: Image.Image) -> Image.Image:
+    """Remove baked-in MOSIDA marks and flatten holes onto a white plate."""
+    return _force_opaque_print(remove_mosida_signature(img))
 
 
 def build_diecut_sticker(
@@ -1020,8 +1173,8 @@ def _rect_sticker_card(
     max_side: int = 900,
 ) -> Image.Image:
     """Full rectangular artwork with a thin dark edge — upload margins kept."""
-    # Flatten to an opaque card; do NOT trim white space from the upload.
-    art = _to_rgb(_to_rgba(artwork)).convert("RGBA")
+    # Flatten to an opaque card; strip baked-in MOSIDA; keep upload margins.
+    art = strip_mosida_for_opaque_print(_to_rgba(artwork))
     if max(art.size) > max_side:
         art = art.copy()
         art.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
@@ -1054,8 +1207,8 @@ def make_sticker_single(
     """
     Single sticker product.
 
-    Default: full rectangular artwork with a thin dark edge + drop shadow.
-    Transparent mode: strip MOSIDA logo, die-cut white contour, transparent PNG.
+    Default: full rectangular artwork with a thin dark edge + drop shadow
+    (baked-in MOSIDA stripped). Transparent mode: die-cut white contour PNG.
     """
     art = _sticker_art_for_orientation(artwork, orientation)
     if is_transparent:
@@ -1074,7 +1227,7 @@ def make_sticker_single(
         canvas.alpha_composite(sticker, dest=(pad, pad))
         return canvas
 
-    del diecut  # Rectangular listing keeps the full scene + logo.
+    del diecut  # Rectangular listing keeps the full scene (logo stripped).
     sticker = _rect_sticker_card(art, max_side=900)
     sticker = _sticker_shadow(sticker, blur=14, offset=(6, 9))
     return _studio_pad_sticker(sticker)
@@ -1824,6 +1977,8 @@ def make_sticker_sheet(
         print("🧾 Sticker sheet layout=transparent die-cut (aligned free-transform)")
         return _make_sticker_sheet_diecut(art, orientation=orientation)
 
+    # Opaque sheet tiles keep the studio plate but never the baked-in mark.
+    art = strip_mosida_for_opaque_print(art)
     orient = _normalize_orientation(orientation)
     use_portrait = (
         orient == "portrait"

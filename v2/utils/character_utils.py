@@ -1898,6 +1898,7 @@ def generate_character_with_identity(
     temperature: Optional[float] = None,
     logo_position: str = "top_right",
     image_size: Optional[str] = None,
+    nologo_output_path: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Generate a character from a selfie only. If white_background=True, we ask
@@ -2370,6 +2371,18 @@ BACKGROUND:
                 # Only convert if not already in a compatible format
                 img = img.convert('RGB')
             
+            # Optimize: Create directory only once
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            # Optional no-logo export (saved before Mosida overlay).
+            if nologo_output_path:
+                nologo_dir = os.path.dirname(nologo_output_path)
+                if nologo_dir:
+                    os.makedirs(nologo_dir, exist_ok=True)
+                img.save(nologo_output_path, optimize=True)
+
             # White Mosida for Warhol / Monochrome / Lichtenstein; dark for other stations.
             style = resolve_signature_logo_style(station_lower, character_prompt)
             # Warhol always pins the logo to bottom-center (ignore client mid/top positions).
@@ -2385,12 +2398,7 @@ BACKGROUND:
                 is_warhol_style,
                 logo_position=overlay_position,
             )
-            
-            # Optimize: Create directory only once
-            output_dir = os.path.dirname(output_path)
-            if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
-            
+
             # Optimize: Use optimized PNG saving
             img.save(output_path, optimize=True)
             return True, "Character generated successfully"

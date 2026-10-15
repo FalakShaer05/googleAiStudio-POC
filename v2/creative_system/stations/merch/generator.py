@@ -101,12 +101,14 @@ def _composite_one(
             artwork,
             template,
             orientation=product.get("orientation"),
+            is_transparent=bool(is_transparent),
         )
     elif mode == "canvas":
         out = make_canvas_print(
             artwork,
             template=None,
             orientation=product.get("orientation"),
+            is_transparent=bool(is_transparent),
         )
     elif mode == "mockup":
         if template is None:
@@ -118,6 +120,17 @@ def _composite_one(
         portrait_box = product.get("portrait_print_box")
         if portrait_box and detect_artwork_orientation(artwork) == "portrait":
             print_box = portrait_box
+        # Opaque tote: inset the plate so cream canvas doesn't swallow a full-bleed
+        # white print (reads as "always transparent"). Transparent mode keeps the
+        # larger zone for a full-face keyed print.
+        if product.get("id") == "tote" and not is_transparent:
+            opaque_box = product.get("opaque_print_box")
+            if opaque_box:
+                print_box = opaque_box
+            else:
+                x0, y0, x1, y1 = print_box
+                inset = 0.06
+                print_box = (x0 + inset, y0 + inset, x1 - inset, y1 - inset)
         out = composite_on_template(
             template,
             artwork,
@@ -223,6 +236,7 @@ def generate_all(
     is_transparent: when True, apparel/cap/tote key out the art backdrop;
     1 / 3 stickers become die-cut on transparent PNG (uniform free-transform);
     sticker sheet becomes aligned die-cut grids on the paint page + brand logos.
+    Baked-in MOSIDA marks are stripped for every product (opaque and transparent).
 
     Returns (success, message, items).
     """
